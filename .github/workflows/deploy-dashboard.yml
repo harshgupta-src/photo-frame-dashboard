@@ -1,0 +1,50 @@
+# Builds the dashboard and deploys it, together with the frame-data Worker that serves it, on every
+# push to main that touches dashboard/. The frame picks the new build up by itself within ~5 min.
+#
+# Runs only where the repository variable DEPLOY_DASHBOARD is "true", so forks don't try to deploy.
+# Secrets:
+#   CLOUDFLARE_API_TOKEN   a token from the "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID
+#   DASHBOARD_ENV          the contents of dashboard/.env.local (see dashboard/.env.example)
+# Worker secrets (iCloud login, READ_KEY, CALENDARS, ...) stay in Cloudflare and are kept by deploys.
+name: Deploy dashboard
+
+on:
+  push:
+    branches: [main]
+    paths: ['dashboard/**', '.github/workflows/deploy-dashboard.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dashboard
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: vars.DEPLOY_DASHBOARD == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - name: Test the Worker
+        run: node --test worker/test/photos.test.js worker/test/ics.test.js
+      - name: Write .env.local
+        env:
+          DASHBOARD_ENV: ${{ secrets.DASHBOARD_ENV }}
+        run: printf '%s\n' "$DASHBOARD_ENV" > .env.local
+      - name: Build and deploy
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
