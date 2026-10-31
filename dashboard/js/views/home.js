@@ -27,14 +27,25 @@
       }).join('') + '</div>';
   }
 
-  function presence() {
-    return D.people.map(function (p) {
-      var sub = p.home ? 'Home' : (p.eta ? '<b>ETA ' + p.eta + ' min</b>' : p.status);
-      return '<div class="h-who' + (p.home ? ' is-home' : '') + '" style="' + App.pstyle(p) + '">' +
-        App.avatar(p, 36, p.home ? '' : 'avatar--away') +
-        '<span><b>' + p.name + '</b><small>' + sub + '</small></span></div>';
-    }).join('');
+  // The dog's walk (CONFIG.dog): above 2° no jacket unless it's raining; 2° to -7° jacket; below -7° jacket and a
+  // short walk; below -12° a potty break and straight back inside.
+  function walkPlan(w) {
+    var t = w.temp, wet = w.cond === 'rain' || w.cond === 'snow';
+    if (t < -12) return { level: 3, title: 'Potty break only', sub: 'Jacket on, then straight back inside' };
+    if (t < -7) return { level: 2, title: 'Jacket + short walk', sub: 'Keep it quick, it’s bitter out' };
+    if (t <= 2) return { level: 1, title: 'Jacket', sub: 'Too cold to go without' };
+    if (wet) return { level: 1, title: 'Jacket', sub: (w.cond === 'snow' ? 'It’s snowing' : 'It’s raining') + ', bring it' };
+    return { level: 0, title: 'No jacket', sub: 'Normal walk' };
   }
+
+  function walk() {
+    var w = App.weatherNow(), m = walkPlan(w);
+    return '<div class="label">' + App.esc(window.CONFIG.dog) + '’s walk</div>' +
+      '<div class="h-walk-title">' + m.title + '</div>' +
+      '<div class="h-walk-sub">' + m.sub + '</div>' +
+      '<div class="h-walk-now">' + App.icon(w.cond, 20) + '<b class="num">' + w.temp + '°</b><span>' + w.label + '</span></div>';
+  }
+  App.walkPlan = walkPlan;
 
   function hero() {
     var e = App.nextEvent(), now = App.now();
@@ -60,13 +71,40 @@
         ? '<span class="pill pill--alert"><i class="pulse"></i>Leave now</span>'
         : '<span class="pill' + (leave <= 15 ? ' pill--soon' : '') + '">' + App.icon('car', 20) + 'Leave in ' + App.fmt.mins(leave) + '</span>';
     }
-    return '<button class="h-hero" style="' + App.pstyle(p) + '" data-ev="' + e.id + '">' +
+    return '<button class="h-hero' + (p === D.family ? ' is-family' : '') + '" style="' + App.pstyle(p) + '" data-ev="' + e.id + '">' +
       '<div class="h-hero-main">' +
       '  <div class="label label--on">Next up · ' + App.esc(whoText) + '</div>' +
       '  <div class="h-hero-title serif">' + App.esc(e.title) + '</div>' +
       '  <div class="h-hero-meta">' + App.fmt.range(e.start, e.end) + (e.loc ? ' · ' + App.esc(e.loc) : '') + '</div>' +
       '  <div class="h-hero-foot">' + (e.people.length > 1 ? App.dots(e.people, 22) : '') + leavePill + '</div>' +
       '</div>' + big + '</button>';
+  }
+
+  // Largest size where the title fits on one line; otherwise two lines at up to 50px, then 42px
+  // clamped. Needs layout, so it runs after the hero is in the DOM.
+  function fitHero(el) {
+    var t = el && el.querySelector('.h-hero:not(.h-hero--empty) .h-hero-title');
+    if (!t || !t.clientWidth) return;
+    var sizes = [72, 64, 56, 50, 46, 42], lineH;
+    function lines() { return Math.round(t.scrollHeight / lineH); }
+    t.style.maxWidth = '';
+    for (var i = 0; i < sizes.length; i++) {
+      t.style.fontSize = sizes[i] + 'px';
+      lineH = sizes[i] * 0.98;
+      var n = lines();
+      if (n <= 1) return;
+      if (sizes[i] <= 50 && n <= 2) break;
+    }
+    // Two lines: narrow the box until just before a third line appears, so the lines come out
+    // even instead of leaving one word alone (text-wrap: balance needs Chromium 114).
+    if (lines() !== 2) return;
+    var hi = t.clientWidth, lo = hi / 2;
+    for (var k = 0; k < 7; k++) {
+      var mid = (lo + hi) / 2;
+      t.style.maxWidth = mid + 'px';
+      if (lines() <= 2) hi = mid; else lo = mid;
+    }
+    t.style.maxWidth = Math.ceil(hi) + 'px';
   }
 
   function lanes() {
@@ -108,6 +146,23 @@
     }).join('') + '</div>';
   }
 
+  // The pinned Reminders list (CONFIG.pinnedList) takes the chores tile once live data is configured (App.reminders set).
+  function pinned() {
+    var items = App.reminders.pinned, shown = items.slice(0, 3);
+    return '<div class="label">' + App.esc(window.CONFIG.pinnedList) + (items.length ? ' · ' + items.length : '') + '</div>' +
+      (items.length ? '<ul class="h-pinned">' + shown.map(function (it) {
+        return '<li><i></i>' + App.esc(it.title) + '</li>';
+      }).join('') + '</ul>' + (items.length > shown.length ? '<small class="h-more">+' + (items.length - shown.length) + ' more</small>' : '')
+        : '<p class="h-pinned-empty">' + (App.reminders.updated ? 'All clear.' : 'Waiting for the iPhone Shortcut.') + '</p>');
+  }
+  function pinnedSheet() {
+    var items = App.reminders.pinned;
+    App.sheet('<div class="sheet-pad"><div class="label">Apple Reminders</div><h2 class="sheet-h serif">' + App.esc(window.CONFIG.pinnedList) + '</h2>' +
+      (items.length ? '<ul class="pinned-list">' + items.map(function (it) {
+        return '<li><b>' + App.esc(it.title) + '</b>' + (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') + '</li>';
+      }).join('') + '</ul>' : '<p class="sheet-p">Nothing on the list.</p>') + '</div>');
+  }
+
   function shopping() {
     var open = D.groceries.filter(function (g) { return !g.done; });
     var recent = open.slice(-3).reverse();
@@ -134,10 +189,15 @@
     var el = V.el;
     el.querySelector('.h-clock').innerHTML = clock();
     el.querySelector('.h-weather').innerHTML = weather();
-    el.querySelector('.h-presence').innerHTML = presence();
+    var mel = el.querySelector('.h-walk');
+    mel.className = 'h-walk h-walk--' + walkPlan(App.weatherNow()).level;
+    mel.innerHTML = walk();
     el.querySelector('.h-hero-slot').innerHTML = hero();
+    fitHero(el);
     el.querySelector('.h-lanes').innerHTML = lanes();
-    el.querySelector('.h-chores').innerHTML = chores();
+    var side = el.querySelector('.h-chores');
+    if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side.innerHTML = pinned(); }
+    else side.innerHTML = chores();
     el.querySelector('.h-shop').innerHTML = shopping();
     el.querySelector('.h-status').innerHTML = status();
   }
@@ -154,7 +214,7 @@
         el.innerHTML = '<div class="home">' +
           '<div class="h-clock" data-go="calendar"></div>' +
           '<div class="h-weather"></div>' +
-          '<div class="h-presence"></div>' +
+          '<div class="h-walk"></div>' +
           '<div class="h-main"><div class="h-hero-slot"></div><div class="h-lanes" style="grid-template-columns:repeat(' + D.people.length + ',1fr)"></div></div>' +
           '<div class="h-side">' +
           '  <button class="h-photo" data-go="photos"><div class="h-photo-stage"></div><div class="h-photo-cap"></div></button>' +
@@ -165,7 +225,7 @@
           var ev = e.target.closest('[data-ev]');
           if (ev) { App.eventSheet(App.findEvent(ev.dataset.ev)); return; }
           var g = e.target.closest('[data-go]');
-          if (g) App.go(g.dataset.go);
+          if (g) { if (g.dataset.go === 'pinned') pinnedSheet(); else App.go(g.dataset.go); }
         });
         V.slides = new App.Slideshow(el.querySelector('.h-photo-stage'), { layout: 'cover', captions: false, interval: 12000, onChange: photoCaption });
       }
@@ -180,7 +240,8 @@
     if (!V.el || !V.el.firstChild) return;
     V.el.querySelector('.h-clock').innerHTML = clock();
     V.el.querySelector('.h-hero-slot').innerHTML = hero();
-    if (n.getMinutes() === 0) { V.el.querySelector('.h-weather').innerHTML = weather(); V.el.querySelector('.h-lanes').innerHTML = lanes(); }
+    fitHero(V.el);
+    if (n.getMinutes() === 0) { paint(); }
   });
   App.on('data', function () { if (App.current === 'home') paint(); });
 })();

@@ -45,8 +45,8 @@
 
 /* right column */
 .s-side { min-height: 0; display: flex; flex-direction: column; gap: 18px; }
-.s-add { background: var(--ink); color: #fff; border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-.s-input-wrap { display: flex; align-items: center; gap: 12px; height: 80px; padding: 0 20px; border-radius: 14px; background: #fff; color: var(--ink); }
+.s-add { background: var(--solid); color: var(--on-solid); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.s-input-wrap { display: flex; align-items: center; gap: 12px; height: 80px; padding: 0 20px; border-radius: 14px; background: #fff; color: #111; }
 .s-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; font-size: 28px; font-weight: 600; }
 .s-input::placeholder { color: #AAA59B; font-weight: 500; }
 

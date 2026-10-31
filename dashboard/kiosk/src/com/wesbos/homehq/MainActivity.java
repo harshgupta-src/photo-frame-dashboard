@@ -12,6 +12,10 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
@@ -91,6 +95,38 @@ public class MainActivity extends Activity {
   static final int PROBE_ONLINE = 0, PROBE_PORTAL = 1, PROBE_FAILED = 2;
 
   private WebView web;
+
+  // Ambient light sensor, passed to the page as window.frameLux(lux) (the dashboard's Auto theme
+  // uses it). Sent at most every LUX_MS, and at least every LUX_HEARTBEAT_MS so the page knows
+  // the sensor is alive when the reading doesn't change.
+  static final long LUX_MS = 2000, LUX_HEARTBEAT_MS = 10000;
+  private SensorManager sensors;
+  private Sensor lightSensor;
+  private float lux = Float.NaN;
+  private long luxSentAt;
+  private final SensorEventListener light = new SensorEventListener() {
+    @Override
+    public void onSensorChanged(SensorEvent e) {
+      lux = e.values[0];
+      if (SystemClock.uptimeMillis() - luxSentAt >= LUX_MS) sendLux();
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor s, int accuracy) {}
+  };
+  private final Runnable luxHeartbeat = new Runnable() {
+    @Override
+    public void run() {
+      sendLux();
+      handler.postDelayed(this, LUX_HEARTBEAT_MS);
+    }
+  };
+
+  private void sendLux() {
+    if (web == null || Float.isNaN(lux)) return;
+    luxSentAt = SystemClock.uptimeMillis();
+    web.evaluateJavascript("window.frameLux&&window.frameLux(" + lux + ")", null);
+  }
   private Button menuButton;
   private final Handler handler = new Handler(Looper.getMainLooper());
   // Not cleared in onDestroy, so a navigation rebind that has started always finishes.
@@ -215,6 +251,7 @@ public class MainActivity extends Activity {
           offline.setVisibility(View.GONE);
           handler.removeCallbacks(stall);
         }
+        sendLux();
       }
 
       @Override
@@ -308,12 +345,23 @@ public class MainActivity extends Activity {
   protected void onResume() {
     super.onResume();
     NavigationService.setDashboardVisible(true);
+    if (sensors == null) {
+      sensors = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+      lightSensor = sensors != null ? sensors.getDefaultSensor(Sensor.TYPE_LIGHT) : null;
+    }
+    if (lightSensor != null) {
+      sensors.registerListener(light, lightSensor, SensorManager.SENSOR_DELAY_NORMAL);
+      handler.removeCallbacks(luxHeartbeat);
+      handler.postDelayed(luxHeartbeat, LUX_HEARTBEAT_MS);
+    }
   }
 
   @Override
   protected void onPause() {
     cancelExit();
     NavigationService.setDashboardVisible(false);
+    if (lightSensor != null) sensors.unregisterListener(light);
+    handler.removeCallbacks(luxHeartbeat);
     super.onPause();
   }
 

@@ -18,14 +18,11 @@ window.DATA = (function () {
     return Object.assign({ id: 'e' + (++n), allDay: true, start: at(d, '00:00'), end: at(d + days, '00:00'), title: title, people: people }, extra || {});
   }
 
-  var ALL = ['alex', 'jordan', 'maya', 'otto'];
-
-  var people = [
-    { id: 'alex', name: 'Wes', color: '#2D5BFF', rgb: '45 91 255', ink: '#FFFFFF', home: false, status: 'Driving home', eta: 12 },
-    { id: 'jordan', name: 'Claudia', color: '#E4007C', rgb: '228 0 124', ink: '#FFFFFF', home: false, status: 'At the office' },
-    { id: 'maya', name: 'Buzzsaw', age: 10, color: '#00A36C', rgb: '0 163 108', ink: '#FFFFFF', home: true, status: 'Home' },
-    { id: 'otto', name: 'Skidmark', age: 6, color: '#FFB000', rgb: '255 176 0', ink: '#111111', home: true, status: 'Home' }
-  ];
+  var people = window.CONFIG.people;
+  var ALL = people.map(function (p) { return p.id; });
+  // The demo's sample parents, still referenced by the mock events, chores and photos below,
+  // stand in for the first two configured people.
+  var DEMO_IDS = { alex: ALL[0], jordan: ALL[1] || ALL[0] };
   var family = { id: 'family', name: 'Family', color: '#111111', rgb: '17 17 17', ink: '#FFFFFF' };
 
   // ---------------------------------------------------------------- calendar
@@ -153,6 +150,9 @@ window.DATA = (function () {
     chore('evening', 'any', 'Wipe counters', '🧽', 1, false),
     chore('evening', 'any', 'Garbage to curb', '🗑️', 2, false)
   ];
+  // Demo chores: the parents' go to the configured people, the demo kids' are dropped.
+  chores = chores.filter(function (c) { return c.who === 'any' || DEMO_IDS[c.who]; })
+    .map(function (c) { if (DEMO_IDS[c.who]) c.who = DEMO_IDS[c.who]; return c; });
   var stars = { maya: 42, otto: 57 };
   // Mon..Sun, 1 = all chores done, 0 = missed, null = future
   var week = { maya: [1, 1, 0, 1, 1, 0, 1], otto: [1, 0, 1, 1, 1, 1, 0] };

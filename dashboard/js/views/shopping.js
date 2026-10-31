@@ -8,13 +8,7 @@
   function done() { return D.groceries.filter(function (g) { return g.done && (V.store === 'all' || g.store === V.store); }); }
   function storeName(id) { return D.stores.filter(function (s) { return s.id === id; })[0].name; }
 
-  function categorize(name) {
-    var n = name.toLowerCase();
-    var hit = D.catalog.filter(function (c) { return c[0].toLowerCase() === n; })[0] ||
-      D.catalog.filter(function (c) { var a = c[0].toLowerCase(); return a.indexOf(n) > -1 || n.indexOf(a) > -1; })[0] ||
-      D.catalog.filter(function (c) { return n.split(/\s+/).some(function (w) { return w.length > 3 && c[0].toLowerCase().indexOf(w) > -1; }); })[0];
-    return hit ? hit[1] : 'Other';
-  }
+  var categorize = App.categorize;
   function find(name, isDone) {
     return D.groceries.filter(function (g) { return !!g.done === isDone && g.name.toLowerCase() === name.toLowerCase(); })[0];
   }
@@ -119,6 +113,7 @@
       var n = s[0] === 'all' ? all.length : all.filter(function (g) { return g.store === s[0]; }).length;
       return '<button class="' + (V.store === s[0] ? 'is-on' : '') + '" data-store="' + s[0] + '">' + s[1] + ' <span class="num">' + n + '</span></button>';
     }).join('');
+    V.el.querySelector('.s-stores').style.display = D.stores.length < 2 ? 'none' : '';
   }
   function render() {
     V.el.innerHTML = '<div class="shop">' +

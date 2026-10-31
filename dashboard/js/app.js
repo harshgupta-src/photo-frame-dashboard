@@ -24,7 +24,26 @@
   App.dayStart = function (d) { var x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
   App.addDays = function (d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; };
   App.sameDay = function (a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); };
-  App.isNight = function () { var h = App.now().getHours(); return h >= 22 || h < 6; };
+  // Sleep (black screen): from 10 PM until 6 AM, or 45 min before the night's first timed event if
+  // that is earlier. Times use setHours, so DST nights keep 10 PM / 6 AM on the wall clock.
+  App.sleepWindow = function (now) {
+    var from = new Date(now);
+    if (from.getHours() < 12) from = App.addDays(from, -1);
+    from.setHours(22, 0, 0, 0);
+    var to = App.addDays(from, 1);
+    to.setHours(6, 0, 0, 0);
+    App.events().forEach(function (ev) {
+      if (ev.allDay) return;
+      var w = new Date(+ev.start - 45 * 60000);
+      if (w > from && w < to) to = w; // an event between 10 and 10:45 PM doesn't cancel the night
+    });
+    return { from: from, to: to };
+  };
+  App.isSleep = function (now) {
+    now = now || App.now();
+    var w = App.sleepWindow(now);
+    return now >= w.from && now < w.to;
+  };
 
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -77,6 +96,8 @@
   };
   App.pstyle = function (p) {
     if (typeof p === 'string') p = App.person(p);
+    // Near-black "everyone" colour would vanish on the dark theme; use the light ink instead.
+    if (App.theme === 'dark' && p.color === '#111111') return '--c:#EDE8DE;--c-rgb:237 232 222;--c-ink:#111111';
     return '--c:' + p.color + ';--c-rgb:' + p.rgb + ';--c-ink:' + p.ink;
   };
   App.avatar = function (p, size, cls) {
@@ -128,33 +149,95 @@
     for (var i = 0; i < D.routines.length; i++) if (h >= D.routines[i].from && h < D.routines[i].to) return D.routines[i];
     return D.routines[2];
   };
+  // Live weather is indexed by timestamp (W.time, unix seconds), so DST days with 23 or 25 hours
+  // still line up; the sample data has no timestamps and is indexed by hour of day.
+  function wxIndex(W, d) {
+    if (!W.time) return d.getHours();
+    var s = d / 1000, i = W.time.length - 1;
+    while (i > 0 && W.time[i] > s) i--;
+    return i;
+  }
+  function wxDate(W, i) { return W.time ? new Date(W.time[i] * 1000) : new Date(2000, 0, 1, i); }
+  function wxDayEnd(W, d) {
+    if (!W.time) return 24;
+    var end = App.addDays(App.dayStart(d), 1) / 1000, i = 0;
+    while (i < W.time.length && W.time[i] < end) i++;
+    return i;
+  }
   App.weatherNow = function () {
-    var W = D.weather, h = App.now().getHours();
+    var W = D.weather, now = App.now(), h = wxIndex(W, now), dayEnd = wxDayEnd(W, now);
     var rainAt = -1;
-    for (var i = h; i < 24; i++) if (W.p[i] >= 50) { rainAt = i; break; }
-    var summary, advice;
+    for (var i = h; i < dayEnd; i++) if (W.p[i] >= 50) { rainAt = i; break; }
+    var summary, advice, cool = 12;
+    var wet = rainAt > -1 && W.c[rainAt] === 'snow' ? 'Snow' : 'Rain';
     if (rainAt === h) {
-      var stop = h; while (stop < 24 && W.p[stop] >= 50) stop++;
-      summary = 'Rain until ' + App.fmt.hour(new Date(2000, 0, 1, stop));
-      advice = 'Umbrella weather';
+      var stop = h; while (stop < dayEnd && W.p[stop] >= 50) stop++;
+      summary = wet + ' until ' + App.fmt.hour(wxDate(W, stop));
+      advice = wet === 'Snow' ? 'Boots and a warm coat' : 'Umbrella weather';
     } else if (rainAt > -1) {
-      summary = 'Rain from ' + App.fmt.hour(new Date(2000, 0, 1, rainAt));
+      summary = wet + ' from ' + App.fmt.hour(wxDate(W, rainAt));
       var soccer = App.timedOn(App.now()).filter(function (e) { return /soccer/i.test(e.title) && e.start > App.now(); })[0];
-      advice = soccer ? 'Pack a rain jacket for soccer' : 'Grab a rain jacket';
+      advice = wet === 'Snow' ? 'Bring a warm coat' : soccer ? 'Pack a rain jacket for soccer' : 'Grab a rain jacket';
     } else {
-      summary = W.t[h] < 12 ? 'Clear and cool' : 'Dry all day';
-      advice = W.t[h] < 12 ? 'Jacket weather' : 'Light layers';
+      summary = W.t[h] < cool ? 'Clear and cool' : 'Dry all day';
+      advice = W.t[h] < cool ? 'Jacket weather' : 'Light layers';
     }
-    var labels = { sun: 'Sunny', moon: 'Clear', partly: 'Partly cloudy', cloud: 'Overcast', rain: 'Rain' };
+    var labels = { sun: 'Sunny', moon: 'Clear', partly: 'Partly cloudy', cloud: 'Overcast', rain: 'Rain', snow: 'Snow' };
     return { temp: W.t[h], cond: W.c[h], label: labels[W.c[h]], hi: W.hi, lo: W.lo, summary: summary, advice: advice, hour: h };
   };
   App.hourly = function (count) {
-    var W = D.weather, h = App.now().getHours(), out = [];
+    var W = D.weather, h = wxIndex(W, App.now()), out = [];
     for (var i = 0; i < count; i++) {
-      var x = (h + i) % 24;
-      out.push({ h: x, t: W.t[x], c: W.c[x], p: W.p[x], label: i === 0 ? 'Now' : ((x % 12 || 12) + (x >= 12 ? 'p' : 'a')) });
+      // Live data covers today and tomorrow (48 hours); the sample data only has today's 24.
+      var x = W.t[h + i] == null ? (h + i) % 24 : h + i, hr = W.time ? wxDate(W, x).getHours() : x % 24;
+      out.push({ h: hr, t: W.t[x], c: W.c[x], p: W.p[x], label: i === 0 ? 'Now' : ((hr % 12 || 12) + (hr >= 12 ? 'p' : 'a')) });
     }
     return out;
+  };
+
+  // ------------------------------------------------------------ live weather (Open-Meteo, no key)
+  // Home location from CONFIG; timezone=auto takes the zone from the coordinates. Unix timestamps rather than local times: Open-Meteo applies one
+  // fixed UTC offset to the whole response, so its local times are an hour off after a DST change.
+  var WX_URL = 'https://api.open-meteo.com/v1/forecast?latitude=' + window.CONFIG.lat + '&longitude=' + window.CONFIG.lon +
+    '&hourly=temperature_2m,precipitation_probability,weather_code,is_day' +
+    '&daily=temperature_2m_max,temperature_2m_min' +
+    '&timezone=auto&timeformat=unixtime&forecast_days=2';
+  var WX_KEY = 'wx-' + window.CONFIG.lat + ',' + window.CONFIG.lon + '-c2';
+  function wxCond(code, day) {
+    if (code <= 1) return day ? 'sun' : 'moon';
+    if (code === 2) return 'partly';
+    if (code === 3 || code === 45 || code === 48) return 'cloud';
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+    return 'rain';
+  }
+  function applyWeather(j) {
+    var H = j.hourly, R = Math.round;
+    D.weather = {
+      hi: R(j.daily.temperature_2m_max[0]), lo: R(j.daily.temperature_2m_min[0]),
+      time: H.time,
+      t: H.temperature_2m.map(R),
+      c: H.weather_code.map(function (code, i) { return wxCond(code, H.is_day[i]); }),
+      p: H.precipitation_probability.map(function (p) { return p || 0; })
+    };
+  }
+  // Is the response's first day today? (Its midnight can be an hour off on DST days, so test noon.)
+  function isToday(j) { return App.sameDay(new Date((j.daily.time[0] + 12 * 3600) * 1000), new Date()); }
+  function loadWeather() {
+    fetch(WX_URL).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (j) {
+      if (!isToday(j)) return;
+      applyWeather(j);
+      try { localStorage.setItem(WX_KEY, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
+      App.emit('data');
+      App.rerender();
+    }).catch(function (e) { console.warn('Weather fetch failed', e); });
+  }
+  App.startWeather = function () {
+    try {
+      var cached = JSON.parse(localStorage.getItem(WX_KEY) || 'null');
+      if (cached && isToday(cached)) applyWeather(cached);
+    } catch (e) { /* ignore a bad cache */ }
+    loadWeather();
+    setInterval(loadWeather, 15 * 60000);
   };
 
   // ------------------------------------------------------------ router
@@ -212,6 +295,14 @@
   App.on('time', markStale);
   App.rerender = function () {
     if (App.current) App.views[App.current].show($('#view-' + App.current), { rerender: true });
+  };
+
+  App.categorize = function (name) {
+    var n = name.toLowerCase();
+    var hit = D.catalog.filter(function (c) { return c[0].toLowerCase() === n; })[0] ||
+      D.catalog.filter(function (c) { var a = c[0].toLowerCase(); return a.indexOf(n) > -1 || n.indexOf(a) > -1; })[0] ||
+      D.catalog.filter(function (c) { return n.split(/\s+/).some(function (w) { return w.length > 3 && c[0].toLowerCase().indexOf(w) > -1; }); })[0];
+    return hit ? hit[1] : 'Other';
   };
 
   // ------------------------------------------------------------ toasts (single, with undo)
@@ -295,16 +386,39 @@
   function onIdleTick() {
     idleSec++;
     var blocked = $('#takeover').classList.contains('is-open');
+    if (updatePending && idleSec >= 30 && !blocked) { location.reload(); return; }
+    var asleep = App.isSleep();
+    if (!asleep && (App.mode === 'night' || App.mode === 'nightdash')) { App.setMode('day'); App.go('home'); return; }
     if (App.mode === 'nightdash' && idleSec >= 20) { App.setMode('night'); return; }
+    if (asleep && !blocked && (App.mode === 'ambient' || (App.mode === 'day' && idleSec >= 60))) {
+      App.closeSheet(); App.go('home'); App.setMode('night'); return;
+    }
     if (App.mode !== 'day' || blocked) return;
     if (idleSec === App.idle.home && App.current !== 'home') { App.closeSheet(); App.go('home'); }
     if (idleSec >= App.idle.ambient) {
       App.closeSheet();
       App.go('home');
-      App.setMode(App.isNight() ? 'night' : 'ambient');
+      App.setMode('ambient');
     }
   }
   App.resetIdle = function () { idleSec = 0; };
+
+  // ------------------------------------------------------------ self-update (hosted builds)
+  // A deploy changes the hashed /assets/ files index.html points at. Check every 5 min and reload
+  // once nobody has touched the screen for 30 s. No-op on the dev server (no /assets/ tags).
+  var updatePending = false;
+  function assetKey(list) { return list.slice().sort().join(' '); }
+  function checkUpdate() {
+    if (location.hostname === '127.0.0.1') return; // bundled offline copy: updates come with the APK
+    var mine = App.$$('script[src*="/assets/"], link[href*="/assets/"]').map(function (n) {
+      return n.getAttribute('src') || n.getAttribute('href');
+    });
+    if (!mine.length) return;
+    fetch('/', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (html) {
+      var live = html.match(/\/assets\/[^"']+\.(?:js|css)/g);
+      if (live && assetKey(live) !== assetKey(mine)) updatePending = true;
+    }).catch(function () { /* offline: try again next time */ });
+  }
 
   // ------------------------------------------------------------ stage scaling
   // Designed at 1280×800. Screens wider than 16:10 (e.g. 1920×1080 frames) widen the stage to their
@@ -319,8 +433,13 @@
   }
 
   // ------------------------------------------------------------ clock tick
-  var lastMin = -1;
+  var lastMin = -1, lastTick = Date.now();
   function tick() {
+    // Frames without an RTC boot at 1970 and jump forward when NTP syncs; the mock data is dated
+    // at load, so reload once the clock jumps.
+    var real = Date.now();
+    if (Math.abs(real - lastTick) > 10 * 60000) { location.reload(); return; }
+    lastTick = real;
     var n = App.now();
     App.emit('second', n);
     if (n.getMinutes() !== lastMin) {
@@ -333,7 +452,8 @@
 
   // ------------------------------------------------------------ boot
   App.start = function () {
-    App.setTime(15, 18); // demo default: a busy weekday afternoon
+    App.startWeather();
+    if (App.startCalendar) App.startCalendar();
     fit();
     window.addEventListener('resize', fit);
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
@@ -351,6 +471,7 @@
     App.go(location.hash.slice(1) || 'home');
     tick();
     setInterval(tick, 1000);
+    setInterval(checkUpdate, 5 * 60000);
     App.emit('ready');
     refreshStale(1500);
     setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);

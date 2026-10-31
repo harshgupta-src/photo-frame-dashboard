@@ -3,7 +3,7 @@
   'use strict';
   var D = window.DATA;
   var V = { el: null, routine: null, pending: {} };
-  var LANES = ['alex', 'jordan', 'maya', 'otto', 'any'];
+  var LANES = D.ALL.concat(['any']);
 
   function routine() { return V.routine ? D.routines.filter(function (r) { return r.id === V.routine; })[0] : App.currentRoutine(); }
   function listFor(who, r) {
@@ -58,7 +58,7 @@
       '<div class="seg">' + D.routines.map(function (x) { return '<button class="' + (x.id === r.id ? 'is-on' : '') + '" data-r="' + x.id + '">' + x.name + '</button>'; }).join('') + '</div>' +
       '<div class="t-progress"><span class="num">' + done + '<small>/' + inR.length + '</small></span><div class="t-bar"><i style="width:' + (inR.length ? done / inR.length * 100 : 0) + '%"></i></div><span class="label">done</span></div>' +
       '</header>' +
-      '<div class="ch-lanes">' + LANES.map(function (w) { return lane(w, r); }).join('') + '</div>' +
+      '<div class="ch-lanes" style="grid-template-columns:repeat(' + LANES.length + ',1fr)">' + LANES.map(function (w) { return lane(w, r); }).join('') + '</div>' +
       '</div>';
   }
 

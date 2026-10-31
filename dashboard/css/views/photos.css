@@ -20,7 +20,7 @@
 }
 .polaroid-img { width: 660px; height: 470px; overflow: hidden; background: #ddd; }
 .polaroid--p .polaroid-img { width: 420px; height: 560px; }
-.polaroid figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 16px 6px 20px; color: var(--ink); font-size: 30px; }
+.polaroid figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 16px 6px 20px; color: #111; font-size: 30px; }
 
 .slide--cover::after, .slide--pair::after, .slide--collage::after, .slide--fit::after {
   content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 55%;

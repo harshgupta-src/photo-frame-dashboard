@@ -115,14 +115,28 @@
   };
 
   // ------------------------------------------------------------ demo drawer
+  function appearanceHTML(t) {
+    var tonight = App.themeWindow(t).darkFrom, morning = App.themeWindow(App.addDays(t, 1)).lightFrom;
+    var th = App.roomThresholds;
+    var note = App.themeSource() === 'sensor'
+      ? 'Auto follows the room light (now ' + Math.round(App.room.lux) + ' lux): dark below ' + th.dark +
+        ' lux after a minute, light above ' + th.light + ' lux after three.'
+      : 'Auto is dark from 30 min before sunset to 30 min after sunrise: ' +
+        App.fmt.time(tonight) + ' tonight until ' + App.fmt.time(morning) + '. (No light sensor reading.)';
+    var opts = [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']];
+    return '<div class="demo-sec"><div class="label label--light">Appearance</div><div class="demo-grid demo-grid--3">' +
+      opts.map(function (o) { return '<button data-theme-pref="' + o[0] + '" class="' + (App.themePref() === o[0] ? 'is-on' : '') + '">' + o[1] + '</button>'; }).join('') +
+      '</div><p class="demo-note">' + note + '</p></div>';
+  }
   function demoHTML() {
     var t = App.now();
     return '<div class="demo-panel">' +
       '<div class="demo-head"><div><div class="label label--light">Prototype</div><h2 class="serif">Demo controls</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
+      appearanceHTML(t) +
       '<div class="demo-sec"><div class="label label--light">Time of day · now ' + App.fmt.time(t) + '</div><div class="demo-grid">' +
       '<button data-time="7:10">7:10 AM</button><button data-time="15:18">3:18 PM</button><button data-time="19:45">7:45 PM</button><button data-time="23:40">11:40 PM</button><button data-time="real">Real time</button></div></div>' +
       '<div class="demo-sec"><div class="label label--light">Modes</div><div class="demo-grid">' +
-      '<button data-mode="ambient">Ambient</button><button data-mode="night">Night</button><button data-fastidle>' + (App.idle.home < 60 ? 'Idle: fast ✓' : 'Idle: fast') + '</button></div></div>' +
+      '<button data-mode="ambient">Ambient</button><button data-mode="night">Sleep</button><button data-fastidle>' + (App.idle.home < 60 ? 'Idle: fast ✓' : 'Idle: fast') + '</button></div></div>' +
       '<div class="demo-sec"><div class="label label--light">Alerts</div><div class="demo-grid">' +
       '<button data-alert="doorbell">Doorbell</button><button data-alert="leak">Water leak</button><button data-alert="garage">Garage open</button><button data-alert="package">Package</button></div></div>' +
       '<div class="demo-sec"><div class="label label--light">Calendar data</div><div class="demo-grid">' +
@@ -149,6 +163,7 @@
       App.openDemo();
       return;
     }
+    if (b.dataset.themePref) { App.setThemePref(b.dataset.themePref); App.openDemo(); return; }
     if (b.dataset.mode) { closeDemo(); App.setMode(b.dataset.mode); return; }
     if (b.hasAttribute('data-fastidle')) {
       var fast = App.idle.home >= 60;

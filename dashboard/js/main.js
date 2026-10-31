@@ -1,7 +1,10 @@
 // Entry point. Order matters: each module attaches to the shared window.App.
+import './config.js';
 import './icons.js';
 import './data.js';
 import './app.js';
+import './theme.js';
+import './live.js';
 import './system.js';
 import './slideshow.js';
 import './views/home.js';

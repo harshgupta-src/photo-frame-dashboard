@@ -8,9 +8,9 @@
 .sum:active { transform: scale(.97); }
 .sum b { font-size: 48px; line-height: .95; margin-top: 4px; }
 .sum small { font-size: var(--fs-min); color: var(--ink-2); margin-top: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sum--warm { background: var(--warm); }
+.sum--warm { background: var(--warm); color: #111; }
 .sum--warm .label { color: rgba(0, 0, 0, .55); }
-.sum--warn { background: var(--amber); }
+.sum--warn { background: var(--amber); color: #111; }
 .sum--warn .label { color: rgba(0, 0, 0, .55); }
 
 .hc-scenes { display: flex; gap: 10px; flex: none; }
@@ -61,7 +61,7 @@
 .pend { position: absolute; right: 14px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); z-index: 2; }
 
 /* climate */
-.hc-climate { background: var(--ink); color: #fff; border-radius: var(--r); padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.hc-climate { background: var(--solid); color: var(--on-solid); border-radius: var(--r); padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
 .th-main { display: flex; align-items: center; justify-content: space-between; }
 .th-btn { width: 84px; height: 84px; border-radius: 50%; background: rgba(255, 255, 255, .12); display: grid; place-items: center; }
 .th-btn:active { transform: scale(.9); background: rgba(255, 255, 255, .25); }
@@ -104,3 +104,7 @@
 .cam-big .tk-live { left: 20px; top: 20px; }
 .cam-big-bar .label { position: absolute; left: 24px; bottom: 20px; }
 .is-pulse { box-shadow: 0 0 0 6px var(--warm); }
+
+[data-theme="dark"] .tile--light.is-on { background: #4A3C1C; }
+[data-theme="dark"] .tile--blind .tile-fill { background: #2B3E57; }
+[data-theme="dark"] .tile--blind.is-on { background: #1D2836; }

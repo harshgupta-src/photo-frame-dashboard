@@ -131,10 +131,10 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .seg button .num { font-size: 19px; opacity: .6; margin-left: 4px; }
 .seg--dark { background: rgba(255, 255, 255, .1); }
 .seg--dark button { color: rgba(255, 255, 255, .75); }
-.seg--dark button.is-on { background: var(--paper); color: var(--ink); }
+.seg--dark button.is-on { background: #F2EEE6; color: #111; }
 .seg--glass { background: rgba(0, 0, 0, .35); }
 .seg--glass button { color: rgba(255, 255, 255, .85); }
-.seg--glass button.is-on { background: #fff; color: var(--ink); }
+.seg--glass button.is-on { background: #fff; color: #111; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 10px; }
 .chip {
@@ -153,7 +153,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   background: rgba(0, 0, 0, .22); color: inherit;
   font-size: 17px; font-weight: 800; font-stretch: 80%; letter-spacing: .06em; text-transform: uppercase;
 }
-.pill--soon { background: var(--ink); color: #fff; }
+.pill--soon { background: var(--solid); color: var(--on-solid); }
 .pill--alert { background: #fff; color: var(--alert); }
 .pulse { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
 
@@ -166,7 +166,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   pointer-events: auto;
   min-height: 72px; max-width: 760px; padding: 0 10px 0 24px;
   display: flex; align-items: center; gap: 14px;
-  background: var(--ink); color: #fff; border-radius: 20px;
+  background: var(--solid); color: var(--on-solid); border-radius: 20px;
   font-size: 20px; position: relative; overflow: hidden;
   box-shadow: 0 18px 40px rgba(0, 0, 0, .25);
   transform: translateY(140%);
@@ -200,11 +200,14 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .sheet-x {
   position: absolute; right: 14px; top: 14px; z-index: 2;
   width: var(--tap); height: var(--tap); border-radius: 50%;
-  display: grid; place-items: center; background: rgba(0, 0, 0, .08);
+  display: grid; place-items: center; background: rgb(var(--ink-rgb) / .08);
 }
 .sheet-pad { padding: 34px 36px 32px; }
 .sheet-h { font-size: 52px; line-height: 1; margin: 6px 0 22px; }
 .sheet-p { font-size: 20px; color: var(--ink-2); margin: -8px 0 24px; }
+.pinned-list { display: flex; flex-direction: column; max-height: 520px; overflow-y: auto; }
+.pinned-list li { display: flex; flex-direction: column; gap: 2px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 24px; }
+.pinned-list small { font-size: 17px; color: var(--ink-2); }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
 
 /* ---------------------------------------------------------------- banners */
@@ -213,12 +216,12 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   pointer-events: auto;
   display: flex; align-items: center; gap: 16px;
   min-height: 84px; padding: 10px 12px 10px 24px;
-  border-radius: 20px; background: var(--amber); color: var(--ink);
+  border-radius: 20px; background: var(--amber); color: #111;
   box-shadow: 0 16px 40px rgba(0, 0, 0, .22);
   transform: translateY(-130%); opacity: 0;
 }
 .banner.is-in { transform: none; opacity: 1; }
-.banner--ink { background: var(--ink); color: #fff; }
+.banner--ink { background: var(--solid); color: var(--on-solid); }
 .banner-text { flex: 1; display: flex; flex-direction: column; }
 .banner-text b { font-size: 24px; font-weight: 800; font-stretch: 80%; }
 .banner-text span { font-size: 17px; opacity: .8; }
@@ -228,8 +231,8 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   background: rgba(0, 0, 0, .1);
 }
 .banner--ink .banner-btn { background: rgba(255, 255, 255, .12); }
-.banner-btn--solid { background: var(--ink); color: #fff; }
-.banner--ink .banner-btn--solid { background: #fff; color: var(--ink); }
+.banner-btn--solid { background: #111; color: #fff; }
+.banner--ink .banner-btn--solid { background: #fff; color: #111; }
 
 /* ---------------------------------------------------------------- takeovers */
 .takeover { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 70; display: none; }
@@ -258,7 +261,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 }
 .tk-btn span { position: relative; z-index: 1; }
 .tk-btn .i { position: relative; z-index: 1; }
-.tk-btn--solid { background: #fff; color: var(--ink); }
+.tk-btn--solid { background: #fff; color: #111; }
 .tk-btn.is-on { background: var(--ok); }
 .tk-btn.is-holding { background: rgba(255, 255, 255, .34); }
 
@@ -276,7 +279,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .demo.is-open { pointer-events: auto; background: rgba(0, 0, 0, .3); }
 .demo-panel {
   position: absolute; right: 0; top: 0; bottom: 0; width: 460px; padding: 28px;
-  background: var(--ink); color: #fff; overflow: auto;
+  background: var(--solid); color: var(--on-solid); overflow: auto;
   transform: translateX(100%);
 }
 .demo.is-open .demo-panel { transform: none; }
@@ -290,7 +293,9 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   background: rgba(255, 255, 255, .1);
   font-size: 18px; font-weight: 700;
 }
-.demo-grid button:active, .demo-grid button.is-on { background: #fff; color: var(--ink); }
+.demo-grid--3 { grid-template-columns: 1fr 1fr 1fr; }
+.demo-sec .demo-note { margin-top: 10px; }
+.demo-grid button:active, .demo-grid button.is-on { background: #fff; color: #111; }
 .demo-note { font-size: 16px; color: rgba(255, 255, 255, .6); }
 
 /* ---------------------------------------------------------------- night dashboard (tap on night clock) */

@@ -1,0 +1,14 @@
+// frame-data: calendar, Reminders and photo JSON for the frame, and the dashboard itself (../dist).
+// Deploy from dashboard/: npm run deploy (builds the dashboard first, then deploys this Worker).
+// Secrets (npx wrangler secret put NAME): ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN,
+// PHOTO_ALBUM (iCloud Shared Album link with "Public Website" on).
+// CALENDARS (JSON): {"Alex's Calendar": ["alex"], "Family": ["alex", "jordan"]}.
+// Local dev reads the same names from .dev.vars (gitignored; scripts/icloud-setup.mjs writes it).
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "frame-data",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "../dist", "binding": "ASSETS", "run_worker_first": true },
+  "kv_namespaces": [{ "binding": "DATA", "id": "978ca79b833f44e6881f8cd5fa24c47b" }]
+}

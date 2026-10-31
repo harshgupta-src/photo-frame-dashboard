@@ -49,7 +49,7 @@
 .ag-spark circle { fill: var(--c); }
 
 /* summary */
-.ag-sum { background: var(--ink); color: var(--paper); }
+.ag-sum { background: var(--solid); color: var(--on-solid); }
 .ag-sum .ag-plan { color: rgba(255, 255, 255, .6); }
 .ag-sum-stats { display: flex; gap: 26px; }
 .ag-sum-stats > div { display: flex; flex-direction: column; }

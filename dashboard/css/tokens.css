@@ -20,6 +20,10 @@
   --warm-rgb: 255 196 92;
   --night: #D8321F;
 
+  /* emphasis surfaces (hero, toasts, banners) and their text */
+  --solid: #111111;
+  --on-solid: #FFFFFF;
+
   /* person colour defaults (overridden inline per element) */
   --c: var(--ink);
   --c-rgb: var(--ink-rgb);
@@ -45,4 +49,18 @@
   --tap: 64px;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --spring: cubic-bezier(.34, 1.56, .64, 1);
+}
+
+/* Dark theme (js/theme.js sets data-theme on <html>). Warm near-black paper, cream ink. */
+:root[data-theme="dark"] {
+  --paper: #161513;
+  --paper-2: #26241F;
+  --card: #201E1B;
+  --ink: #EDE8DE;
+  --ink-rgb: 237 232 222;
+  --ink-2: #C4BDB0;
+  --mute: #8E887C;
+  --line: #3A3731;
+  --solid: #2C2A25;
+  --on-solid: #EDE8DE;
 }

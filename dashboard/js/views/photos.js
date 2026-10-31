@@ -44,6 +44,7 @@
             var p = V.show.current && V.show.current.photos[0];
             if (!p) return;
             p.fav = !p.fav;
+            if (App.saveFavs) App.saveFavs();
             heart();
             App.toast(p.fav ? 'Added to favourites · it’ll show up more often' : 'Removed from favourites', { icon: 'heart', ms: 2500 });
           }

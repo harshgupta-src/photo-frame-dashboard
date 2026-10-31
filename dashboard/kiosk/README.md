@@ -43,6 +43,27 @@ URL when run without one.
 Every later launch, including after a reboot, opens the saved URL. Links that other apps open
 in the kiosk, such as a sign-in page, are shown but not saved.
 
+### This frame: hosted on the frame-data Worker (updates over Wi-Fi)
+
+This frame loads the dashboard from the `frame-data` Worker, which also serves its data:
+
+```sh
+adb shell am start -n com.wesbos.homehq/.MainActivity --es url 'https://frame-data.<your-subdomain>.workers.dev/?key=READ_KEY'
+```
+
+- The page is only served with the key. `?key=` sets an HttpOnly cookie that covers the page's
+  own files; anything else gets 401. The key is also baked into the built JavaScript, so never
+  deploy `dist/` anywhere public.
+- To ship a UI change, run `npm run deploy` from `dashboard/`. It builds and deploys the Worker
+  together with `dist/`. The page checks for a new build every 5 minutes and reloads once the
+  screen has been untouched for 30 seconds. No USB needed.
+- Changes to the kiosk app itself (Java, `build.sh`) still need a USB install.
+- The kiosk passes the frame's ambient light sensor to the page as `window.frameLux(lux)` every
+  few seconds. The dashboard's Auto theme uses it (`js/theme.js`) and falls back to sunset/sunrise
+  without it.
+- Without internet, the frame shows the native offline screen and comes back on its own. To use
+  the bundled copy instead, save `http://127.0.0.1:8765/` as the URL (see below).
+
 ## A page bundled in the APK (no server)
 
 A static page can ship inside the APK instead of being hosted. Build with `KIOSK_SITE` set to a

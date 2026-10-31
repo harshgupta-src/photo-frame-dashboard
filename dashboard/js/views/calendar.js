@@ -8,9 +8,10 @@
 
   function y(d) { return ((d.getHours() + d.getMinutes() / 60) - START) * PX; }
   function clampTop(e, day) {
-    var s = App.dayStart(day);
-    var a = e.start < s ? new Date(+s + START * 36e5) : e.start;
-    var endOfDay = new Date(+s + END * 36e5);
+    // setHours, not midnight + N hours: DST days are 23 or 25 hours long.
+    var s = App.dayStart(day), dayTop = new Date(s), endOfDay = new Date(s);
+    dayTop.setHours(START); endOfDay.setHours(END);
+    var a = e.start < s ? dayTop : e.start;
     var b = e.end > endOfDay ? endOfDay : e.end;
     return { top: Math.max(0, y(a)), h: Math.max(24, y(b) - Math.max(0, y(a)) - 3) };
   }
@@ -48,9 +49,10 @@
     var mins = (e.end - e.start) / 60000;
     var cls = 'ev' + (e.end <= now ? ' is-past' : '') + (e.start <= now && e.end > now ? ' is-now' : '') + (mins < 45 ? ' is-short' : '') + (App.isFamily(e) ? ' is-family' : '') + (opts.half ? ' is-half' : '');
     var others = opts.lane ? e.people.filter(function (id) { return id !== opts.lane; }) : (e.people.length > 1 && !App.isFamily(e) ? e.people : []);
+    var lines = mins < 45 ? 1 : Math.max(1, Math.min(4, Math.floor((mins * PX / 60 - 14 - 20) / 20)));
     var travel = e.travel ? '<span class="ev-travel" style="height:' + (e.travel * PX / 60) + 'px"></span>' : '';
     return '<button class="' + cls + '" data-ev="' + e.id + '" style="' + App.pstyle(p) + ';' + style + '">' + travel +
-      '<span class="ev-title">' + App.esc(e.title) + '</span>' +
+      '<span class="ev-title" style="-webkit-line-clamp:' + lines + '">' + App.esc(e.title) + '</span>' +
       '<span class="ev-meta">' + App.fmt.range(e.start, e.end) + (e.travel ? ' · <b>' + App.icon('car', 16) + 'Leave ' + App.fmt.time(App.leaveBy(e), false) + '</b>' : '') + '</span>' +
       (others.length && !App.isFamily(e) ? '<span class="ev-with">' + App.dots(others, 14) + '</span>' : '') +
       (App.isFamily(e) ? '<span class="ev-with">' + App.dots(D.ALL, 14) + '</span>' : '') +
@@ -315,10 +317,10 @@
           if (!t) return;
           if (t.dataset.idea) { input.value = t.dataset.idea; }
           if (t.dataset.who) {
-            if (t.dataset.who === 'all') st.who = st.who.length === 4 ? [] : D.ALL.slice();
+            if (t.dataset.who === 'all') st.who = st.who.length === D.ALL.length ? [] : D.ALL.slice();
             else { var i = st.who.indexOf(t.dataset.who); if (i > -1) st.who.splice(i, 1); else st.who.push(t.dataset.who); }
             App.$$('[data-who]', s).forEach(function (b) {
-              b.classList.toggle('is-on', b.dataset.who === 'all' ? st.who.length === 4 : st.who.indexOf(b.dataset.who) > -1);
+              b.classList.toggle('is-on', b.dataset.who === 'all' ? st.who.length === D.ALL.length : st.who.indexOf(b.dataset.who) > -1);
             });
           }
           ['dayi', 'time', 'dur'].forEach(function (k) {
@@ -329,7 +331,7 @@
           });
           if (t.hasAttribute('data-save')) {
             var title = input.value.trim() || 'New event';
-            var who = st.who.length ? st.who.slice() : ['jordan'];
+            var who = st.who.length ? st.who.slice() : [D.ALL[0]];
             var start = App.addDays(App.dayStart(now), st.day), p = st.time.split(':');
             start.setHours(+p[0], +p[1]);
             var e = { id: D._eid(), title: title, people: who, start: start, end: new Date(+start + st.dur * 60000) };

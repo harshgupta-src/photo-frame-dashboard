@@ -2,3 +2,4 @@ node_modules
 dist
 .wrangler
 kiosk/build
+.env.local

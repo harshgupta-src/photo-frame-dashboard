@@ -32,13 +32,19 @@
 .h-hr.is-wet .h-hr-i { color: #1F6FEB; }
 
 /* ---- presence */
-.h-presence { grid-column: 10 / 13; display: flex; flex-direction: column; justify-content: space-between; border-bottom: 3px solid var(--ink); padding: 2px 0 10px; }
-.h-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.h-who > span:not(.avatar) { flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
-.h-who b { font-size: 18px; font-weight: 800; white-space: nowrap; flex: none; }
-.h-who small { font-size: var(--fs-min); color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.h-who small b { font-size: var(--fs-min); color: var(--c); }
-.h-who .avatar--away { background: var(--paper); }
+.h-walk {
+  grid-column: 10 / 13; display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0;
+  border-radius: var(--r); padding: 14px 18px; background: var(--c); color: var(--c-ink);
+}
+.h-walk--0 { --c: var(--ok); }
+.h-walk--1 { --c: #1F6FEB; }
+.h-walk--2 { --c: var(--amber); --c-ink: #111; }
+.h-walk--3 { --c: var(--alert); }
+.h-walk .label { color: inherit; opacity: .8; }
+.h-walk-title { font-size: 34px; line-height: 1; font-weight: 800; font-stretch: 80%; }
+.h-walk-sub { font-family: var(--serif); font-size: 20px; line-height: 1.1; }
+.h-walk-now { display: flex; align-items: center; gap: 6px; font-size: 16px; opacity: .85; }
+.h-walk-now b { font-weight: 800; }
 
 /* ---- main column */
 .h-main { grid-column: 1 / 8; display: grid; grid-template-rows: 232px 1fr; gap: 16px; min-height: 0; }
@@ -50,14 +56,19 @@
   overflow: hidden; position: relative;
 }
 .h-hero-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.h-hero-title { font-size: 72px; line-height: .95; margin: 8px 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-hero-title {
+  font-size: 72px; line-height: .98; margin: 8px 0 8px; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
 .h-hero-meta { font-size: 19px; opacity: .88; }
 .h-hero-foot { margin-top: auto; display: flex; align-items: center; gap: 14px; }
 .h-hero-foot .dots i { box-shadow: 0 0 0 3px var(--c); }
 .h-hero-count { font-size: 150px; line-height: .78; letter-spacing: -.04em; text-align: right; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; }
 .h-hero-count small { font-size: 22px; letter-spacing: .1em; text-transform: uppercase; font-stretch: 80%; margin-top: 10px; }
-.h-hero--empty { background: var(--ink); color: var(--paper); flex-direction: column; justify-content: center; }
-.h-hero--empty .h-hero-title { white-space: normal; font-size: 56px; }
+.h-hero--empty { background: var(--solid); color: var(--on-solid); flex-direction: column; justify-content: center; }
+/* Everyone's colour is cream in the dark theme; keep the big card calm instead of bright. */
+[data-theme="dark"] .h-hero.is-family { --c: var(--solid) !important; --c-ink: var(--on-solid) !important; }
+.h-hero--empty .h-hero-title { display: block; font-size: 56px; }
 
 .h-lanes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; min-height: 0; }
 .h-lane { display: flex; flex-direction: column; gap: 6px; min-width: 0; border-top: 6px solid var(--c); padding-top: 10px; }
@@ -70,7 +81,10 @@
   background: rgb(var(--c-rgb) / .12);
 }
 .h-ev-t { font-size: 16px; font-weight: 800; font-stretch: 70%; font-variant-numeric: tabular-nums; color: var(--ink-2); }
-.h-ev-n { display: block; width: 100%; font-size: 18px; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-ev-n {
+  width: 100%; font-size: 18px; font-weight: 600; line-height: 1.2; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
 .h-ev.is-now { background: var(--c); color: var(--c-ink); }
 .h-ev.is-now .h-ev-t { color: inherit; text-transform: uppercase; letter-spacing: .08em; }
 .h-free { font-size: 21px; color: var(--mute); padding: 6px 2px; line-height: 1.1; }
@@ -95,6 +109,12 @@
 .h-ring span { font-size: var(--fs-min); font-weight: 700; color: var(--ink-2); }
 .h-ring.is-done .ring-bg { fill: var(--c); }
 .h-ring.is-done .num { color: var(--c-ink); }
+.h-pinned-tile { gap: 6px; text-align: left; }
+.h-pinned { display: flex; flex-direction: column; gap: 4px; }
+.h-pinned li { font-size: 19px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-pinned i { display: inline-block; width: 8px; height: 8px; margin-right: 10px; vertical-align: middle; border-radius: 50%; background: #E4007C; }
+.h-pinned-tile .h-more { min-height: 0; padding: 0; margin-top: 0; font-size: 14px; }
+.h-pinned-empty { font-family: var(--serif); font-style: italic; font-size: 22px; color: var(--ink-2); }
 
 .h-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .h-shop, .h-status { display: flex; flex-direction: column; gap: 4px; }
