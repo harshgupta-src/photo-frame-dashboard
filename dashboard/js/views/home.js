@@ -174,6 +174,7 @@
   }
 
   function status() {
+    if (App.ha.ready) return haStatus();
     var lights = D.devices.filter(function (d) { return d.type === 'light' && d.on; }).length;
     var unlocked = D.devices.filter(function (d) { return d.type === 'lock' && !d.locked; });
     var garage = D.devices.filter(function (d) { return d.type === 'garage'; })[0];
@@ -183,6 +184,17 @@
       '<div class="h-st-row">' + App.icon('bulb', 24) + '<b class="num">' + lights + '</b><span>lights on</span></div>' +
       '<div class="h-st-row' + (secure ? '' : ' is-warn') + '">' + App.icon(secure ? 'lock' : 'unlock', 24) + '<span>' + secText + '</span></div>' +
       '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + D.climate.current + '°</b><span>inside</span></div>';
+  }
+
+  // Live from Home Assistant (js/ha.js): a tap turns that button's lights off if any are on, else on.
+  function haStatus() {
+    var loaded = !!App.ha.updated, inside = App.ha.inside();
+    return '<div class="label">Home</div>' + App.ha.lights().map(function (b) {
+      var state = !loaded ? '…' : !b.total ? 'None' : !b.on ? 'Off' : b.on === b.total ? 'On' : b.on + ' of ' + b.total + ' on';
+      return '<button class="h-st-row h-st-btn' + (b.on ? ' is-on' : '') + '" data-ha="' + b.id + '"' + (b.total ? '' : ' disabled') + '>' +
+        App.icon('bulb', 24) + '<span>' + App.esc(b.name) + '</span><b>' + state + '</b></button>';
+    }).join('') +
+      (inside == null ? '' : '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + inside + '°</b><span>inside</span></div>');
   }
 
   function paint() {
@@ -219,9 +231,12 @@
           '<div class="h-side">' +
           '  <button class="h-photo" data-go="photos"><div class="h-photo-stage"></div><div class="h-photo-cap"></div></button>' +
           '  <button class="h-chores card" data-go="tasks"></button>' +
-          '  <div class="h-duo"><button class="h-shop card" data-go="shopping"></button><button class="h-status card" data-go="control"></button></div>' +
+          '  <div class="h-duo"><button class="h-shop card" data-go="shopping"></button>' +
+          (App.ha.ready ? '<div class="h-status card"></div>' : '<button class="h-status card" data-go="control"></button>') + '</div>' +
           '</div></div>';
         el.addEventListener('click', function (e) {
+          var h = e.target.closest('[data-ha]');
+          if (h) { App.ha.toggle(h.dataset.ha); return; }
           var ev = e.target.closest('[data-ev]');
           if (ev) { App.eventSheet(App.findEvent(ev.dataset.ev)); return; }
           var g = e.target.closest('[data-go]');
@@ -244,4 +259,5 @@
     if (n.getMinutes() === 0) { paint(); }
   });
   App.on('data', function () { if (App.current === 'home') paint(); });
+  App.on('ha', function () { if (V.el && V.el.firstChild) V.el.querySelector('.h-status').innerHTML = status(); });
 })();

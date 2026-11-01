@@ -32,6 +32,7 @@ import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -43,12 +44,19 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+import org.json.JSONObject;
 
 /**
  * Full-screen kiosk WebView for the Home HQ wall tablet.
@@ -69,6 +77,10 @@ import java.util.Map;
  *     adb shell cmd package set-home-activity com.wesbos.homehq/.Home
  * - Wi-Fi with a sign-in page (captive portal): when the dashboard can't load on Wi-Fi, the kiosk
  *   checks for one and shows it, so the terms can be accepted; then it returns to the dashboard.
+ * - Home Assistant: the page calls HA through window.HomeHQ (see HaBridge), so the token stays on
+ *   the frame and never reaches the hosted dashboard. Use a long-lived token from a non-admin user:
+ *     adb shell am start -n com.wesbos.homehq/.MainActivity --es ha_url http://<ha-ip>:8123 --es ha_token <token>
+ *   An empty ha_token turns it off. Use the IP: Android 6 can't resolve .local names.
  */
 public class MainActivity extends Activity {
   static final String TAG = "HomeHQ";
@@ -126,6 +138,117 @@ public class MainActivity extends Activity {
     if (web == null || Float.isNaN(lux)) return;
     luxSentAt = SystemClock.uptimeMillis();
     web.evaluateJavascript("window.frameLux&&window.frameLux(" + lux + ")", null);
+  }
+
+  static final String PREF_HA_URL = "ha_url", PREF_HA_TOKEN = "ha_token";
+  static final int HA_TIMEOUT_MS = 8000, HA_MAX_BYTES = 1 << 20;
+  // What the page may ask HA for: read states and config, and call services in these domains.
+  static final Pattern HA_GET = Pattern.compile("/api/(config|states|states/[a-z0-9_]+\\.[a-z0-9_]+)");
+  static final Pattern HA_POST = Pattern.compile(
+      "/api/services/(light|switch|fan|climate|media_player|vacuum|scene|script)/[a-z0-9_]+");
+  private final ExecutorService haPool = Executors.newFixedThreadPool(2);
+  // The page in the WebView, for the bridge's origin check (JavascriptInterface runs off the UI thread).
+  private volatile String pageUrl;
+
+  /**
+   * window.HomeHQ. call() answers through window.haReply(id, status, text) with status 0 for a
+   * refused or failed request. Only the saved dashboard's origin (or the bundled site) may use it.
+   */
+  final class HaBridge {
+    @JavascriptInterface
+    public boolean haReady() {
+      return pageAllowed() && haPrefs()[0] != null && haPrefs()[1] != null;
+    }
+
+    @JavascriptInterface
+    public void call(final String id, final String method, final String path, final String body) {
+      if (!pageAllowed()) { reply(id, 0, "page not allowed"); return; }
+      boolean get = "GET".equals(method) && path != null && HA_GET.matcher(path).matches();
+      boolean post = "POST".equals(method) && path != null && HA_POST.matcher(path).matches();
+      if (!get && !post) { reply(id, 0, "request not allowed"); return; }
+      final String[] ha = haPrefs();
+      if (ha[0] == null || ha[1] == null) { reply(id, 0, "Home Assistant not set up"); return; }
+      haPool.execute(() -> {
+        HttpURLConnection c = null;
+        try {
+          c = (HttpURLConnection) new URL(ha[0] + path).openConnection();
+          c.setConnectTimeout(HA_TIMEOUT_MS);
+          c.setReadTimeout(HA_TIMEOUT_MS);
+          c.setInstanceFollowRedirects(false);
+          c.setRequestMethod(method);
+          c.setRequestProperty("Authorization", "Bearer " + ha[1]);
+          if (post) {
+            byte[] out = (body == null || body.isEmpty() ? "{}" : body).getBytes(StandardCharsets.UTF_8);
+            c.setDoOutput(true);
+            c.setRequestProperty("Content-Type", "application/json");
+            c.setFixedLengthStreamingMode(out.length);
+            try (OutputStream o = c.getOutputStream()) { o.write(out); }
+          }
+          int status = c.getResponseCode();
+          InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
+          reply(id, status, in == null ? "" : readAll(in));
+        } catch (IOException e) {
+          Log.w(TAG, "Home Assistant " + method + " " + path + " failed: " + e.getMessage());
+          reply(id, 0, "Home Assistant unreachable");
+        } finally {
+          if (c != null) c.disconnect();
+        }
+      });
+    }
+  }
+
+  private boolean pageAllowed() {
+    String page = pageUrl;
+    if (page == null) return false;
+    Uri p = Uri.parse(page), d = Uri.parse(savedUrl());
+    if ("http".equalsIgnoreCase(p.getScheme()) && LOCAL_HOST.equals(p.getHost()) && p.getPort() == LOCAL_PORT) return true;
+    return "https".equalsIgnoreCase(p.getScheme()) && "https".equalsIgnoreCase(d.getScheme())
+        && p.getHost() != null && p.getHost().equalsIgnoreCase(d.getHost()) && p.getPort() == d.getPort();
+  }
+
+  private String[] haPrefs() {
+    android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+    return new String[] {p.getString(PREF_HA_URL, null), p.getString(PREF_HA_TOKEN, null)};
+  }
+
+  private void reply(String id, int status, String text) {
+    final String js = "window.haReply&&window.haReply(" + JSONObject.quote(id) + "," + status + ","
+        + JSONObject.quote(text) + ")";
+    handler.post(() -> { if (web != null) web.evaluateJavascript(js, null); });
+  }
+
+  static String readAll(InputStream in) throws IOException {
+    try (InputStream i = in) {
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      byte[] buf = new byte[8192];
+      for (int n; (n = i.read(buf)) > 0; ) {
+        out.write(buf, 0, n);
+        if (out.size() > HA_MAX_BYTES) throw new IOException("response too large");
+      }
+      return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    }
+  }
+
+  /** ha_url / ha_token extras from adb. The token is never logged. */
+  private void applyHaConfig(Intent intent) {
+    android.content.SharedPreferences.Editor e = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
+    boolean changed = false;
+    String url = intent.getStringExtra(PREF_HA_URL);
+    if (url != null) {
+      String scheme = Uri.parse(url).getScheme();
+      if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+        e.putString(PREF_HA_URL, url.replaceAll("/+$", ""));
+        changed = true;
+        Log.i(TAG, "Home Assistant URL saved: " + forLog(url));
+      } else Log.w(TAG, "Ignoring non-web Home Assistant URL");
+    }
+    String token = intent.getStringExtra(PREF_HA_TOKEN);
+    if (token != null) {
+      if (token.trim().isEmpty()) e.remove(PREF_HA_TOKEN); else e.putString(PREF_HA_TOKEN, token.trim());
+      changed = true;
+      Log.i(TAG, token.trim().isEmpty() ? "Home Assistant token removed" : "Home Assistant token saved");
+    }
+    if (changed) e.apply();
   }
   private Button menuButton;
   private final Handler handler = new Handler(Looper.getMainLooper());
@@ -214,6 +337,7 @@ public class MainActivity extends Activity {
     super.onCreate(state);
     applyDebugFlag(getIntent());
     applyHomeFlag(getIntent());
+    applyHaConfig(getIntent());
     keepNavigationEnabled();
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         | WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -237,6 +361,7 @@ public class MainActivity extends Activity {
       public void onPageStarted(WebView view, String url, Bitmap icon) {
         pageFailed = false;
         mainUrl = url;
+        pageUrl = url;
       }
 
       @Override
@@ -306,6 +431,7 @@ public class MainActivity extends Activity {
         handler.postDelayed(retry, RETRY_MS);
       }
     });
+    web.addJavascriptInterface(new HaBridge(), "HomeHQ");
     LinearLayout column = new LinearLayout(this);
     column.setOrientation(LinearLayout.VERTICAL);
     column.addView(buildPortalBar());
@@ -371,6 +497,7 @@ public class MainActivity extends Activity {
     setIntent(intent);
     applyDebugFlag(intent);
     applyHomeFlag(intent);
+    applyHaConfig(intent);
     applyMenuButtonFlag(intent);
     String url = urlFrom(intent);
     if (url != null) {
@@ -772,6 +899,7 @@ public class MainActivity extends Activity {
   protected void onDestroy() {
     unregisterReceiver(networkChange);
     handler.removeCallbacksAndMessages(null);
+    haPool.shutdownNow();
     if (web != null) web.destroy();
     super.onDestroy();
   }

@@ -128,3 +128,10 @@
 .h-st-row span { color: var(--ink-2); }
 .h-st-row.is-warn { color: #B45F00; font-weight: 800; }
 .h-st-row.is-warn span { color: inherit; }
+.h-st-btn { min-height: 48px; margin: 0 -10px; padding: 0 10px; width: calc(100% + 20px); border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; font-size: 17px; text-align: left; }
+.h-st-btn span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-st-btn b { font-size: 16px; font-weight: 800; color: var(--mute); white-space: nowrap; }
+.h-st-btn.is-on { background: rgb(var(--warm-rgb) / .28); }
+.h-st-btn.is-on b, .h-st-btn.is-on span { color: var(--ink); }
+.h-st-btn:active { transform: scale(.97); }
+.h-st-btn:disabled { opacity: .5; }
