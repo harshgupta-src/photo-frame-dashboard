@@ -64,6 +64,30 @@ adb shell am start -n com.wesbos.homehq/.MainActivity --es url 'https://frame-da
 - Without internet, the frame shows the native offline screen and comes back on its own. To use
   the bundled copy instead, save `http://127.0.0.1:8765/` as the URL (see below).
 
+## Home Assistant
+
+The page talks to Home Assistant through the kiosk (`window.HomeHQ`, used by `js/ha.js`), so the
+token lives in the app's private storage on the frame and never ships with the hosted dashboard.
+The bridge only answers pages from the saved dashboard origin (or the bundled site), only reads
+`/api/states` and `/api/config`, and only calls services in the light, switch, fan, climate,
+media_player, vacuum, scene and script domains.
+
+1. In HA, add a user for the frame with **Administrator off**, log in as it, and create a
+   long-lived access token (Profile → Security).
+2. Save it on the frame over USB. Use HA's IP address: Android 6 can't resolve `.local` names.
+
+   ```sh
+   adb shell am start -n com.wesbos.homehq/.MainActivity --es ha_url http://<ha-ip>:8123 \
+     --es ha_token "$(cat ~/.config/homehq/ha-token)"
+   ```
+
+   An empty `ha_token` turns it off. Reload the dashboard to pick up a change.
+
+The Today screen's Home card then shows `VITE_HA_ROOM` (for example
+`Living room:light.living_room_*`) and All lights as buttons, plus the thermostat's inside
+temperature. A tap turns those lights off if any are on, otherwise on. Bulbs inside an HA light
+group count as the group.
+
 ## A page bundled in the APK (no server)
 
 A static page can ship inside the APK instead of being hosted. Build with `KIOSK_SITE` set to a
