@@ -105,6 +105,14 @@ export class WalkLog extends DurableObject {
       const a = this.active();
       if (a && a.id !== id) throw new WalkError('another walk is already active', 409, { active: walkJSON(a, this.tz) });
     }
+    // Remember people's names from the frame, for walks logged by id only (Shortcut, API).
+    const names = JSON.parse(this.meta('names') || '{}');
+    let learned = false;
+    f.walkers = f.walkers.map(({ id, name, named }) => {
+      if (named && names[id] !== name) { names[id] = name; learned = true; }
+      return { id, name: named ? name : names[id] || name };
+    });
+    if (learned) this.setMeta('names', JSON.stringify(names));
     if (f.tz) this.setMeta('tz', f.tz);
     if (f.dog) this.setMeta('dog', f.dog);
     const w = {

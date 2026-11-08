@@ -26,8 +26,8 @@ test('shifts times by the client clock error when it reports one', () => {
 });
 
 test('walkers from ids, names or a phrase; booleans from Shortcut answers', () => {
-  assert.deepEqual(walkersOf('Harsh and Ambuja'), [{ id: 'harsh', name: 'Harsh' }, { id: 'ambuja', name: 'Ambuja' }]);
-  assert.deepEqual(walkersOf([{ id: 'harsh', name: 'Harsh' }, 'harsh']), [{ id: 'harsh', name: 'Harsh' }]);
+  assert.deepEqual(walkersOf('Harsh and ambuja'), [{ id: 'harsh', name: 'Harsh', named: false }, { id: 'ambuja', name: 'Ambuja', named: false }]);
+  assert.deepEqual(walkersOf([{ id: 'harsh', name: 'Harsh G' }, 'harsh']), [{ id: 'harsh', name: 'Harsh G', named: true }]);
   const f = normalize({ startedAt: now - 60e3, pee: 'Yes', poop: 'No' }, now);
   assert.equal(f.pee, true);
   assert.equal(f.poop, false);

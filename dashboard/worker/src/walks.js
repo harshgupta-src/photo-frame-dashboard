@@ -34,7 +34,9 @@ export function walkersOf(v) {
   for (const w of v.slice(0, 4)) {
     const name = clean(typeof w === 'object' && w ? w.name || w.id : w, 40);
     const id = clean(typeof w === 'object' && w ? w.id || name : w, 32).toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    if (id && !out.some((x) => x.id === id)) out.push({ id, name: name || id });
+    // A bare id ("harsh", from a Shortcut) gets a capitalised name until the frame's names are known.
+    const named = typeof w === 'object' && w && w.name;
+    if (id && !out.some((x) => x.id === id)) out.push({ id, name: named ? name : name.charAt(0).toUpperCase() + name.slice(1), named: !!named });
   }
   return out;
 }
