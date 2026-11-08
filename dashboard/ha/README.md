@@ -16,8 +16,12 @@ iPhone Shortcut ──POST──▶ Worker /reminders ──HA pulls every 2 min
 Add the **CalDAV** integration: URL `https://caldav.icloud.com/`, the Apple ID, and an
 [app-specific password](https://support.apple.com/en-us/102654). Each iCloud calendar becomes a
 `calendar.*` entity that automations can trigger on. CalDAV can add events but not edit or delete
-them. Map calendars to people in the dashboard's `.env.local`, for example a personal calendar each
-and a shared one:
+them.
+
+The frame keeps reading calendars from the Worker: HA's CalDAV asks iCloud live on every request
+(about 10 seconds per calendar over the frame's 52-day window), which is too slow for a 5-minute
+refresh through the kiosk bridge. To read them from HA anyway, map calendars to people in the
+dashboard's `.env.local`, for example a personal calendar each and a shared one:
 
 ```
 VITE_HA_CALENDARS=calendar.alexs_calendar:alex,calendar.jordans_calendar:jordan,calendar.family:alex+jordan
