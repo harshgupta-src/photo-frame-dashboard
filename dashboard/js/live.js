@@ -35,9 +35,12 @@
     for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
     return 'i' + (h >>> 0).toString(36);
   }
+  // Walks logged on the frame are mirrored to the family calendar for phones (WALKS.md). The walk
+  // tile already shows them, so they're kept off the frame's schedule (UID dog-walk-…).
+  function isWalk(e) { return /(^|\|)dog-walk-/.test(e.id); }
   function apply(j) {
     var seen = {};
-    D.events = j.events.map(function (e) {
+    D.events = j.events.filter(function (e) { return !isWalk(e); }).map(function (e) {
       var id = safeId(e.id);
       while (seen[id]) id += 'x';
       seen[id] = 1;

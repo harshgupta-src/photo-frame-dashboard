@@ -45,6 +45,53 @@
 .h-walk-sub { font-family: var(--serif); font-size: 20px; line-height: 1.1; }
 .h-walk-now { display: flex; align-items: center; gap: 6px; font-size: 16px; opacity: .85; }
 .h-walk-now b { font-weight: 800; }
+/* Walk timer (js/walk.js): the whole tile is the button; "Start" is a hint, not a separate target. */
+.h-walk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.h-walk-head .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-walk-go {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px 0 9px;
+  border-radius: 99px; background: rgb(0 0 0 / .18); font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+}
+.h-walk--2 .h-walk-go { background: rgb(0 0 0 / .1); }
+.h-walk-last { font-size: 16px; font-weight: 700; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-walk-sync { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: currentColor; opacity: .7; vertical-align: middle; }
+.h-walk--out { --c: #0E7C86; --c-ink: #fff; gap: 2px; }
+.h-walk-x { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin: -8px -10px -8px 0; border-radius: 50%; color: inherit; opacity: .75; }
+.h-walk-x:active { background: rgb(255 255 255 / .2); }
+.h-walk-timer { font-size: 64px; line-height: 1; font-weight: 800; font-stretch: 75%; letter-spacing: -.01em; }
+.h-walk-stale { font-size: 15px; font-weight: 700; }
+.h-walk-back {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 42px; margin-top: 4px; padding: 0 16px 0 12px;
+  border-radius: 99px; background: #fff; color: #0E7C86; font-size: 18px; font-weight: 800;
+}
+.h-walk:active { filter: brightness(.94); }
+
+/* End-of-walk sheet */
+.walk-sheet .ws-k { width: 64px; font-size: var(--fs-label); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); }
+.ws-time { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ws-time b { min-width: 120px; font-size: 30px; font-weight: 700; }
+.ws-togs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.ws-tog {
+  display: flex; align-items: center; gap: 12px; height: 76px; padding: 0 18px; border-radius: var(--r-s);
+  background: var(--paper-2); color: var(--ink); font-size: 24px; font-weight: 700; border: 2px solid transparent;
+}
+.ws-tog .ws-emoji { font-size: 30px; filter: grayscale(1); opacity: .5; }
+.ws-tog .ws-check { margin-left: auto; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); color: transparent; }
+.ws-tog.is-on { border-color: #0E7C86; background: rgb(14 124 134 / .12); }
+.ws-tog.is-on .ws-emoji { filter: none; opacity: 1; }
+.ws-tog.is-on .ws-check { background: #0E7C86; border-color: #0E7C86; color: #fff; }
+.ws-who { display: flex; align-items: center; gap: 10px; }
+.ws-person { opacity: .55; }
+.ws-person.is-on { opacity: 1; color: var(--ink); background: rgb(var(--c-rgb) / .22); box-shadow: inset 0 0 0 2px rgb(var(--c-rgb)); }
+.walk-sheet .ws-del { color: var(--alert); margin-right: auto; }
+.walk-sheet .ws-save { min-width: 160px; }
+.walk-list { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; }
+.walk-list .wl-day { margin: 14px 0 4px; font-size: var(--fs-label); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); }
+.wl-row {
+  display: grid; grid-template-columns: 190px 90px 70px 1fr; align-items: center; gap: 10px; width: 100%; min-height: 56px;
+  padding: 0 6px; border-bottom: 1px solid var(--line); text-align: left; font-size: 20px; color: var(--ink);
+}
+.wl-row small { font-size: 16px; color: var(--mute); text-align: right; }
 
 /* ---- main column */
 .h-main { grid-column: 1 / 8; display: grid; grid-template-rows: 232px 1fr; gap: 16px; min-height: 0; }

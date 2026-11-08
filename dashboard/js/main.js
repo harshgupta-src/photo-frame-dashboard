@@ -5,6 +5,7 @@ import './data.js';
 import './app.js';
 import './theme.js';
 import './live.js';
+import './walk.js';
 import './ha.js';
 import './system.js';
 import './slideshow.js';

@@ -51,6 +51,14 @@ same body; no Authorization header) and remove `reminders-pull.yaml`. Ticks made
 reach Apple Reminders by themselves: a Shortcut has to read the completed items from HA and
 complete them in Reminders.
 
+## Dog walk log in the Obsidian vault
+
+`walk-log.sh` copies the Worker's walk log (`GET /walks/log.md`, see `../WALKS.md`) into a vault
+note, for agents that read the vault. Copy it to `/config/frame-walk-log.sh`, put the Worker's
+AGENT_KEY (read-only; `node worker/scripts/walk-keys.mjs`) in `/config/.frame_agent_key` with
+`chmod 600`, and add the two parts of `walk-log.yaml` to `configuration.yaml` and
+`automations.yaml`. Restart HA. The note is rewritten only when a walk changes.
+
 ## The frame as a device (MQTT)
 
 The kiosk can register the frame as a Home Assistant device over MQTT discovery: screen on/off,

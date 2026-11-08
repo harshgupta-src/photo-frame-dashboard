@@ -38,12 +38,185 @@
     return { level: 0, title: 'No jacket', sub: 'Normal walk' };
   }
 
+  // ---- walk timer (js/walk.js): tap the tile to start a walk, tap again when back to log it.
+  var STALE = 150 * 60e3; // still "out" after 2.5 h: somebody forgot to stop it
+  function dur(ms) {
+    var t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+  function ago(ms) {
+    var m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm ago';
+    var h = Math.floor(m / 60);
+    return h < 24 ? h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '') + ' ago' : Math.floor(h / 24) + 'd ago';
+  }
+  function potty(w) { return (w.pee ? '💧' : '') + (w.poop ? '💩' : '') || 'no potty'; }
+  function walkers(w) { return (w.walkers || []).map(function (p) { return p.name; }).join(' & '); }
+  function sync() { return App.walk.pending ? '<i class="h-walk-sync" title="Not synced yet"></i>' : ''; }
+
   function walk() {
-    var w = App.weatherNow(), m = walkPlan(w);
-    return '<div class="label">' + App.esc(window.CONFIG.dog) + '’s walk</div>' +
+    var W = App.walk, dog = App.esc(window.CONFIG.dog), a = W.active;
+    if (a && !a.endedAt) {
+      var stale = Date.now() - a.startedAt > STALE;
+      return '<div class="h-walk-head"><div class="label">' + dog + '’s out · ' + App.fmt.time(new Date(a.startedAt)) + sync() + '</div>' +
+        '<button class="h-walk-x" data-walk="cancel" aria-label="Cancel walk">' + App.icon('x', 22) + '</button></div>' +
+        '<div class="h-walk-timer num">' + dur(Date.now() - a.startedAt) + '</div>' +
+        (stale ? '<div class="h-walk-stale">Still out? Tap to fix</div>' : '') +
+        '<div class="h-walk-back">' + App.icon('check', 22) + 'I’m back</div>';
+    }
+    var w = App.weatherNow(), m = walkPlan(w), last = W.recent[0];
+    return '<div class="h-walk-head"><div class="label">' + dog + '’s walk' + sync() + '</div>' +
+      '<span class="h-walk-go">' + App.icon('play', 16) + 'Start</span></div>' +
       '<div class="h-walk-title">' + m.title + '</div>' +
       '<div class="h-walk-sub">' + m.sub + '</div>' +
-      '<div class="h-walk-now">' + App.icon(w.cond, 20) + '<b class="num">' + w.temp + '°</b><span>' + w.label + '</span></div>';
+      (last
+        ? '<div class="h-walk-last" data-walk="history">Walked ' + ago(last.endedAt) + ' · ' + potty(last) + '</div>'
+        : '<div class="h-walk-now">' + App.icon(w.cond, 20) + '<b class="num">' + w.temp + '°</b><span>' + w.label + '</span></div>');
+  }
+  function paintWalk() {
+    var mel = V.el && V.el.querySelector('.h-walk');
+    if (!mel) return;
+    var a = App.walk.active, out = a && !a.endedAt;
+    mel.className = 'h-walk ' + (out ? 'h-walk--out' : 'h-walk--' + walkPlan(App.weatherNow()).level);
+    mel.dataset.walk = out ? 'back' : 'start';
+    mel.innerHTML = walk();
+  }
+
+  // End-of-walk (or edit) sheet. The common case is one tap: pee yes, poop no, walked by the first
+  // person in VITE_PEOPLE, so just Save.
+  function walkSheet(rec, opts) {
+    opts = opts || {};
+    var r = {
+      id: rec.id, startedAt: rec.startedAt, endedAt: rec.endedAt, notes: rec.notes || '',
+      pee: rec.pee == null ? true : rec.pee, poop: rec.poop == null ? false : rec.poop,
+      walkers: rec.walkers && rec.walkers.length ? rec.walkers.slice() : App.walk.defaultWalkers()
+    };
+    var guessed = opts.finishing && r.endedAt - r.startedAt > STALE;
+    if (guessed) r.endedAt = r.startedAt + App.walk.typical();
+    var saved = false, dismissed = false, dog = App.esc(window.CONFIG.dog);
+    var people = window.CONFIG.people;
+    function nudgeRow(k, label) {
+      return '<div class="ws-time"><span class="ws-k">' + label + '</span><b class="num" data-ws-t="' + k + '"></b>' +
+        '<button class="icon-btn" data-ws="' + k + '-">' + App.icon('minus', 22) + '</button>' +
+        '<button class="icon-btn" data-ws="' + k + '+">' + App.icon('plus', 22) + '</button></div>';
+    }
+    var html = '<div class="sheet-pad walk-sheet">' +
+      '<div class="label">' + dog + '’s walk' + (opts.finishing ? '' : ' · ' + App.esc(dayName(r.startedAt))) + '</div>' +
+      '<h2 class="sheet-h serif"><span class="num" data-ws-t="min"></span></h2>' +
+      (guessed ? '<p class="sheet-p">Nobody stopped the timer, so the end time is a guess. Adjust it if you know.</p>' : '') +
+      nudgeRow('s', 'Left') + nudgeRow('e', 'Back') +
+      '<div class="ws-togs">' +
+      '<button class="ws-tog" data-ws="pee"><span class="ws-emoji">💧</span>Pee<i class="ws-check">' + App.icon('check', 22) + '</i></button>' +
+      '<button class="ws-tog" data-ws="poop"><span class="ws-emoji">💩</span>Poop<i class="ws-check">' + App.icon('check', 22) + '</i></button></div>' +
+      '<div class="ws-who"><span class="ws-k">With</span><div class="chips">' + people.map(function (p) {
+        return '<button class="chip ws-person" data-ws-p="' + App.esc(p.id) + '" style="' + App.pstyle(p) + '">' + App.avatar(p, 34) + App.esc(p.name) + '</button>';
+      }).join('') + '</div></div>' +
+      '<div class="sheet-actions">' +
+      (opts.finishing ? '' : '<button class="btn btn--ghost ws-del" data-ws="delete">Delete</button>') +
+      '<button class="btn btn--solid ws-save" data-ws="save">' + App.icon('check', 22) + 'Save</button></div></div>';
+    App.sheet(html, {
+      cls: 'sheet--walk',
+      onMount: function (el, close) {
+        function paint() {
+          el.querySelector('[data-ws-t="min"]').textContent = App.fmt.mins((r.endedAt - r.startedAt) / 60000);
+          el.querySelector('[data-ws-t="s"]').textContent = App.fmt.time(new Date(r.startedAt));
+          el.querySelector('[data-ws-t="e"]').textContent = App.fmt.time(new Date(r.endedAt));
+          el.querySelector('[data-ws="pee"]').classList.toggle('is-on', !!r.pee);
+          el.querySelector('[data-ws="poop"]').classList.toggle('is-on', !!r.poop);
+          App.$$('[data-ws-p]', el).forEach(function (b) {
+            b.classList.toggle('is-on', r.walkers.some(function (w) { return w.id === b.dataset.wsP; }));
+          });
+        }
+        paint();
+        // X or a tap outside: "not back yet" for a walk being finished. Capture runs before close().
+        el.parentNode.addEventListener('click', function (e) {
+          if (e.target.closest('[data-close]') || e.target.classList.contains('sheet-scrim')) dismissed = true;
+        }, true);
+        el.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-ws], [data-ws-p]');
+          if (!b) return;
+          var k = b.dataset.ws, step = 5 * 60e3, now = Date.now();
+          if (k === 's-') r.startedAt -= step;
+          else if (k === 's+') r.startedAt = Math.min(r.startedAt + step, r.endedAt - 60e3);
+          else if (k === 'e-') r.endedAt = Math.max(r.endedAt - step, r.startedAt + 60e3);
+          else if (k === 'e+') r.endedAt = Math.min(r.endedAt + step, now);
+          else if (k === 'pee' || k === 'poop') r[k] = !r[k];
+          else if (b.dataset.wsP) {
+            var id = b.dataset.wsP, has = r.walkers.some(function (w) { return w.id === id; });
+            var p = people.filter(function (x) { return x.id === id; })[0];
+            if (has && r.walkers.length > 1) r.walkers = r.walkers.filter(function (w) { return w.id !== id; });
+            else if (!has) r.walkers = r.walkers.concat([{ id: p.id, name: p.name }]);
+          } else if (k === 'save') { saved = true; close(); return; }
+          else if (k === 'delete') { close(); removeWalk(rec); return; }
+          if (r.endedAt - r.startedAt > 6 * 3600e3) r.startedAt = r.endedAt - 6 * 3600e3;
+          paint();
+        });
+      },
+      onClose: function () {
+        if (opts.finishing && dismissed && !saved) { App.walk.resume(); return; }
+        // Saved, or closed by the idle timer while finishing: log it as it stands.
+        if (saved || opts.finishing) {
+          App.walk.save(r);
+          if (opts.finishing) App.toast('Walk logged · ' + App.fmt.mins((r.endedAt - r.startedAt) / 60000) + ' · ' + potty(r), { icon: 'check' });
+        }
+      }
+    });
+  }
+  function removeWalk(rec) {
+    App.walk.remove(rec);
+    App.toast('Walk deleted', { icon: 'x', undo: function () { App.walk.restore(rec); } });
+  }
+  function dayName(ms) {
+    var d = new Date(ms), t = new Date(), y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
+    if (d.toDateString() === t.toDateString()) return 'Today';
+    if (d.toDateString() === y.toDateString()) return 'Yesterday';
+    return App.fmt.dayShort(d) + ' ' + App.fmt.monthShort(d) + ' ' + d.getDate();
+  }
+  function historySheet() {
+    var list = App.walk.recent, dog = App.esc(window.CONFIG.dog), today = new Date().toDateString();
+    var tw = list.filter(function (w) { return new Date(w.startedAt).toDateString() === today; });
+    var mins = tw.reduce(function (s, w) { return s + (w.endedAt - w.startedAt) / 60000; }, 0);
+    var lastPee = list.filter(function (w) { return w.pee; })[0], lastPoop = list.filter(function (w) { return w.poop; })[0];
+    var day = null, rows = list.map(function (w) {
+      var d = dayName(w.startedAt), head = d !== day ? '<li class="wl-day">' + d + '</li>' : '';
+      day = d;
+      return head + '<li><button class="wl-row" data-wid="' + App.esc(w.id) + '">' +
+        '<b class="num">' + App.fmt.time(new Date(w.startedAt), false) + '–' + App.fmt.time(new Date(w.endedAt)) + '</b>' +
+        '<span>' + App.fmt.mins((w.endedAt - w.startedAt) / 60000) + '</span><span>' + potty(w) + '</span>' +
+        '<small>' + App.esc(walkers(w)) + '</small></button></li>';
+    }).join('');
+    App.sheet('<div class="sheet-pad"><div class="label">' + dog + '’s walks · last 14 days</div>' +
+      '<h2 class="sheet-h serif">Today: ' + tw.length + (tw.length === 1 ? ' walk' : ' walks') + (tw.length ? ', ' + App.fmt.mins(mins) : '') + '</h2>' +
+      '<p class="sheet-p">' + (lastPee ? 'Last pee ' + ago(lastPee.endedAt) : 'No pee logged') + ' · ' +
+      (lastPoop ? 'last poop ' + ago(lastPoop.endedAt) : 'no poop logged') + '. Tap a walk to fix it.</p>' +
+      (rows ? '<ul class="walk-list">' + rows + '</ul>' : '<p class="sheet-p">No walks yet.</p>') + '</div>', {
+      onMount: function (el) {
+        el.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-wid]');
+          if (!b) return;
+          var w = App.walk.recent.filter(function (x) { return x.id === b.dataset.wid; })[0];
+          if (w) walkSheet(w);
+        });
+      }
+    });
+  }
+  function walkTap(kind) {
+    var W = App.walk;
+    if (kind === 'history') { historySheet(); return; }
+    if (kind === 'cancel') {
+      var a = W.active;
+      if (!a) return;
+      W.remove(a);
+      App.toast('Walk cancelled', { icon: 'x', undo: function () { W.restore(a); } });
+      return;
+    }
+    if (kind === 'back') { var rec = W.back(); if (rec) walkSheet(rec, { finishing: true }); return; }
+    if (kind === 'start' && W.start()) {
+      App.toast(App.esc(window.CONFIG.dog) + '’s walk started · tap the tile when you’re back', {
+        icon: 'clock', undo: function () { if (W.active) W.remove(W.active); }
+      });
+    }
   }
   App.walkPlan = walkPlan;
 
@@ -219,9 +392,7 @@
     var el = V.el;
     el.querySelector('.h-clock').innerHTML = clock();
     el.querySelector('.h-weather').innerHTML = weather();
-    var mel = el.querySelector('.h-walk');
-    mel.className = 'h-walk h-walk--' + walkPlan(App.weatherNow()).level;
-    mel.innerHTML = walk();
+    paintWalk();
     el.querySelector('.h-hero-slot').innerHTML = hero();
     fitHero(el);
     el.querySelector('.h-lanes').innerHTML = lanes();
@@ -244,7 +415,7 @@
         el.innerHTML = '<div class="home">' +
           '<div class="h-clock" data-go="calendar"></div>' +
           '<div class="h-weather"></div>' +
-          '<div class="h-walk"></div>' +
+          '<div class="h-walk" role="button"></div>' +
           '<div class="h-main"><div class="h-hero-slot"></div><div class="h-lanes" style="grid-template-columns:repeat(' + D.people.length + ',1fr)"></div></div>' +
           '<div class="h-side">' +
           '  <button class="h-photo" data-go="photos"><div class="h-photo-stage"></div><div class="h-photo-cap"></div></button>' +
@@ -253,6 +424,8 @@
           (App.ha.ready ? '<div class="h-status card"></div>' : '<button class="h-status card" data-go="control"></button>') + '</div>' +
           '</div></div>';
         el.addEventListener('click', function (e) {
+          var wk = e.target.closest('[data-walk]');
+          if (wk) { walkTap(wk.dataset.walk); return; }
           var h = e.target.closest('[data-ha]');
           if (h) { App.ha.toggle(h.dataset.ha); return; }
           var ev = e.target.closest('[data-ev]');
@@ -274,8 +447,15 @@
     V.el.querySelector('.h-clock').innerHTML = clock();
     V.el.querySelector('.h-hero-slot').innerHTML = hero();
     fitHero(V.el);
+    paintWalk();
     if (n.getMinutes() === 0) { paint(); }
   });
+  // The walk timer ticks on its own: only its text changes.
+  App.on('second', function () {
+    var t = App.walk.active && !App.walk.active.endedAt && V.el && V.el.querySelector('.h-walk-timer');
+    if (t) t.textContent = dur(Date.now() - App.walk.active.startedAt);
+  });
+  App.on('walk', paintWalk);
   App.on('data', function () { if (App.current === 'home') paint(); });
   App.on('ha', function () { if (V.el && V.el.firstChild) V.el.querySelector('.h-status').innerHTML = status(); });
 })();

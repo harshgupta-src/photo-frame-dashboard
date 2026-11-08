@@ -41,6 +41,16 @@
 [data-orient="portrait"] .h-walk-title { font-size: 34px; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-sub { font-size: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-now { display: none; }
+[data-orient="portrait"] .h-walk-head { display: contents; }
+[data-orient="portrait"] .h-walk-head .label { white-space: normal; overflow: visible; }
+[data-orient="portrait"] .h-walk-go { order: 9; margin-left: auto; }
+[data-orient="portrait"] .h-walk-last { order: 8; margin-left: auto; font-size: 17px; }
+[data-orient="portrait"] .h-walk-last + .h-walk-go, [data-orient="portrait"] .h-walk-last ~ .h-walk-go { margin-left: 0; }
+[data-orient="portrait"] .h-walk--out .label { width: 120px; }
+[data-orient="portrait"] .h-walk-timer { font-size: 54px; }
+[data-orient="portrait"] .h-walk-stale { max-width: 150px; }
+[data-orient="portrait"] .h-walk-back { order: 8; margin: 0 0 0 auto; align-self: center; }
+[data-orient="portrait"] .h-walk-x { order: 9; margin: 0 -8px 0 0; }
 
 [data-orient="portrait"] .h-main { grid-column: 1 / 13; grid-row: 3; grid-template-rows: 190px minmax(0, 1fr); }
 [data-orient="portrait"] .h-lane { overflow: hidden; }

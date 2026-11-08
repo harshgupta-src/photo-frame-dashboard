@@ -5,11 +5,12 @@
   var amb = { show: null }, shiftTimer = null;
 
   function ambientInfo() {
-    var n = App.now(), w = App.weatherNow(), next = App.nextEvent();
+    var n = App.now(), w = App.weatherNow(), next = App.nextEvent(), wa = App.walk && App.walk.active;
     return '<div class="amb-clock"><div class="amb-time num">' + App.fmt.time(n, false) + '</div>' +
       '<div class="amb-date">' + App.fmt.day(n) + ', ' + App.fmt.month(n) + ' ' + n.getDate() + '</div></div>' +
       '<div class="amb-right">' +
       '<div class="amb-wx">' + App.icon(w.cond, 20) + '<span class="num">' + w.temp + '°</span><small>' + w.summary + '</small></div>' +
+      (wa ? '<div class="amb-next amb-walk">🐾 ' + App.esc(window.CONFIG.dog) + '’s out · ' + App.fmt.mins(Math.max(1, Math.round((Date.now() - wa.startedAt) / 60000))) + '</div>' : '') +
       (next ? '<div class="amb-next" style="' + App.pstyle(App.evColor(next)) + '"><i></i>' + App.esc(next.title) + ' · ' + App.fmt.time(next.start) + '</div>' : '') +
       '<div class="amb-who">' + D.people.map(function (p) { return App.avatar(p, 20, p.home ? '' : 'avatar--away'); }).join('') + '</div>' +
       '</div>';
@@ -38,4 +39,5 @@
     App.resetIdle();
   });
   App.on('minute', paint);
+  App.on('walk', paint);
 })();

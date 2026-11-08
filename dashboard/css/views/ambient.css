@@ -18,6 +18,7 @@
   font-size: 13px; font-weight: 700; max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .amb-next i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1.5px #fff; }
+.amb-walk { background: rgba(14, 124, 134, .85); }
 .amb-who { display: flex; gap: 4px; }
 .amb-who .avatar--away { background: rgba(0, 0, 0, .3); }
 

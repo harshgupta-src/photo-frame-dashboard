@@ -1,0 +1,21 @@
+# Dog walk log → Obsidian vault (see ../WALKS.md). Two parts:
+#
+# 1. configuration.yaml (and copy walk-log.sh to /config/frame-walk-log.sh, the Worker's AGENT_KEY
+#    to /config/.frame_agent_key with chmod 600):
+shell_command:
+  frame_walk_log: >-
+    /bin/sh /config/frame-walk-log.sh https://frame-data.<your-subdomain>.workers.dev
+    "/share/obsidian/<vault>/Areas/Household/Rex Walk Log.md"
+#
+# 2. automations.yaml: every 5 minutes (the script only writes when the log changed).
+- id: frame_walk_log
+  alias: Dog walk log to vault
+  description: Copies the frame-data Worker's walk log (GET /walks/log.md) into the Obsidian vault.
+  mode: single
+  triggers:
+    - trigger: time_pattern
+      minutes: /5
+    - trigger: homeassistant
+      event: start
+  actions:
+    - action: shell_command.frame_walk_log
