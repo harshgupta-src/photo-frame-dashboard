@@ -23,7 +23,7 @@
 
 /* ---------------------------------------------------------------- Today
    Grouped top to bottom: now + outside (clock, weather, and Maya's walk as a strip right under the
-   weather it's based on) / schedule (hero + lanes) / photo beside the list / shopping + home.
+   weather it's based on) / schedule (hero + lanes) / photo beside the list, with shopping + home under the list.
    .h-side's tiles join the .home grid so they can be placed with the walk tile (a .home child). */
 [data-orient="portrait"] .home { grid-template-rows: 172px 76px 452px minmax(0, 1fr) 150px; }
 [data-orient="portrait"] .h-clock { grid-column: 1 / 6; grid-row: 1; }
@@ -47,9 +47,11 @@
 [data-orient="portrait"] .h-ev { min-height: 56px; }
 
 [data-orient="portrait"] .h-side { display: contents; }
-[data-orient="portrait"] .h-photo { grid-column: 1 / 7; grid-row: 4; }
-[data-orient="portrait"] .h-chores { grid-column: 7 / 13; grid-row: 4; min-height: 0; overflow: hidden; }
-[data-orient="portrait"] .h-duo { grid-column: 1 / 13; grid-row: 5; }
+/* The photo spans both bottom rows so it's portrait-shaped; the list and shopping + home stack beside it. */
+[data-orient="portrait"] .h-photo { grid-column: 1 / 6; grid-row: 4 / 6; }
+[data-orient="portrait"] .h-chores { grid-column: 6 / 13; grid-row: 4; min-height: 0; overflow: hidden; }
+[data-orient="portrait"] .h-duo { grid-column: 6 / 13; grid-row: 5; min-width: 0; }
+[data-orient="portrait"] .h-duo > * { min-width: 0; overflow: hidden; }
 
 /* ---------------------------------------------------------------- Calendar */
 [data-orient="portrait"] .cal-head { flex-wrap: wrap; height: auto; row-gap: 10px; margin-bottom: 12px; }
@@ -97,7 +99,7 @@
 [data-orient="portrait"] .cap--m .cap-date { font-size: 52px; }
 [data-orient="portrait"] .ph-top { left: 20px; display: flex; justify-content: center; }
 [data-orient="portrait"] .ph-bottom { left: 24px; justify-content: center; }
-/* The Today tile is squarish in portrait, so every photo fills it */
+/* The Today tile is portrait-shaped, so every photo fills it */
 [data-orient="portrait"] .h-photo .slide--fit .fitimg { top: 0; left: 0; width: 100%; height: 100%; transform: none; object-fit: cover; object-position: 50% 30%; }
 
 /* ---------------------------------------------------------------- Home control: rooms on top, climate + cameras below */

@@ -147,13 +147,26 @@
   }
 
   // The pinned Reminders list (CONFIG.pinnedList) takes the chores tile once live data is configured (App.reminders set).
+  // Every item is rendered; fitPinned then trims to what fits the tile.
   function pinned() {
-    var items = App.reminders.pinned, shown = items.slice(0, 3);
+    var items = App.reminders.pinned;
     return '<div class="label">' + App.esc(window.CONFIG.pinnedList) + (items.length ? ' · ' + items.length : '') + '</div>' +
-      (items.length ? '<ul class="h-pinned">' + shown.map(function (it) {
+      (items.length ? '<ul class="h-pinned">' + items.map(function (it) {
         return '<li><i></i>' + App.esc(it.title) + '</li>';
-      }).join('') + '</ul>' + (items.length > shown.length ? '<small class="h-more">+' + (items.length - shown.length) + ' more</small>' : '')
+      }).join('') + '</ul><small class="h-more"></small>'
         : '<p class="h-pinned-empty">' + (App.reminders.updated ? 'All clear.' : 'Waiting for the iPhone Shortcut.') + '</p>');
+  }
+  function fitPinned(tile) {
+    var ul = tile.querySelector('.h-pinned'), more = tile.querySelector('.h-more');
+    if (!ul || !more) return;
+    var total = ul.children.length;
+    function label() {
+      var n = total - ul.children.length;
+      more.textContent = n ? '+' + n + ' more' : '';
+      more.style.display = n ? '' : 'none';
+    }
+    label();
+    while (ul.children.length > 1 && tile.scrollHeight > tile.clientHeight + 1) { ul.removeChild(ul.lastChild); label(); }
   }
   function pinnedSheet() {
     var items = App.reminders.pinned;
@@ -208,7 +221,7 @@
     fitHero(el);
     el.querySelector('.h-lanes').innerHTML = lanes();
     var side = el.querySelector('.h-chores');
-    if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side.innerHTML = pinned(); }
+    if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side.innerHTML = pinned(); fitPinned(side); }
     else side.innerHTML = chores();
     el.querySelector('.h-shop').innerHTML = shopping();
     el.querySelector('.h-status').innerHTML = status();
