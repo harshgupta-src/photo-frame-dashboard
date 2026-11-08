@@ -5,6 +5,7 @@
 //   App.ha.states     entity_id → state object, refreshed every POLL_MS while the page is visible
 //   App.ha.lights()   [{ id, name, ids, on, total }] for the Home card's buttons
 //   App.ha.toggle(id) turn a button's lights off if any are on, otherwise on
+//   App.ha.call(method, path, body)  raw bridge call (the kiosk allows only a few paths)
 // VITE_HA_ROOM in .env.local adds a room button, "Name:pattern" with * as a wildcard, e.g.
 // "Living room:light.living_room_*". An "All lights" button is always there.
 (function () {
@@ -87,6 +88,7 @@
     }).catch(function (e) { console.warn('Home Assistant:', e.message); });
   }
   ha.refresh = refresh;
+  ha.call = call; // live.js reads calendars and to-do lists through the bridge too
   document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
   call('GET', '/api/config').then(function (c) { ha.unit = c.unit_system.temperature; }).catch(function () {}).then(refresh);
 })();

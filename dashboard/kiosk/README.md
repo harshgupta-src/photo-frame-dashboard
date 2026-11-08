@@ -68,9 +68,11 @@ adb shell am start -n com.wesbos.homehq/.MainActivity --es url 'https://frame-da
 
 The page talks to Home Assistant through the kiosk (`window.HomeHQ`, used by `js/ha.js`), so the
 token lives in the app's private storage on the frame and never ships with the hosted dashboard.
-The bridge only answers pages from the saved dashboard origin (or the bundled site), only reads
-`/api/states` and `/api/config`, and only calls services in the light, switch, fan, climate,
-media_player, vacuum, scene and script domains.
+The bridge only answers pages from the saved dashboard origin (or the bundled site). It only reads
+`/api/states`, `/api/config` and calendar events (`/api/calendars/calendar.*`), only calls services
+in the light, switch, fan, climate, media_player, vacuum, scene and script domains, and for to-do
+lists only reads items (`todo.get_items`) and ticks them (`todo.update_item`). Calendars and
+Reminders from HA are set up in `../ha/README.md`.
 
 1. In HA, add a user for the frame with **Administrator off**, log in as it, and create a
    long-lived access token (Profile → Security).

@@ -147,12 +147,15 @@
   }
 
   // The pinned Reminders list (CONFIG.pinnedList) takes the chores tile once live data is configured (App.reminders set).
-  // Every item is rendered; fitPinned then trims to what fits the tile.
+  // Every item is rendered; fitPinned then trims to what fits the tile. An assigned item's dot takes
+  // that person's colour.
+  function who(it) { return it.who && it.who !== 'family' ? App.person(it.who) : null; }
   function pinned() {
     var items = App.reminders.pinned;
     return '<div class="label">' + App.esc(window.CONFIG.pinnedList) + (items.length ? ' · ' + items.length : '') + '</div>' +
       (items.length ? '<ul class="h-pinned">' + items.map(function (it) {
-        return '<li><i></i>' + App.esc(it.title) + '</li>';
+        var p = who(it);
+        return '<li><i' + (p ? ' class="is-who" style="' + App.pstyle(p) + '"' : '') + '></i>' + App.esc(it.title) + '</li>';
       }).join('') + '</ul><small class="h-more"></small>'
         : '<p class="h-pinned-empty">' + (App.reminders.updated ? 'All clear.' : 'Waiting for the iPhone Shortcut.') + '</p>');
   }
@@ -172,7 +175,9 @@
     var items = App.reminders.pinned;
     App.sheet('<div class="sheet-pad"><div class="label">Apple Reminders</div><h2 class="sheet-h serif">' + App.esc(window.CONFIG.pinnedList) + '</h2>' +
       (items.length ? '<ul class="pinned-list">' + items.map(function (it) {
-        return '<li><b>' + App.esc(it.title) + '</b>' + (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') + '</li>';
+        var p = who(it);
+        return '<li><b>' + App.esc(it.title) + '</b>' + (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') +
+          (p ? '<small class="pinned-who" style="' + App.pstyle(p) + '">' + App.esc(p.name) + '</small>' : '') + '</li>';
       }).join('') + '</ul>' : '<p class="sheet-p">Nothing on the list.</p>') + '</div>');
   }
 

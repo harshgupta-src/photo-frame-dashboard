@@ -208,6 +208,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .pinned-list { display: flex; flex-direction: column; max-height: 520px; overflow-y: auto; }
 .pinned-list li { display: flex; flex-direction: column; gap: 2px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 24px; }
 .pinned-list small { font-size: 17px; color: var(--ink-2); }
+.pinned-list .pinned-who { color: var(--c); font-weight: 700; }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
 
 /* ---------------------------------------------------------------- banners */

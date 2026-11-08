@@ -1,0 +1,27 @@
+# Home Assistant automation: every 2 minutes, picks up a new iPhone Shortcut push from the
+# frame-data Worker (GET /reminders) and hands it to reminders-sync.yaml's webhook.
+# Not needed once the Shortcut posts straight to HA's webhook. Install: see README.md.
+- id: frame_reminders_pull
+  alias: Reminders pull from frame-data Worker
+  description: Feeds new Shortcut pushes stored by the Worker into the to-do list sync.
+  mode: single
+  triggers:
+    - trigger: time_pattern
+      minutes: /2
+    - trigger: homeassistant
+      event: start
+  actions:
+    - action: rest_command.frame_worker_reminders
+      response_variable: r
+    - condition: template
+      value_template: >-
+        {{ r.status == 200 and r.content is mapping and r.content.updated
+           and r.content.updated != states('input_text.frame_reminders_updated') }}
+    - action: rest_command.frame_reminders_sync
+      data:
+        lists: "{{ r.content.lists }}"
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.frame_reminders_updated
+      data:
+        value: "{{ r.content.updated }}"

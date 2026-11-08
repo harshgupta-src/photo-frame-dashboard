@@ -169,6 +169,7 @@
       if (!V.pending[g.id]) return;
       delete V.pending[g.id];
       g.done = true;
+      if (App.reminderDone) App.reminderDone(g, true);
       removeRow(g);
       refreshSuggestFor(g);
       App.emit('data');
@@ -179,6 +180,7 @@
         var wasDone = g.done;
         delete V.pending[g.id];
         g.done = false;
+        if (wasDone && App.reminderDone) App.reminderDone(g, false);
         if (wasDone) paintList();
         else { var r = V.el.querySelector('.s-list [data-id="' + g.id + '"]'); if (r) r.classList.remove('is-checking'); }
         refreshSuggestFor(g);
@@ -208,6 +210,7 @@
     if ((t = e.target.closest('[data-revive]'))) {
       var r = D.groceries.filter(function (x) { return x.id === t.dataset.revive; })[0];
       r.done = false; paintList(); paintSuggest(); App.emit('data');
+      if (App.reminderDone) App.reminderDone(r, false);
       return App.toast('Added back <b>' + App.esc(r.name) + '</b>', { icon: 'cart', ms: 2500 });
     }
     if ((t = e.target.closest('[data-clear]'))) {

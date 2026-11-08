@@ -4,7 +4,7 @@
 //   GET  /reminders  ?key=READ_KEY  lists last pushed by the iPhone Shortcut
 //   GET  /photos     ?key=READ_KEY  photos in the iCloud Shared Album(s) in secret PHOTO_ALBUM
 //   GET  /photo      ?key=READ_KEY&id=GUID&s=l|s  the image itself (proxied; iCloud's URLs expire)
-//   POST /reminders  Authorization: Bearer PUSH_TOKEN
+//   POST /reminders  Authorization: Bearer PUSH_TOKEN (Home Assistant pulls GET /reminders; ../ha/README.md)
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
 //        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
 // Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM.
@@ -89,6 +89,7 @@ function cleanList(items) {
       title: String(it.title || it.name || '').trim().slice(0, 120),
       notes: it.notes ? String(it.notes).slice(0, 200) : undefined,
       due: it.due ? String(it.due).slice(0, 40) : undefined,
+      assignee: it.assignee ? String(it.assignee).trim().slice(0, 40) || undefined : undefined,
       done: it.done === true || it.done === 'true' || it.done === 'Yes' || it.completed === true,
     }))
     .filter((it) => it.title);

@@ -1,0 +1,115 @@
+# Home Assistant automation: shared Apple Reminders lists → HA to-do lists (Local To-do).
+# The iPhone Shortcut's payload reaches this webhook, forwarded by the frame-data Worker's
+# POST /reminders (or posted straight to HA). Same body the Worker takes:
+#   {"Grocery list": "milk\neggs", "LOML": [{"title": "...", "notes": "...", "assignee": "Ambuja"}]}
+#   or {"lists": {...}}. Items: newline text, strings, or {title, notes, assignee, done}.
+# Each list in lists_map is reconciled to match the phone:
+#   - new titles are added; titles gone from the phone (done or deleted there) are removed
+#   - items ticked in HA or on the frame stay completed until the phone drops them
+#   - notes and assignee go in the item's description ("Assigned: Name" on the last line)
+# Lists missing from a payload are left alone. Matching is by title, case-insensitive.
+# Install: see ha/README.md.
+- id: frame_reminders_sync
+  alias: Reminders sync from iPhone
+  description: Mirrors the shared Apple Reminders lists (Grocery list, LOML) into HA to-do lists.
+  mode: queued
+  max: 5
+  triggers:
+    - trigger: webhook
+      webhook_id: WEBHOOK_ID
+      allowed_methods: [POST]
+      local_only: false
+  variables:
+    lists_map:
+      grocery list: todo.grocery_list
+      loml: todo.loml
+    work: >-
+      {% set j = trigger.json if trigger.json is mapping else {} %}
+      {% set lists = j['lists'] if j['lists'] is defined and j['lists'] is mapping else j %}
+      {% set ns = namespace(out=[]) %}
+      {% for name, items in lists.items() %}
+        {% set key = name | string | trim | lower %}
+        {% if key in lists_map %}
+          {% set ns.out = ns.out + [{'entity': lists_map[key], 'items': items}] %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.out }}
+  actions:
+    - repeat:
+        for_each: "{{ work }}"
+        sequence:
+          - variables:
+              entity: "{{ repeat.item['entity'] }}"
+              incoming: >-
+                {% set src = repeat.item['items'] %}
+                {% if src is string %}{% set src = src.split('\n') %}{% endif %}
+                {% set ns = namespace(out=[], seen=[]) %}
+                {% for it in (src if src is iterable and src is not mapping else []) %}
+                  {% set o = {'title': it} if it is string else (it if it is mapping else {}) %}
+                  {% set t = (o.get('title') or o.get('name') or '') | string | trim %}
+                  {% set done = o.get('done') in [true, 'true', 'Yes', 'yes'] or o.get('completed') == true %}
+                  {% if t and not done and (t | lower) not in ns.seen %}
+                    {% set notes = (o.get('notes') or '') | string | trim %}
+                    {% set who = (o.get('assignee') or '') | string | trim %}
+                    {% set lines = ([notes] if notes else []) + (['Assigned: ' ~ who] if who else []) %}
+                    {% set ns.seen = ns.seen + [t | lower] %}
+                    {% set ns.out = ns.out + [{'title': t[:120], 'desc': lines | join('\n')}] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.out }}
+          - action: todo.get_items
+            target:
+              entity_id: "{{ entity }}"
+            data:
+              status: [needs_action, completed]
+            response_variable: current
+          - variables:
+              existing: "{{ current[entity]['items'] }}"
+              incoming_titles: "{{ incoming | map(attribute='title') | map('lower') | list }}"
+              existing_titles: "{{ existing | map(attribute='summary') | map('lower') | list }}"
+          - variables:
+              to_remove: >-
+                {% set ns = namespace(out=[]) %}
+                {% for e in existing if (e.summary | lower) not in incoming_titles %}
+                  {% set ns.out = ns.out + [e.uid] %}
+                {% endfor %}
+                {{ ns.out }}
+              to_add: >-
+                {% set ns = namespace(out=[]) %}
+                {% for i in incoming if (i.title | lower) not in existing_titles %}
+                  {% set ns.out = ns.out + [i] %}
+                {% endfor %}
+                {{ ns.out }}
+              to_update: >-
+                {% set ns = namespace(out=[]) %}
+                {% for e in existing %}
+                  {% for i in incoming if (i.title | lower) == (e.summary | lower) and (e.description or '') != i.desc %}
+                    {% set ns.out = ns.out + [{'uid': e.uid, 'desc': i.desc}] %}
+                  {% endfor %}
+                {% endfor %}
+                {{ ns.out }}
+          - if: "{{ to_remove | count > 0 }}"
+            then:
+              - action: todo.remove_item
+                target:
+                  entity_id: "{{ entity }}"
+                data:
+                  item: "{{ to_remove }}"
+          - repeat:
+              for_each: "{{ to_add }}"
+              sequence:
+                - action: todo.add_item
+                  target:
+                    entity_id: "{{ entity }}"
+                  data:
+                    item: "{{ repeat.item.title }}"
+                    description: "{{ repeat.item.desc }}"
+          - repeat:
+              for_each: "{{ to_update }}"
+              sequence:
+                - action: todo.update_item
+                  target:
+                    entity_id: "{{ entity }}"
+                  data:
+                    item: "{{ repeat.item.uid }}"
+                    description: "{{ repeat.item.desc }}"

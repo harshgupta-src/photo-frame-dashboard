@@ -142,10 +142,13 @@ public class MainActivity extends Activity {
 
   static final String PREF_HA_URL = "ha_url", PREF_HA_TOKEN = "ha_token";
   static final int HA_TIMEOUT_MS = 8000, HA_MAX_BYTES = 1 << 20;
-  // What the page may ask HA for: read states and config, and call services in these domains.
-  static final Pattern HA_GET = Pattern.compile("/api/(config|states|states/[a-z0-9_]+\\.[a-z0-9_]+)");
+  // What the page may ask HA for: read states, config and calendar events, call services in these
+  // domains, and read to-do lists and tick their items.
+  static final Pattern HA_GET = Pattern.compile("/api/(config|states|states/[a-z0-9_]+\\.[a-z0-9_]+"
+      + "|calendars/calendar\\.[a-z0-9_]+\\?start=[0-9A-Za-z:.%+-]+&end=[0-9A-Za-z:.%+-]+)");
   static final Pattern HA_POST = Pattern.compile(
-      "/api/services/(light|switch|fan|climate|media_player|vacuum|scene|script)/[a-z0-9_]+");
+      "/api/services/(light|switch|fan|climate|media_player|vacuum|scene|script)/[a-z0-9_]+"
+      + "|/api/services/todo/update_item|/api/services/todo/get_items\\?return_response");
   private final ExecutorService haPool = Executors.newFixedThreadPool(2);
   // The page in the WebView, for the bridge's origin check (JavascriptInterface runs off the UI thread).
   private volatile String pageUrl;
