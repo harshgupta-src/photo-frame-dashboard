@@ -348,7 +348,7 @@
 
   // Stage-local coordinates for an element's center (stage may be scaled on desktop)
   App.centerOf = function (el) {
-    var stage = $('#stage').getBoundingClientRect(), r = el.getBoundingClientRect(), k = stage.height / 800;
+    var stage = $('#stage').getBoundingClientRect(), r = el.getBoundingClientRect(), k = App.stageScale();
     return { x: (r.left + r.width / 2 - stage.left) / k, y: (r.top + r.height / 2 - stage.top) / k };
   };
 
@@ -421,15 +421,39 @@
   }
 
   // ------------------------------------------------------------ stage scaling
-  // Designed at 1280×800. Screens wider than 16:10 (e.g. 1920×1080 frames) widen the stage to their
-  // aspect instead of pillarboxing; narrower screens letterbox as before.
-  var STAGE_H = 800, STAGE_MIN_W = 1280;
+  // Landscape is designed at 1280×800. Screens wider than 16:10 (e.g. 1920×1080 frames) widen the
+  // stage to their aspect instead of pillarboxing; narrower screens letterbox as before.
+  // Portrait (the frame stood on its side; the kiosk follows the accelerometer) is designed at
+  // 800×1280 and grows taller on narrower screens. css/portrait.css holds the portrait layouts.
+  var SHORT = 800, LONG = 1280;
+  App.portrait = false;
+  App.stageW = LONG;
+  App.stageH = SHORT;
+  // Screen px per stage px (the stage is scaled on desktop browsers).
+  App.stageScale = function () { return $('#stage').getBoundingClientRect().width / App.stageW || 1; };
   function fit() {
-    var stage = $('#stage');
-    var w = Math.max(STAGE_MIN_W, Math.round(STAGE_H * window.innerWidth / window.innerHeight));
+    var stage = $('#stage'), vw = window.innerWidth, vh = window.innerHeight;
+    if (!vw || !vh) return;
+    var portrait = vh > vw, w, h;
+    if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * vh / vw)); }
+    else { h = SHORT; w = Math.max(LONG, Math.round(SHORT * vw / vh)); }
+    App.stageW = w; App.stageH = h;
     stage.style.setProperty('--stage-w', w + 'px');
-    var s = Math.min(window.innerWidth / w, window.innerHeight / STAGE_H);
+    stage.style.setProperty('--stage-h', h + 'px');
+    var s = Math.min(vw / w, vh / h);
     stage.style.transform = Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s + ')';
+    if (portrait === App.portrait && document.documentElement.dataset.orient) return;
+    var flipped = !!document.documentElement.dataset.orient;
+    App.portrait = portrait;
+    document.documentElement.dataset.orient = portrait ? 'portrait' : 'landscape';
+    if (!flipped) return;
+    // Rotated: layouts that are measured or chosen in JS (hero title fit, slideshow layouts) are
+    // rebuilt for the new shape.
+    App.closeSheet();
+    App.emit('orient', portrait);
+    Object.keys(App.views).forEach(function (k) { if (App.views[k]._built) App.views[k]._dirty = true; });
+    if (App.current) App.go(App.current, { rerender: true });
+    refreshStale(1500);
   }
 
   // ------------------------------------------------------------ clock tick

@@ -86,7 +86,7 @@
       if (window.__diagPause) return;
       var fr = S.frames.slice(-90), avg = fr.reduce(function (a, b) { return a + b; }, 0) / (fr.length || 1);
       var stage = App.$('#stage');
-      var scale = stage.getBoundingClientRect().height / 800;
+      var scale = App.stageScale();
       var imgs = Array.prototype.filter.call(document.images, function (i) { return i.naturalWidth; });
       var mpx = imgs.reduce(function (s, i) { return s + i.naturalWidth * i.naturalHeight; }, 0) / 1e6;
       var mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + ' MB' : 'n/a';

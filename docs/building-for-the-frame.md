@@ -12,7 +12,7 @@ tested on the frame.
 | --- | --- |
 | Browser engine | Android System WebView **106.0.5249.126** (Chrome 106, from 2022), inside the `dashboard/kiosk` app |
 | OS | Android 6.0.1, no security updates, root ADB |
-| Screen | **1280 × 800** landscape, `devicePixelRatio` **1** (160 dpi), touchscreen |
+| Screen | **1280 × 800** landscape, or **800 × 1280** when the frame is stood on its side (the kiosk follows the SC7A20 accelerometer; it obeys Android's rotation lock). `devicePixelRatio` **1** (160 dpi), touchscreen |
 | CPU / GPU | Allwinner A33 ARMv7, 1.34 GHz, 2 cores online in our snapshot; OpenGL ES 2.0 |
 | RAM | ~1 GB total. The kiosk with the sample dashboard used ~80 MB (observed) |
 | Network | Wi-Fi only. Wi-Fi comes up **after** the kiosk starts at boot (observed) |

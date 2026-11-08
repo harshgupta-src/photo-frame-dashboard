@@ -37,12 +37,12 @@ ul { margin: 0; padding: 0; list-style: none; }
 .label--light { color: rgba(255, 255, 255, .72); }
 .label--on { color: var(--c-ink); opacity: .8; }
 
-/* ---------------------------------------------------------------- stage (800 tall; width set by fit() in app.js, min 1280) */
+/* ---------------------------------------------------------------- stage (1280×800 landscape, 800×1280 portrait; size set by fit() in app.js) */
 .stage {
   position: absolute;
   left: 50%; top: 50%;
-  width: var(--stage-w, 1280px); height: 800px;
-  margin: -400px 0 0 calc(var(--stage-w, 1280px) / -2);
+  width: var(--stage-w, 1280px); height: var(--stage-h, 800px);
+  margin: calc(var(--stage-h, 800px) / -2) 0 0 calc(var(--stage-w, 1280px) / -2);
   transform-origin: 50% 50%;
   background: var(--paper);
   overflow: hidden;

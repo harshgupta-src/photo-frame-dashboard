@@ -25,6 +25,9 @@
     };
   };
 
+  // 'p' on a portrait screen, 'l' on a landscape one (photos use the same letters in p.o).
+  function screenShape() { return App.portrait ? 'p' : 'l'; }
+
   function shuffle(a) {
     for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
     return a;
@@ -44,9 +47,10 @@
   }
 
   var BUILD = {
+    // A photo the same shape as the screen fills it; the other shape is fitted over a blurred copy.
     cover: function (ps, o) {
       var p = ps[0];
-      if (p.o === 'p') {
+      if (p.o !== screenShape()) {
         return '<div class="slide slide--fit"><img class="blurfill" src="' + src(p) + '" alt=""><img class="fitimg" src="' + src(p, true) + '" alt="">' + (o.captions ? caption(ps) : '') + '</div>';
       }
       return '<div class="slide slide--cover">' + kb(p) + (o.captions ? caption(ps) : '') + '</div>';
@@ -73,6 +77,13 @@
     this.count = 0;
     this.timer = null;
     this.current = null;
+    var self = this;
+    // Rotated: the slide on screen was picked for the old shape. Pick again (now, if running).
+    App.on('orient', function () {
+      self.history = [];
+      if (self.timer) self.next();
+      else { self.current = null; self.el.innerHTML = ''; }
+    });
   };
   var S = App.Slideshow.prototype;
 
@@ -97,18 +108,21 @@
     function sibling(pred) {
       return self.take(pred) || D.photos.filter(function (x) { return x !== first && pred(x); })[0];
     }
+    // A pair puts two photos of the other shape side by side (landscape screen) or one above the
+    // other (portrait screen), so together they fill the screen.
+    var odd = App.portrait ? 'l' : 'p';
     if (layout === 'auto') {
-      if (first.o === 'p') layout = D.photos.some(function (x) { return x !== first && x.tag === first.tag; }) ? 'pair' : 'polaroid';
+      if (first.o === odd) layout = D.photos.some(function (x) { return x !== first && x.tag === first.tag; }) ? 'pair' : 'polaroid';
       else layout = n % 5 === 3 ? 'collage' : n % 5 === 4 ? 'polaroid' : 'cover';
     }
     var ps = [first];
     // Small albums: fall back when there aren't enough photos for the layout.
-    var portraits = D.photos.filter(function (x) { return x.o === 'p'; }).length;
-    if (layout === 'pair' && portraits < 2) layout = first.o === 'p' ? 'polaroid' : 'cover';
+    var odds = D.photos.filter(function (x) { return x.o === odd; }).length;
+    if (layout === 'pair' && odds < 2) layout = first.o === odd ? 'polaroid' : 'cover';
     if (layout === 'collage' && D.photos.length < 3) layout = 'cover';
     if (layout === 'pair') {
-      if (first.o !== 'p') { first = sibling(function (x) { return x.o === 'p'; }); ps = [first]; }
-      ps.push(sibling(function (x) { return x !== first && x.o === 'p' && x.tag === first.tag; }) || sibling(function (x) { return x !== first && x.o === 'p'; }));
+      if (first.o !== odd) { first = sibling(function (x) { return x.o === odd; }); ps = [first]; }
+      ps.push(sibling(function (x) { return x !== first && x.o === odd && x.tag === first.tag; }) || sibling(function (x) { return x !== first && x.o === odd; }));
     }
     if (layout === 'collage') {
       ps.push(sibling(function (x) { return x !== first; }));
