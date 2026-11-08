@@ -50,3 +50,64 @@ To skip the Worker, point the Shortcut at `https://<ha external url>/api/webhook
 same body; no Authorization header) and remove `reminders-pull.yaml`. Ticks made on the frame don't
 reach Apple Reminders by themselves: a Shortcut has to read the completed items from HA and
 complete them in Reminders.
+
+## The frame as a device (MQTT)
+
+The kiosk can register the frame as a Home Assistant device over MQTT discovery: screen on/off,
+screen brightness, ambient light, "moved", "touched" and a reload button. The entities and the
+frame's side are in `../kiosk/README.md` ("Home Assistant device (MQTT)").
+
+MQTT was chosen over the frame pushing states through the REST API: `POST /api/states` needs an
+admin token and makes no device, and commands back to the frame would need it to open a port.
+With MQTT the frame only connects out, gets commands on that connection, and the broker marks it
+unavailable when it drops (a retained last will).
+
+1. Install the **Mosquitto broker** app (Settings → Apps). In its configuration add a login for the
+   frame, with a long random password kept in a private file on your computer:
+
+   ```sh
+   umask 077; openssl rand -hex 24 > ~/.config/homehq/mqtt-pass
+   ```
+
+   ```yaml
+   logins:
+     - username: photo-frame
+       password: <the password>
+   ```
+
+   Start it, then add the **MQTT** integration (Home Assistant offers it as discovered).
+2. Optional: limit the frame's login to its own topics. Turn on the app's `customize` option
+   (folder `mosquitto`) and create `/share/mosquitto/acl.conf`:
+
+   ```
+   acl_file /share/mosquitto/accesscontrollist
+   ```
+
+   and `/share/mosquitto/accesscontrollist` (`chmod 0700`), with the frame's id from
+   `adb shell settings get secure android_id`:
+
+   ```
+   user homeassistant
+   topic readwrite #
+
+   user addons
+   topic readwrite #
+
+   user photo-frame
+   topic readwrite homehq/homehq_<android_id>/#
+   topic write homeassistant/device/homehq_<android_id>/config
+   topic read homeassistant/status
+   ```
+
+   An ACL file denies every user it doesn't list. If the MQTT integration logs in with its own
+   login (set up by hand rather than from the discovered app), add that user with
+   `topic readwrite #` too. Restart the app after changing either file.
+3. Save the broker and login on the frame (`../kiosk/README.md`). The device appears within a few
+   seconds.
+
+Ideas: turn the screen off at night or when nobody is home, and on when the room's lux rises
+above a threshold (someone turned the lights on) or when the frame is touched.
+
+To undo: on the frame, `--es mqtt_url ''` and `--ez screen_admin false`; delete the Photo Frame
+device in the MQTT integration; remove the login (and `customize`) from the Mosquitto app, or
+uninstall the app and delete the MQTT integration.

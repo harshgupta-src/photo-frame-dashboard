@@ -90,6 +90,61 @@ The Today screen's Home card then shows `VITE_HA_ROOM` (for example
 temperature. A tap turns those lights off if any are on, otherwise on. Bulbs inside an HA light
 group count as the group.
 
+## Home Assistant device (MQTT)
+
+The kiosk can also show up in Home Assistant as a device, through MQTT discovery. The frame
+connects out to the broker and gets commands over that connection, so it opens no port of its own.
+With the Mosquitto broker app and the MQTT integration set up (`../ha/README.md`), a device
+named "Photo Frame" gets these entities:
+
+| Entity | What it does |
+| --- | --- |
+| `switch.photo_frame_screen` | Screen on/off. Follows the power button too. |
+| `number.photo_frame_screen_brightness` | 1–100 %. Setting it turns auto brightness off. |
+| `switch.photo_frame_auto_brightness` | On: the screen follows Android's own brightness setting (auto, on most frames). |
+| `sensor.photo_frame_illuminance` | Ambient light in lux, sent when it changes by 10 % (at least 2 lx), at most every 2 s. |
+| `binary_sensor.photo_frame_moved` | On for 30 s after the accelerometer sees a bump, tilt or pick-up. |
+| `binary_sensor.photo_frame_touched` | On until a minute after the last touch on the screen. |
+| `button.photo_frame_reload_dashboard` | Reloads the page. |
+
+The screen and brightness entities are a `switch` and a `number` rather than a `light`, so the
+dashboard's **All lights** button and "turn off all lights" automations leave the frame alone.
+Brightness is set on the kiosk's window, so Android's own setting is unchanged and the value only
+applies while the kiosk is in front. "Moved" is the best these frames can do for motion: there is
+no camera or PIR sensor, so it reports the frame being handled, not someone walking past.
+"Touched" is the better sign that someone is using it.
+
+1. Save the broker and the MQTT login (from the broker's `logins` option) over USB:
+
+   ```sh
+   adb shell am start -n com.wesbos.homehq/.MainActivity --es mqtt_url mqtt://<ha-ip>:1883 \
+     --es mqtt_user photo-frame --es mqtt_pass "$(cat ~/.config/homehq/mqtt-pass)"
+   ```
+
+   Optional: `--es mqtt_name "Kitchen Frame"` (the device name; default "Photo Frame"). An empty
+   `mqtt_url` turns it off. The password is kept in the app's private storage and never logged.
+2. For a real screen off, let the kiosk lock the screen (device admin with only the force-lock
+   policy):
+
+   ```sh
+   adb shell dpm set-active-admin com.wesbos.homehq/.ScreenAdmin
+   ```
+
+   The touchscreen is off with the screen, so only Home Assistant or the power button turns it
+   back on. Without this, "off" covers the page in black at the lowest backlight, and a tap
+   turns it back on.
+
+The device id is `homehq_<ANDROID_ID>` (`adb shell settings get secure android_id`); its topics are
+`homehq/<id>/<entity>` with `/set` for commands and `homehq/<id>/availability`, and it announces
+itself on `homeassistant/device/<id>/config`. The kiosk holds a partial wake lock and a Wi-Fi lock
+while MQTT is on, so the connection, and the light sensor, stay up while the screen is off. Frames
+are always on power, so this costs little.
+
+To undo: run `--es mqtt_url ''` and then `--ez screen_admin false` (gives up the device admin;
+Android won't uninstall the app while it is active), and delete the device in Home Assistant
+(Settings → Devices & services → MQTT → Photo Frame → Delete), which also clears the retained
+discovery message.
+
 ## A page bundled in the APK (no server)
 
 A static page can ship inside the APK instead of being hosted. Build with `KIOSK_SITE` set to a

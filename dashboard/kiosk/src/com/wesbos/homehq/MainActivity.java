@@ -2,6 +2,7 @@ package com.wesbos.homehq;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -23,6 +24,7 @@ import android.net.http.SslError;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
@@ -81,8 +83,11 @@ import org.json.JSONObject;
  *   the frame and never reaches the hosted dashboard. Use a long-lived token from a non-admin user:
  *     adb shell am start -n com.wesbos.homehq/.MainActivity --es ha_url http://<ha-ip>:8123 --es ha_token <token>
  *   An empty ha_token turns it off. Use the IP: Android 6 can't resolve .local names.
+ * - Home Assistant device over MQTT discovery (screen, brightness, lux, moved, touched; HaDevice):
+ *     adb shell am start -n com.wesbos.homehq/.MainActivity --es mqtt_url mqtt://<ha-ip>:1883 --es mqtt_user <user> --es mqtt_pass <password>
+ *   An empty mqtt_url turns it off. For a real screen off: adb shell dpm set-active-admin com.wesbos.homehq/.ScreenAdmin
  */
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements HaDevice.Host {
   static final String TAG = "HomeHQ";
   static final String DEFAULT_URL = "https://home-dashboard.wesbos.workers.dev/";
   static final String PREFS = "kiosk";
@@ -253,6 +258,152 @@ public class MainActivity extends Activity {
     }
     if (changed) e.apply();
   }
+  static final String PREF_MQTT_URL = "mqtt_url", PREF_MQTT_USER = "mqtt_user", PREF_MQTT_PASS = "mqtt_pass",
+      PREF_MQTT_NAME = "mqtt_name", PREF_BRIGHTNESS = "brightness", PREF_AUTO_BRIGHTNESS = "auto_brightness";
+  private HaDevice haDevice;
+  // Screen "off" without device admin: the page is covered in black at the lowest backlight.
+  private View blackout;
+  private boolean softOff;
+
+  private final BroadcastReceiver screenChange = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+      if (haDevice != null) haDevice.screenChanged();
+    }
+  };
+
+  /** mqtt_url / mqtt_user / mqtt_pass / mqtt_name extras from adb. The password is never logged. */
+  private boolean applyMqttConfig(Intent intent) {
+    if (intent == null) return false;
+    android.content.SharedPreferences.Editor e = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
+    boolean changed = false;
+    String url = intent.getStringExtra(PREF_MQTT_URL);
+    if (url != null) {
+      if (url.trim().isEmpty()) {
+        e.remove(PREF_MQTT_URL);
+        changed = true;
+        Log.i(TAG, "MQTT turned off");
+      } else if (HaDevice.validUrl(url.trim())) {
+        e.putString(PREF_MQTT_URL, url.trim());
+        changed = true;
+        Log.i(TAG, "MQTT broker saved: " + forLog(url.trim()));
+      } else Log.w(TAG, "Ignoring MQTT URL that isn't mqtt://host[:port]");
+    }
+    for (String key : new String[] {PREF_MQTT_USER, PREF_MQTT_PASS, PREF_MQTT_NAME}) {
+      String v = intent.getStringExtra(key);
+      if (v == null) continue;
+      if (v.isEmpty()) e.remove(key); else e.putString(key, v);
+      changed = true;
+      Log.i(TAG, key + (v.isEmpty() ? " removed" : " saved"));
+    }
+    if (changed) e.commit();
+    return changed;
+  }
+
+  private void startHaDevice() {
+    if (haDevice != null) {
+      haDevice.stop();
+      haDevice = null;
+    }
+    android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+    String url = p.getString(PREF_MQTT_URL, null);
+    if (url == null) return;
+    haDevice = new HaDevice(this, this, url, p.getString(PREF_MQTT_USER, null), p.getString(PREF_MQTT_PASS, null),
+        p.getString(PREF_MQTT_NAME, null));
+    haDevice.start();
+  }
+
+  /** "screen_admin" false gives up the device admin, so the app can be uninstalled again. */
+  private void applyScreenAdminFlag(Intent intent) {
+    if (intent == null || !intent.hasExtra("screen_admin") || intent.getBooleanExtra("screen_admin", true)) return;
+    DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+    ComponentName admin = new ComponentName(this, ScreenAdmin.class);
+    if (dpm != null && dpm.isAdminActive(admin)) {
+      dpm.removeActiveAdmin(admin);
+      Log.i(TAG, "Screen-off device admin removed");
+    }
+  }
+
+  @Override
+  public boolean screenOn() {
+    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+    return !softOff && (pm == null || pm.isInteractive());
+  }
+
+  @Override
+  public void setScreen(boolean on) {
+    if (on) {
+      if (softOff) {
+        softOff = false;
+        blackout.setVisibility(View.GONE);
+        applyBrightness();
+      }
+      PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+      if (pm != null && !pm.isInteractive()) {
+        @SuppressWarnings("deprecation")
+        PowerManager.WakeLock wake = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+            | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "homehq:wake");
+        wake.acquire(5000);
+      }
+      Log.i(TAG, "Screen on");
+      return;
+    }
+    DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+    if (dpm != null && dpm.isAdminActive(new ComponentName(this, ScreenAdmin.class))) {
+      Log.i(TAG, "Screen off");
+      dpm.lockNow();
+      return;
+    }
+    Log.i(TAG, "Screen off (blacked out; no device admin)");
+    softOff = true;
+    blackout.setVisibility(View.VISIBLE);
+    applyBrightness();
+  }
+
+  @Override
+  public int brightness() {
+    int saved = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(PREF_BRIGHTNESS, -1);
+    if (saved > 0) return saved;
+    int system = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128);
+    return Math.max(1, Math.round(system * 100f / 255));
+  }
+
+  @Override
+  public boolean autoBrightness() {
+    return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_AUTO_BRIGHTNESS, true);
+  }
+
+  /** Setting a brightness turns auto brightness off, as on a phone. */
+  @Override
+  public void setBrightness(int percent) {
+    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(PREF_BRIGHTNESS, percent)
+        .putBoolean(PREF_AUTO_BRIGHTNESS, false).apply();
+    applyBrightness();
+  }
+
+  @Override
+  public void setAutoBrightness(boolean auto) {
+    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_AUTO_BRIGHTNESS, auto).apply();
+    applyBrightness();
+  }
+
+  @Override
+  public void reloadDashboard() {
+    Log.i(TAG, "Reloading the dashboard (Home Assistant)");
+    if (web != null) web.reload();
+  }
+
+  /**
+   * A brightness for the kiosk's window only; Android's own setting is left alone. With auto
+   * brightness the window follows Android's setting (auto or manual, as set on the frame).
+   */
+  private void applyBrightness() {
+    WindowManager.LayoutParams lp = getWindow().getAttributes();
+    lp.screenBrightness = softOff ? 0f
+        : autoBrightness() ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : brightness() / 100f;
+    getWindow().setAttributes(lp);
+  }
+
   private Button menuButton;
   private final Handler handler = new Handler(Looper.getMainLooper());
   // Not cleared in onDestroy, so a navigation rebind that has started always finishes.
@@ -341,6 +492,8 @@ public class MainActivity extends Activity {
     applyDebugFlag(getIntent());
     applyHomeFlag(getIntent());
     applyHaConfig(getIntent());
+    applyMqttConfig(getIntent());
+    applyScreenAdminFlag(getIntent());
     keepNavigationEnabled();
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         | WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -459,8 +612,18 @@ public class MainActivity extends Activity {
         dp(72), dp(48), Gravity.BOTTOM | Gravity.LEFT);
     menuPosition.setMargins(dp(12), dp(12), dp(12), dp(12));
     root.addView(menuButton, menuPosition);
+    blackout = new View(this);
+    blackout.setBackgroundColor(Color.BLACK);
+    blackout.setVisibility(View.GONE);
+    blackout.setOnClickListener(v -> {
+      setScreen(true);
+      if (haDevice != null) haDevice.screenChanged();
+    });
+    root.addView(blackout, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
     applyMenuButtonFlag(getIntent());
     setContentView(root);
+    applyBrightness();
 
     String url = urlFrom(getIntent());
     load(url != null ? url : savedUrl());
@@ -468,6 +631,10 @@ public class MainActivity extends Activity {
     IntentFilter connectivity = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
     connectivity.addAction(Intent.ACTION_TIME_CHANGED); // network time arrived after a power cut
     registerReceiver(networkChange, connectivity);
+    IntentFilter screen = new IntentFilter(Intent.ACTION_SCREEN_ON);
+    screen.addAction(Intent.ACTION_SCREEN_OFF);
+    registerReceiver(screenChange, screen);
+    startHaDevice();
   }
 
   @Override
@@ -501,6 +668,8 @@ public class MainActivity extends Activity {
     applyDebugFlag(intent);
     applyHomeFlag(intent);
     applyHaConfig(intent);
+    if (applyMqttConfig(intent)) startHaDevice();
+    applyScreenAdminFlag(intent);
     applyMenuButtonFlag(intent);
     String url = urlFrom(intent);
     if (url != null) {
@@ -901,6 +1070,8 @@ public class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     unregisterReceiver(networkChange);
+    unregisterReceiver(screenChange);
+    if (haDevice != null) haDevice.stop();
     handler.removeCallbacksAndMessages(null);
     haPool.shutdownNow();
     if (web != null) web.destroy();
@@ -939,6 +1110,7 @@ public class MainActivity extends Activity {
   public boolean dispatchTouchEvent(MotionEvent e) {
     switch (e.getActionMasked()) {
       case MotionEvent.ACTION_DOWN:
+        if (haDevice != null) haDevice.touched();
         // Android sends DOWN only when every earlier finger has lifted. If the page still holds a
         // touch from before (see cancelPageTouches), clear it first so this tap is not read as a
         // second finger. With no stale touch the cancel is a no-op.
