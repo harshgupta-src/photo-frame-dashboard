@@ -5,22 +5,29 @@
 //   GET  /photos     ?key=READ_KEY  photos in the iCloud Shared Album(s) in secret PHOTO_ALBUM
 //   GET  /photo      ?key=READ_KEY&id=GUID&s=l|s  the image itself (proxied; iCloud's URLs expire)
 //   POST /reminders  Authorization: Bearer PUSH_TOKEN (Home Assistant pulls GET /reminders; ../ha/README.md)
+//   /walk, /walks*, /mcp  the dog walk log (walkapi.js, ../../WALKS.md), stored in the WalkLog
+//        Durable Object and mirrored to the family calendar
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
 //        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
 // Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM.
 // Secret CALENDARS: {"Calendar name": ["person id", ...]} as JSON; only these calendars are read.
 // Person ids match VITE_PEOPLE in the dashboard's .env.local.
-import { listCalendars, calendarObjects } from './icloud.js';
+// Optional: WALK_CALENDAR (calendar for walk events, or "none"; default: the CALENDARS entry with the
+// most people), WALK_KEY and AGENT_KEY (default: derived from PUSH_TOKEN, see walkapi.js).
+import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
+import { walkAccess, walkRoute, mcp } from './walkapi.js';
+
+export { WalkLog } from './walklog.js';
 
 const DAY = 864e5;
 const EVENTS_TTL = 300;
 const PHOTOS_TTL = 600; // iCloud's signed image URLs last ~15-20 min; /photo refreshes on expiry anyway
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Frame-Key',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Frame-Key, X-Walk-Key, X-Agent-Key, Mcp-Protocol-Version',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { ...CORS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -40,9 +47,6 @@ const cookieKey = (req) => {
   return m ? decodeURIComponent(m[1]) : '';
 };
 const canPush = (req, env) => same((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''), env.PUSH_TOKEN);
-
-// Case-insensitive, and Apple's curly apostrophe (Alex’s Calendar) matches a typed straight one.
-const calKey = (name) => String(name).trim().toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
 
 function calendarMap(env) {
   const m = typeof env.CALENDARS === 'string' ? JSON.parse(env.CALENDARS) : env.CALENDARS || {};
@@ -170,6 +174,16 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (req.method === 'POST' && url.pathname === '/reminders') {
       return canPush(req, env) ? pushReminders(req, env) : json({ error: 'unauthorized' }, 401);
+    }
+    if (url.pathname === '/walk' || url.pathname.startsWith('/walks') || url.pathname === '/mcp') {
+      try {
+        const access = await walkAccess(req, url, env, same);
+        const r = url.pathname === '/mcp' ? await mcp(req, env, access) : await walkRoute(req, url, env, access);
+        if (r instanceof Response) { for (const [k, v] of Object.entries(CORS)) r.headers.set(k, v); return r; }
+        return r.body === null ? new Response(null, { status: r.status, headers: CORS }) : json(r.body, r.status);
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
     }
     if (req.method !== 'GET') return json({ error: 'not found' }, 404);
     if (!['/events', '/calendars', '/reminders', '/photos', '/photo'].includes(url.pathname)) return dashboard(req, url, env);

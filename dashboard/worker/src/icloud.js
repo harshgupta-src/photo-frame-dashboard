@@ -11,6 +11,9 @@ const text = (x) => (x && typeof x === 'object' ? x['#text'] : x);
 
 export class ICloudError extends Error {}
 
+// Case-insensitive, and Apple's curly apostrophe (Alex’s Calendar) matches a typed straight one.
+export const calKey = (name) => String(name).trim().toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
+
 async function dav(env, method, url, body, depth) {
   const r = await fetch(url, {
     method,
@@ -69,4 +72,22 @@ export async function calendarObjects(env, url, from, to) {
   const rows = await dav(env, 'REPORT', url,
     `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${stamp(from)}" end="${stamp(to)}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 1);
   return rows.map((r) => text(r.prop['calendar-data'])).filter((t) => typeof t === 'string' && t.includes('BEGIN:VEVENT'));
+}
+
+const basic = (env) => 'Basic ' + btoa(env.ICLOUD_APPLE_ID + ':' + env.ICLOUD_APP_PASSWORD);
+
+// Writes one event (the whole VCALENDAR text) to href, creating or replacing it. Needs write access
+// to the calendar (own, or shared with "can edit").
+export async function putEvent(env, href, ics) {
+  const r = await fetch(href, { method: 'PUT', headers: { Authorization: basic(env), 'Content-Type': 'text/calendar; charset=utf-8' }, body: ics });
+  if (r.status === 401 || r.status === 403) throw new ICloudError('iCloud refused the write (' + r.status + '): read-only calendar or bad password');
+  if (!r.ok) throw new ICloudError('iCloud HTTP ' + r.status + ' on PUT');
+  return r.headers.get('ETag');
+}
+
+// Deletes an event; one that is already gone counts as deleted.
+export async function deleteEvent(env, href) {
+  const r = await fetch(href, { method: 'DELETE', headers: { Authorization: basic(env) } });
+  if (r.status === 404 || r.status === 410) return;
+  if (!r.ok) throw new ICloudError('iCloud HTTP ' + r.status + ' on DELETE');
 }
