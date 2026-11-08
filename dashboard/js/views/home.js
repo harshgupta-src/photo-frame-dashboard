@@ -59,14 +59,14 @@
     var W = App.walk, dog = App.esc(window.CONFIG.dog), a = W.active;
     if (a && !a.endedAt) {
       var stale = Date.now() - a.startedAt > STALE;
-      return '<div class="h-walk-head"><div class="label">' + dog + '’s out · ' + App.fmt.time(new Date(a.startedAt)) + sync() + '</div>' +
+      return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '’s out · ' + App.fmt.time(new Date(a.startedAt)) + sync() + '</div>' +
         '<button class="h-walk-x" data-walk="cancel" aria-label="Cancel walk">' + App.icon('x', 22) + '</button></div>' +
         '<div class="h-walk-timer num">' + dur(Date.now() - a.startedAt) + '</div>' +
         (stale ? '<div class="h-walk-stale">Still out? Tap to fix</div>' : '') +
         '<div class="h-walk-back">' + App.icon('check', 22) + 'I’m back</div>';
     }
     var w = App.weatherNow(), m = walkPlan(w), last = W.recent[0];
-    return '<div class="h-walk-head"><div class="label">' + dog + '’s walk' + sync() + '</div>' +
+    return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '’s walk' + sync() + '</div>' +
       '<span class="h-walk-go">' + App.icon('play', 16) + 'Start</span></div>' +
       '<div class="h-walk-title">' + m.title + '</div>' +
       '<div class="h-walk-sub">' + m.sub + '</div>' +

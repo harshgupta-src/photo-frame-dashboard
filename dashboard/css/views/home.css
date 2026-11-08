@@ -48,6 +48,7 @@
 /* Walk timer (js/walk.js): the whole tile is the button; "Start" is a hint, not a separate target. */
 .h-walk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .h-walk-head .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-walk-paw { margin-right: 4px; vertical-align: text-bottom; transform: rotate(-12deg); }
 .h-walk-go {
   flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px 0 9px;
   border-radius: 99px; background: rgb(0 0 0 / .18); font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
