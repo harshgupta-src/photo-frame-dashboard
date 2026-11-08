@@ -108,13 +108,7 @@
 [data-orient="portrait"] .ag-grid { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
 [data-orient="portrait"] .ag-plan { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
-/* ---------------------------------------------------------------- Ambient + takeovers */
-[data-orient="portrait"] .amb-info { left: 48px; right: 48px; bottom: 56px; flex-direction: column; align-items: flex-start; gap: 28px; }
-[data-orient="portrait"] .amb-time { font-size: 200px; }
-/* a fitted landscape photo sits in the top part so the clock block below doesn't cross it */
-[data-orient="portrait"] .amb-stage .slide--fit .fitimg { top: 34%; }
-[data-orient="portrait"] .amb-right { align-items: flex-start; }
-[data-orient="portrait"] .amb-wx small { max-width: 420px; }
+/* ---------------------------------------------------------------- Takeovers */
 [data-orient="portrait"] .tk-cam::after { background: linear-gradient(0deg, rgba(0, 0, 0, .9) 0%, rgba(0, 0, 0, .4) 55%, rgba(0, 0, 0, 0) 100%); }
 [data-orient="portrait"] .tk-title { font-size: 84px; }
 [data-orient="portrait"] .tk-actions { flex-wrap: wrap; }

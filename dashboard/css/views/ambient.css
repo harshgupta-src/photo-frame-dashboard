@@ -2,21 +2,23 @@
 .ambient { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 65; background: #000; display: none; color: #fff; cursor: pointer; }
 .stage[data-mode="ambient"] .ambient { display: block; }
 .amb-stage { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
-.amb-scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 60%; background: linear-gradient(0deg, rgba(0, 0, 0, .75), rgba(0, 0, 0, 0)); pointer-events: none; }
-.amb-info { position: absolute; left: 60px; right: 60px; bottom: 48px; display: flex; justify-content: space-between; align-items: flex-end; }
-.amb-time { font-size: 230px; line-height: .78; letter-spacing: -.04em; }
-.amb-date { font-family: var(--serif); font-size: 38px; margin-top: 16px; }
-.amb-right { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; }
-.amb-wx { display: flex; align-items: center; gap: 12px; }
-.amb-wx .num { font-size: 72px; line-height: .8; }
-.amb-wx small { font-family: var(--serif); font-size: 26px; font-style: italic; max-width: 220px; line-height: 1.05; }
+/* Info sits small in the bottom-left corner so the photo stays visible */
+.amb-scrim { position: absolute; left: 0; bottom: 0; width: 60%; height: 40%; background: radial-gradient(ellipse at 0% 100%, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0) 70%); pointer-events: none; }
+.amb-info { position: absolute; left: 28px; bottom: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-shadow: 0 1px 6px rgba(0, 0, 0, .5); }
+.amb-time { font-size: 64px; line-height: .8; letter-spacing: -.03em; }
+.amb-date { font-family: var(--serif); font-size: 18px; margin-top: 4px; }
+.amb-right { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.amb-wx { display: flex; align-items: center; gap: 6px; }
+.amb-wx svg { width: 20px; height: 20px; }
+.amb-wx .num { font-size: 26px; line-height: .8; }
+.amb-wx small { font-family: var(--serif); font-size: 15px; font-style: italic; max-width: 260px; line-height: 1.05; }
 .amb-next {
-  display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 20px; border-radius: 999px;
-  background: rgba(255, 255, 255, .16);
-  font-size: 20px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px;
+  background: rgba(0, 0, 0, .35);
+  font-size: 13px; font-weight: 700; max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.amb-next i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px #fff; }
-.amb-who { display: flex; gap: 8px; }
+.amb-next i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1.5px #fff; }
+.amb-who { display: flex; gap: 4px; }
 .amb-who .avatar--away { background: rgba(0, 0, 0, .3); }
 
 /* Sleep: plain black, 10 PM until the morning (App.sleepWindow); a tap shows the dashboard for 20 s */

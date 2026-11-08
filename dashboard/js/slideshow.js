@@ -81,16 +81,26 @@
     // Rotated: the slide on screen was picked for the old shape. Pick again (now, if running).
     App.on('orient', function () {
       self.history = [];
+      self.queue = [];
       if (self.timer) self.next();
       else { self.current = null; self.el.innerHTML = ''; }
     });
   };
   var S = App.Slideshow.prototype;
 
+  // Only photos the same shape as the screen (portrait photos on a portrait screen, landscape on
+  // landscape). A chosen Pair layout needs the other shape, so it gets the whole album. Falls back
+  // to the whole album when no photo matches.
+  S.pool = function () {
+    if (this.o.layout === 'pair') return D.photos;
+    var shape = screenShape();
+    var m = D.photos.filter(function (x) { return x.o === shape; });
+    return m.length ? m : D.photos;
+  };
   S.refill = function () {
     var q = [];
     this.ver = App.photosVer;
-    D.photos.forEach(function (p) { q.push(p); if (p.fav) q.push(p); });
+    this.pool().forEach(function (p) { q.push(p); if (p.fav) q.push(p); });
     // On-this-day photos always come first in a fresh cycle
     shuffle(q).sort(function (a, b) { return (App.photoMeta(b).onThisDay ? 1 : 0) - (App.photoMeta(a).onThisDay ? 1 : 0); });
     this.queue = q;
@@ -106,7 +116,7 @@
     if (!first) return null;
     var self = this;
     function sibling(pred) {
-      return self.take(pred) || D.photos.filter(function (x) { return x !== first && pred(x); })[0];
+      return self.take(pred) || self.pool().filter(function (x) { return x !== first && pred(x); })[0];
     }
     // A pair puts two photos of the other shape side by side (landscape screen) or one above the
     // other (portrait screen), so together they fill the screen.
@@ -169,7 +179,7 @@
     this.render(this.history.pop());
     this.restart();
   };
-  S.setLayout = function (l) { this.o.layout = l; this.next(); };
+  S.setLayout = function (l) { this.o.layout = l; this.queue = []; this.next(); };
   S.restart = function () {
     var self = this;
     clearInterval(this.timer);
