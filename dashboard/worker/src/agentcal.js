@@ -195,23 +195,24 @@ export async function agentCalRoute(req, url, env, ctx, ok) {
         const ics = agentICS(uid, ev, Date.now(), { person, agent });
         await putEvent(env, hrefFor(cal, uid), ics);
         // Same uid on another calendar = the event moved (e.g. someone else covers it now).
-        const moved = [];
+        const movedFrom = [];
         for (const c of cals) {
           if (c === cal || !c.url || !canWrite(c, person)) continue;
-          await deleteEvent(env, hrefFor(c, uid));
-          moved.push(c.alias);
+          if (await deleteEvent(env, hrefFor(c, uid))) movedFrom.push(c.alias);
         }
         ctx.waitUntil(env.DATA.delete('events'));
-        return { status: 200, body: { ok: true, uid, calendar: cal.alias, checkedOtherCalendars: moved } };
+        return { status: 200, body: { ok: true, uid, calendar: cal.alias, ...(movedFrom.length ? { movedFrom } : {}) } };
       }
       const alias = url.searchParams.get('calendar');
       const targets = alias ? [pick(cals, alias)] : cals.filter((c) => c.url && canWrite(c, person));
+      const deleted = [];
       for (const c of targets) {
         if (!canWrite(c, person)) throw new AgentCalError(403, 'calendar "' + c.alias + '" is read-only for ' + (person || 'this caller'));
-        await deleteEvent(env, hrefFor(c, uid));
+        if (await deleteEvent(env, hrefFor(c, uid))) deleted.push(c.alias);
       }
+      if (!deleted.length) throw new AgentCalError(404, 'no agent event "' + uid + '" (agents can only delete events they created)');
       ctx.waitUntil(env.DATA.delete('events'));
-      return { status: 200, body: { ok: true, uid, calendars: targets.map((c) => c.alias) } };
+      return { status: 200, body: { ok: true, uid, deletedFrom: deleted } };
     }
     return { status: 404, body: { error: 'not found' } };
   } catch (e) {

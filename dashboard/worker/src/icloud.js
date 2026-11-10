@@ -85,9 +85,10 @@ export async function putEvent(env, href, ics) {
   return r.headers.get('ETag');
 }
 
-// Deletes an event; one that is already gone counts as deleted.
+// Deletes an event; one that is already gone counts as deleted. → whether it existed.
 export async function deleteEvent(env, href) {
   const r = await fetch(href, { method: 'DELETE', headers: { Authorization: basic(env) } });
-  if (r.status === 404 || r.status === 410) return;
+  if (r.status === 404 || r.status === 410) return false;
   if (!r.ok) throw new ICloudError('iCloud HTTP ' + r.status + ' on DELETE');
+  return true;
 }

@@ -47,7 +47,7 @@ function fakeICloud() {
   const cal = (path, name) => `<d:response><d:href>${path}</d:href><d:propstat><d:prop><d:displayname>${name}</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url), m = init.method || 'GET';
-    if (m === 'PUT' || m === 'DELETE') { calls.push(m + ' ' + u); return new Response(null, { status: m === 'PUT' ? 201 : 404 }); }
+    if (m === 'PUT' || m === 'DELETE') { calls.push(m + ' ' + u); return new Response(null, { status: m === 'PUT' ? 201 : u.includes('/h/') ? 204 : 404 }); }
     if (u === 'https://caldav.icloud.com/') return ms('<d:response><d:href>/</d:href><d:propstat><d:prop><d:current-user-principal><d:href>/1/principal/</d:href></d:current-user-principal></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>');
     if (u.endsWith('/principal/')) return ms('<d:response><d:href>/1/principal/</d:href><d:propstat><d:prop><c:calendar-home-set><d:href>/1/calendars/</d:href></c:calendar-home-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>');
     return ms(cal('/1/calendars/h/', 'Alex’s Calendar') + cal('/1/calendars/a/', 'Jordan’s Calendar') + cal('/1/calendars/l/', 'Family'));
@@ -82,6 +82,8 @@ test('route: upsert writes <calendar>/<uid>.ics and clears the same uid from the
     'PUT https://caldav.icloud.com/1/calendars/l/hb-dog-meal-2026-11-12-lunch.ics',
     'DELETE https://caldav.icloud.com/1/calendars/h/hb-dog-meal-2026-11-12-lunch.ics',
   ]);
+  assert.deepEqual(r.body.movedFrom, ['alex']);
+  assert.equal((await agentCalRoute(...req('DELETE', '/agent/events/hb-gone?calendar=family'), env, ctx, true)).status, 404);
   const list = await agentCalRoute(...req('GET', '/agent/calendars'), env, ctx, true);
   assert.deepEqual(list.body.map((c) => [c.alias, c.write, c.found]), [['alex', true, true], ['family', true, true], ['jordan', false, true]]);
 });
