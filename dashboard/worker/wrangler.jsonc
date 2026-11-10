@@ -15,9 +15,10 @@
   "compatibility_date": "2026-10-01",
   "assets": { "directory": "../dist", "binding": "ASSETS", "run_worker_first": true },
   "kv_namespaces": [{ "binding": "DATA", "id": "978ca79b833f44e6881f8cd5fa24c47b" }],
-  // Retired: the walk log's old Durable Object (walks are in Lifelog now; src/walklog.js is an empty
-  // class). Kept so deploys don't delete its stored walks; to remove it, drop the binding and add a
-  // migration {"tag": "v2", "deleted_classes": ["WalkLog"]}.
-  "durable_objects": { "bindings": [{ "name": "WALKS", "class_name": "WalkLog" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WalkLog"] }]
+  // The walk log's old Durable Object (WalkLog) was deleted in v2; walks are in Lifelog now.
+  // Migrations are append-only history: keep both tags.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WalkLog"] },
+    { "tag": "v2", "deleted_classes": ["WalkLog"] }
+  ]
 }

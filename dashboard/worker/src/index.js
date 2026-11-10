@@ -27,8 +27,6 @@ import { parseReminders, forwardToHA } from './reminders.js';
 import { walkAccess, walkRoute } from './walkapi.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
 
-export { WalkLog } from './walklog.js';
-
 const DAY = 864e5;
 const EVENTS_TTL = 300;
 const PHOTOS_TTL = 600; // iCloud's signed image URLs last ~15-20 min; /photo refreshes on expiry anyway

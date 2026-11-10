@@ -111,8 +111,8 @@ walk, an agent logs one event of that type with `data.pee`/`data.poop`/`data.wal
 frame and the calendar pick it up within a few minutes.
 
 `worker/scripts/import-walks.mjs` copied the walks from the Worker's old Durable Object log
-(`WalkLog`, now an empty class kept so the deploy doesn't drop its data; see `worker/wrangler.jsonc`)
-into Lifelog, keeping their ids so their calendar events were updated in place.
+(`WalkLog`) into Lifelog, keeping their ids so their calendar events were updated in place. The
+Durable Object and its stored data were then deleted (wrangler migration `v2`).
 
 ## For agents
 
