@@ -3,3 +3,4 @@ dist
 .wrangler
 kiosk/build
 .env.local
+worker/.deploy-secrets.json

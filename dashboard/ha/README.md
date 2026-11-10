@@ -7,8 +7,8 @@ when HA can't be reached, and still hosts the dashboard and the photos.
 
 ```
 iCloud calendars ──CalDAV──▶ HA calendar.*  ──▶ frame (Worker /events as fallback)
-iPhone Shortcut ──POST──▶ Worker /reminders ──HA pulls every 2 min──▶ HA todo.* ──▶ frame
-                     (or straight to HA's webhook)                      ▲ ticks from the frame
+iPhone Shortcut ──POST──▶ HA webhook ──▶ HA todo.* ──▶ frame (Worker /reminders as fallback)
+   (or POST Worker /reminders, which stores it and forwards it)   ▲ ticks from the frame
 ```
 
 ## Calendars
@@ -29,27 +29,37 @@ VITE_HA_CALENDARS=calendar.alexs_calendar:alex,calendar.jordans_calendar:jordan,
 
 ## Reminders
 
-Apple Reminders lists aren't reachable over CalDAV, so the iPhone Shortcut still sends them.
+Apple Reminders lists aren't reachable over CalDAV, so an iPhone Shortcut sends them, as JSON:
+`{"Grocery list": "milk\neggs", "LOML": [{"title": "...", "notes": "...", "assignee": "Name"}]}`
+(or the same wrapped in `{"lists": {...}}`; items are newline text, strings or
+`{title, notes, assignee, done}`).
 
 1. Add two **Local To-do** lists (Settings → Devices & services → Add integration), named after the
    Reminders lists, e.g. "Grocery list" and "LOML" → `todo.grocery_list`, `todo.loml`.
 2. `reminders-sync.yaml`: set `lists_map` (Reminders list name, lower case → to-do entity) and replace
    `WEBHOOK_ID` with a long random id (`echo "frame_reminders_$(openssl rand -hex 16)"`), then add
-   it to `/config/automations.yaml`.
-3. `configuration.yaml`: add it to HA's `/config/configuration.yaml`, with `frame_read_key` (the
-   Worker's READ_KEY) and `frame_reminders_webhook` (`http://127.0.0.1:8123/api/webhook/<id>`) in
-   `secrets.yaml`. `reminders-pull.yaml` goes in `automations.yaml`. Restart HA.
+   it to `/config/automations.yaml` and reload automations. Anyone with the id can rewrite the
+   lists, so keep it private.
+3. Point the Shortcut's **Get Contents of URL** at `https://<ha external url>/api/webhook/<id>`:
+   method POST, request body JSON with the lists as above (Content-Type `application/json`), no
+   Authorization header. HA updates the lists within seconds.
 4. In the dashboard's `.env.local`: `VITE_HA_GROCERY=todo.grocery_list`, `VITE_HA_PINNED=todo.loml`.
 
 Each list is mirrored from the phone: new items are added, items done or deleted on the phone are
 removed, and items ticked on the frame (or in HA) stay ticked until the phone drops them. Items may
 carry `notes` and `assignee` (a person's name, shown in their colour on the frame); both go into
-the to-do item's description, the assignee as an `Assigned: Name` last line.
+the to-do item's description, the assignee as an `Assigned: Name` last line. Lists missing from a
+push are left alone. Ticks made on the frame don't reach Apple Reminders by themselves: a Shortcut
+has to read the completed items from HA and complete them in Reminders.
 
-To skip the Worker, point the Shortcut at `https://<ha external url>/api/webhook/<id>` (POST, JSON,
-same body; no Authorization header) and remove `reminders-pull.yaml`. Ticks made on the frame don't
-reach Apple Reminders by themselves: a Shortcut has to read the completed items from HA and
-complete them in Reminders.
+**Through the Worker instead.** A Shortcut can also POST the same body to the Worker's
+`/reminders` (header `Authorization: Bearer <PUSH_TOKEN>`). The Worker keeps the last push in KV,
+which the frame reads when it can't reach HA, and forwards it to HA's webhook straight away when
+the Worker secret `HA_REMINDERS_WEBHOOK_URL` is set (the webhook URL above; add
+`HA_REMINDERS_WEBHOOK_URL=...` to `.env.local` and `npm run deploy` uploads it, or
+`npx wrangler secret put HA_REMINDERS_WEBHOOK_URL`). The response says `"ha": "ok"`, `"failed"`
+or `"off"`. With the Shortcut posting to HA directly, the Worker's copy stops updating, so the
+frame's fallback shows the last list sent through the Worker.
 
 ## Dog walk log in the Obsidian vault
 

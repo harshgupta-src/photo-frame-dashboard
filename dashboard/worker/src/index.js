@@ -1,15 +1,17 @@
 // frame-data Worker: the frame's only data source for calendars, Reminders lists and photos.
 //   GET  /events     ?key=READ_KEY  iCloud events, cached EVENTS_TTL seconds in KV
 //   GET  /calendars  ?key=READ_KEY  calendar names visible to the Apple ID (setup aid)
-//   GET  /reminders  ?key=READ_KEY  lists last pushed by the iPhone Shortcut
+//   GET  /reminders  ?key=READ_KEY  lists last pushed by the iPhone Shortcut (the frame's fallback
+//        when Home Assistant can't be reached)
 //   GET  /photos     ?key=READ_KEY  photos in the iCloud Shared Album(s) in secret PHOTO_ALBUM
 //   GET  /photo      ?key=READ_KEY&id=GUID&s=l|s  the image itself (proxied; iCloud's URLs expire)
-//   POST /reminders  Authorization: Bearer PUSH_TOKEN (Home Assistant pulls GET /reminders; ../ha/README.md)
+//   POST /reminders  Authorization: Bearer PUSH_TOKEN; stored, then forwarded to Home Assistant's
+//        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md)
 //   /walk, /walks*, /mcp  the dog walk log (walkapi.js, ../../WALKS.md), stored in the WalkLog
 //        Durable Object and mirrored to the family calendar
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
 //        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
-// Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM.
+// Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM, HA_REMINDERS_WEBHOOK_URL.
 // Secret CALENDARS: {"Calendar name": ["person id", ...]} as JSON; only these calendars are read.
 // Person ids match VITE_PEOPLE in the dashboard's .env.local.
 // Optional: WALK_CALENDAR (calendar for walk events, or "none"; default: the CALENDARS entry with the
@@ -17,6 +19,7 @@
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
+import { parseReminders, forwardToHA } from './reminders.js';
 import { walkAccess, walkRoute, mcp } from './walkapi.js';
 
 export { WalkLog } from './walklog.js';
@@ -84,31 +87,14 @@ async function events(env, ctx) {
   }
 }
 
-function cleanList(items) {
-  // Shortcuts sends a list most easily as newline-separated text.
-  if (typeof items === 'string') items = items.split(/\r?\n/);
-  if (!Array.isArray(items)) return [];
-  return items.slice(0, 300).map((it) => (typeof it === 'string' ? { title: it } : it || {}))
-    .map((it) => ({
-      title: String(it.title || it.name || '').trim().slice(0, 120),
-      notes: it.notes ? String(it.notes).slice(0, 200) : undefined,
-      due: it.due ? String(it.due).slice(0, 40) : undefined,
-      assignee: it.assignee ? String(it.assignee).trim().slice(0, 40) || undefined : undefined,
-      done: it.done === true || it.done === 'true' || it.done === 'Yes' || it.completed === true,
-    }))
-    .filter((it) => it.title);
-}
-
 async function pushReminders(req, env) {
   let body;
   try { body = await req.json(); } catch { return json({ error: 'body must be JSON' }, 400); }
-  // Accept {"lists": {...}} or the lists flat at the top level: {"Grocery list": "milk\neggs"}.
-  const lists = body && typeof body === 'object' ? (body.lists && typeof body.lists === 'object' ? body.lists : body) : null;
-  if (!lists || Array.isArray(lists)) return json({ error: 'expected {"List name": "item\\nitem"} or {"lists": {"List name": [...]}}' }, 400);
-  const out = { updated: new Date().toISOString(), lists: {} };
-  for (const [name, items] of Object.entries(lists).slice(0, 10)) out.lists[String(name).slice(0, 60)] = cleanList(items);
+  const out = parseReminders(body);
+  if (!out) return json({ error: 'expected {"List name": "item\\nitem"} or {"lists": {"List name": [...]}}' }, 400);
   await env.DATA.put('reminders', JSON.stringify(out));
-  return json({ ok: true, counts: Object.fromEntries(Object.entries(out.lists).map(([k, v]) => [k, v.length])) });
+  const ha = await forwardToHA(env, out.lists);
+  return json({ ok: true, ha, counts: Object.fromEntries(Object.entries(out.lists).map(([k, v]) => [k, v.length])) });
 }
 
 // PHOTO_ALBUM: one or more shared album links, separated by spaces, commas or new lines.
