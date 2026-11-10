@@ -1,5 +1,6 @@
-// Dog walk log: validation, JSON shapes, the calendar event and the generated markdown log.
-// Pure functions (no Cloudflare APIs) so node --test can cover them; walklog.js stores the walks.
+// Dog walk log: validation, JSON shapes, the Lifelog event mapping, the calendar event and the
+// generated markdown log. Pure functions (no Cloudflare APIs) so node --test can cover them;
+// walkstore.js reads and writes the walks in Lifelog.
 
 export const MIN_TIME = Date.UTC(2026, 0, 1); // frames without an RTC boot at 1970 until NTP syncs
 export const MAX_WALK = 6 * 3600e3;
@@ -111,8 +112,73 @@ export function walkJSON(w, tz) {
     walkers: w.walkers.map((x) => x.name), walkerIds: w.walkers.map((x) => x.id),
     notes: w.notes || undefined,
     source: w.source,
-    calendar: w.endedAt == null ? undefined : w.calState,
+    calendar: w.endedAt == null ? undefined : calState(w),
   };
+}
+
+// ------------------------------------------------------------------ Lifelog events
+// A walk is one Lifelog event (type LIFELOG_WALK_TYPE, id = the walk id): started_at/ended_at, person
+// (the walker when there is one), source, and data {dog, pee, poop, walkers, walker_ids, notes, tz,
+// max_open_s, calendar}. data.calendar is the calendar mirror's state {state, href, rev, error, tries,
+// retry_at}; rev is calRev() of the walk last written to the calendar.
+const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
+
+export function toEvent(w, type) {
+  return {
+    type,
+    person: w.walkers.length === 1 ? w.walkers[0].name : null,
+    started_at: iso(w.startedAt), ended_at: iso(w.endedAt),
+    source: w.source || 'api',
+    data: {
+      dog: w.dog || null, pee: w.pee, poop: w.poop,
+      walkers: w.walkers.map((x) => x.name), walker_ids: w.walkers.map((x) => x.id),
+      notes: w.notes || null, tz: w.tz || null,
+      max_open_s: MAX_WALK / 1000, // Lifelog marks open events abandoned after this
+      calendar: w.cal || { state: 'none' },
+    },
+  };
+}
+
+// A Lifelog event (also one an agent logged by hand, e.g. data {pee, poop, walkers: ["Harsh"]}) → walk.
+export function fromEvent(e) {
+  const d = e.data && typeof e.data === 'object' ? e.data : {};
+  const names = Array.isArray(d.walkers) ? d.walkers : d.walkers ? [d.walkers] : e.person ? [e.person] : [];
+  const ids = Array.isArray(d.walker_ids) ? d.walker_ids : [];
+  const walkers = names.map((n, i) => ({ id: String(ids[i] || n).toLowerCase().replace(/[^a-z0-9_-]/g, ''), name: String(n) }));
+  const b = (v) => (v == null ? null : bool(v));
+  return {
+    id: e.id, startedAt: Date.parse(e.started_at), endedAt: e.ended_at ? Date.parse(e.ended_at) : null,
+    pee: b(d.pee), poop: b(d.poop), walkers, notes: d.notes || null, dog: d.dog || null, tz: validTz(d.tz),
+    source: e.source, updatedAt: Date.parse(e.updated_at) || null, deletedAt: e.deleted_at ? Date.parse(e.deleted_at) : null,
+    cal: d.calendar && typeof d.calendar === 'object' ? d.calendar : null,
+  };
+}
+
+// What the calendar event shows; a change means the event must be rewritten.
+export function calRev(w) {
+  const s = JSON.stringify([w.startedAt, w.endedAt, w.pee, w.poop, w.walkers.map((x) => x.name), w.notes || null, w.dog || null]);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+}
+
+const shown = (w) => w.endedAt != null && !w.deletedAt;
+
+// Does the calendar need a write (or delete) for this walk? Failed writes wait for retry_at; after
+// too many they stay 'error' until POST /walks/resync (force).
+export function needsSync(w, now, force = false) {
+  const c = w.cal;
+  if (!force && c && (c.state === 'error' || (c.retry_at && now < c.retry_at))) return false;
+  if (shown(w)) return !c || !['synced', 'off'].includes(c.state) || c.rev !== calRev(w) || (force && c.state === 'off');
+  return !!c && (!!c.href || c.state === 'pending' || c.state === 'error');
+}
+
+// The calendar state the frame shows: synced | pending | error | off.
+export function calState(w) {
+  const c = w.cal;
+  if (!c) return 'pending';
+  if (c.state === 'synced' && c.rev !== calRev(w)) return 'pending';
+  return c.state === 'none' ? 'pending' : c.state;
 }
 
 // walks: completed and active, not deleted, newest first.
@@ -219,15 +285,15 @@ export function renderLog(walks, now, tz, dog = 'Dog') {
     '---',
     'type: log',
     'generated: true',
-    'source: photo frame walk timer (frame-data Worker)',
+    'source: Lifelog dog walk events (photo frame walk timer, frame-data Worker)',
     'updated: ' + (latest ? localDate(latest, tz) : localDate(now, tz)),
     'tags: [' + dog.toLowerCase().replace(/[^a-z0-9]+/g, '-') + ', walks, generated]',
     '---',
     '',
     '# ' + dog + ' Walk Log',
     '',
-    '> [!info] Generated from the photo frame\'s walk timer. Do not edit: it is rewritten every few minutes and edits are lost.',
-    '> Fix a walk on the frame (Today → walk tile → history). Live JSON: frame-data Worker `GET /walks/summary` (read-only agent key).',
+    '> [!info] Generated from the walks in Lifelog (one event per walk, logged by the photo frame\'s walk timer). Do not edit: it is rewritten every few minutes and edits are lost.',
+    '> Fix a walk on the frame (Today → walk tile → history) or in Lifelog; query Lifelog for live data.',
     '> Times are ' + tz + '. Pee and poop: ✓ yes, ✗ no, – not logged.',
     '',
     '## Now',

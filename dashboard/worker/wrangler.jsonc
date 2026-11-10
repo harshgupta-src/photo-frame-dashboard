@@ -3,9 +3,9 @@
 // Secrets (npx wrangler secret put NAME): ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN,
 // PHOTO_ALBUM (iCloud Shared Album link with "Public Website" on).
 // CALENDARS (JSON): {"Alex's Calendar": ["alex"], "Family": ["alex", "jordan"]}.
-// Optional: WALK_CALENDAR, WALK_KEY, AGENT_KEY (dog walk log, ../WALKS.md), HA_REMINDERS_WEBHOOK_URL
-// (forward Shortcut pushes to Home Assistant, ../ha/README.md). npm run deploy also uploads any
-// non-VITE_ KEY=value in ../.env.local as a secret (scripts/deploy.mjs).
+// Dog walk log (../WALKS.md): LIFELOG_URL, LIFELOG_TOKEN; optional LIFELOG_WALK_TYPE, WALK_CALENDAR, WALK_KEY.
+// Optional: HA_REMINDERS_WEBHOOK_URL (forward Shortcut pushes to Home Assistant, ../ha/README.md).
+// npm run deploy also uploads any non-VITE_ KEY=value in ../.env.local as a secret (scripts/deploy.mjs).
 // Local dev reads the same names from .dev.vars (gitignored; scripts/icloud-setup.mjs writes it).
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
@@ -14,7 +14,9 @@
   "compatibility_date": "2026-10-01",
   "assets": { "directory": "../dist", "binding": "ASSETS", "run_worker_first": true },
   "kv_namespaces": [{ "binding": "DATA", "id": "978ca79b833f44e6881f8cd5fa24c47b" }],
-  // The dog walk log (src/walklog.js). SQLite-backed, so it works on the Workers Free plan.
+  // Retired: the walk log's old Durable Object (walks are in Lifelog now; src/walklog.js is an empty
+  // class). Kept so deploys don't delete its stored walks; to remove it, drop the binding and add a
+  // migration {"tag": "v2", "deleted_classes": ["WalkLog"]}.
   "durable_objects": { "bindings": [{ "name": "WALKS", "class_name": "WalkLog" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WalkLog"] }]
 }

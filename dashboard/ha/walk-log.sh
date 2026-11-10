@@ -1,6 +1,6 @@
 #!/bin/sh
 # Home Assistant shell_command (walk-log.yaml): copies the dog walk log from the frame-data Worker
-# (GET /walks/log.md, read-only AGENT_KEY) into the Obsidian vault mirror, so agents that read the
+# (GET /walks/log.md, rendered from the walks in Lifelog; WALK_KEY) into the Obsidian vault mirror, so agents that read the
 # vault see it. Writes only when the note changed, by renaming a hidden .tmp file over it, so the
 # vault's sync never sees a half-written note (LiveSync bridges skip .*.tmp files).
 # Usage: frame-walk-log.sh <Worker URL> <note path> [key file, default /config/.frame_agent_key]

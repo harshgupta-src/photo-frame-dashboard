@@ -63,11 +63,11 @@ frame's fallback shows the last list sent through the Worker.
 
 ## Dog walk log in the Obsidian vault
 
-`walk-log.sh` copies the Worker's walk log (`GET /walks/log.md`, see `../WALKS.md`) into a vault
-note, for agents that read the vault. Copy it to `/config/frame-walk-log.sh`, put the Worker's
-AGENT_KEY (read-only; `node worker/scripts/walk-keys.mjs`) in `/config/.frame_agent_key` with
-`chmod 600`, and add the two parts of `walk-log.yaml` to `configuration.yaml` and
-`automations.yaml`. Restart HA. The note is rewritten only when a walk changes.
+`walk-log.sh` copies the Worker's walk log (`GET /walks/log.md`, rendered from the walks in
+Lifelog, see `../WALKS.md`) into a vault note, for agents that read the vault. Copy it to
+`/config/frame-walk-log.sh`, put the Worker's WALK_KEY (`node worker/scripts/walk-keys.mjs`) in
+`/config/.frame_agent_key` with `chmod 600`, and add the two parts of `walk-log.yaml` to
+`configuration.yaml` and `automations.yaml`. Restart HA. The note is rewritten only when a walk changes.
 
 ## The frame as a device (MQTT)
 

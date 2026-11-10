@@ -1,6 +1,6 @@
 # Dog walk log → Obsidian vault (see ../WALKS.md). Two parts:
 #
-# 1. configuration.yaml (and copy walk-log.sh to /config/frame-walk-log.sh, the Worker's AGENT_KEY
+# 1. configuration.yaml (and copy walk-log.sh to /config/frame-walk-log.sh, the Worker's WALK_KEY
 #    to /config/.frame_agent_key with chmod 600):
 shell_command:
   frame_walk_log: >-

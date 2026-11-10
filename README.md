@@ -70,7 +70,7 @@ web app deployed to Cloudflare Workers. `dashboard/kiosk/` is a small full-scree
 built without Gradle, that shows it. Hold two fingers still for 1.5 s to open a menu for the
 launcher, Android settings, and reloading. On frames without system navigation, optional floating
 **Back** and **Dashboard** buttons help; see the [kiosk guide](dashboard/kiosk/README.md). The Today
-screen's dog walk tile is also a walk timer that logs walks to the family calendar; see
+screen's dog walk tile is also a walk timer that logs walks to Lifelog and the family calendar; see
 [WALKS.md](dashboard/WALKS.md).
 
 ## For agents: start here
