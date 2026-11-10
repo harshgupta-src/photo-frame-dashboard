@@ -4,6 +4,7 @@
 // PHOTO_ALBUM (iCloud Shared Album link with "Public Website" on).
 // CALENDARS (JSON): {"Alex's Calendar": ["alex"], "Family": ["alex", "jordan"]}.
 // Dog walk log (../WALKS.md): LIFELOG_URL, LIFELOG_TOKEN; optional LIFELOG_WALK_TYPE, WALK_CALENDAR, WALK_KEY.
+// Agent calendar writes (src/agentcal.js): AGENT_CALENDARS; optional AGENT_CAL_KEY.
 // Optional: HA_REMINDERS_WEBHOOK_URL (forward Shortcut pushes to Home Assistant, ../ha/README.md).
 // npm run deploy also uploads any non-VITE_ KEY=value in ../.env.local as a secret (scripts/deploy.mjs).
 // Local dev reads the same names from .dev.vars (gitignored; scripts/icloud-setup.mjs writes it).

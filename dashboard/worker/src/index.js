@@ -9,6 +9,8 @@
 //        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md)
 //   /walk, /walks*  the dog walk log (walkapi.js, ../../WALKS.md): an adapter over the walks kept in
 //        Lifelog (secrets LIFELOG_URL, LIFELOG_TOKEN), mirrored to the family calendar
+//   /agent/calendars, /agent/events*  calendar read/write for household agents via the Home Brain
+//        gateway (agentcal.js; Bearer AGENT_CAL_KEY, calendars in secret AGENT_CALENDARS)
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
 //        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
 // Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM, HA_REMINDERS_WEBHOOK_URL,
@@ -16,12 +18,14 @@
 // Secret CALENDARS: {"Calendar name": ["person id", ...]} as JSON; only these calendars are read.
 // Person ids match VITE_PEOPLE in the dashboard's .env.local.
 // Optional: WALK_CALENDAR (calendar for walk events, or "none"; default: the CALENDARS entry with the
-// most people), WALK_KEY (default: derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE.
+// most people), WALK_KEY (default: derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE,
+// AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS.
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
 import { parseReminders, forwardToHA } from './reminders.js';
 import { walkAccess, walkRoute } from './walkapi.js';
+import { agentCalAccess, agentCalRoute } from './agentcal.js';
 
 export { WalkLog } from './walklog.js';
 
@@ -30,7 +34,7 @@ const EVENTS_TTL = 300;
 const PHOTOS_TTL = 600; // iCloud's signed image URLs last ~15-20 min; /photo refreshes on expiry anyway
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Frame-Key, X-Walk-Key',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Frame-Key, X-Walk-Key, X-Agent, X-Agent-Person',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -170,6 +174,10 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (url.pathname.startsWith('/agent/')) {
+      const r = await agentCalRoute(req, url, env, ctx, await agentCalAccess(req, env, same));
+      if (r) return json(r.body, r.status);
     }
     if (req.method !== 'GET') return json({ error: 'not found' }, 404);
     if (!['/events', '/calendars', '/reminders', '/photos', '/photo'].includes(url.pathname)) return dashboard(req, url, env);
