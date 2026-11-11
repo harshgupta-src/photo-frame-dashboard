@@ -56,8 +56,17 @@
 
   <script>
     // Wall-display self-healing: if the app bundle failed to load (e.g. a stale page right after a
-    // deploy, or a network blip), reload until it starts.
-    setTimeout(function () { if (!window.App) location.reload(); }, 10000);
+    // deploy, or a network blip), reload until it starts. Back off 10 s, 20 s, 40 s … 5 min across
+    // reloads, so a slow frame still booting is not reloaded over and over (App.start resets it).
+    (function () {
+      var n = 0;
+      try { n = +sessionStorage.getItem('selfheal') || 0; } catch (e) { /* storage disabled */ }
+      setTimeout(function () {
+        if (window.App) return;
+        try { sessionStorage.setItem('selfheal', String(n + 1)); } catch (e) { /* storage disabled */ }
+        location.reload();
+      }, Math.min(10000 * Math.pow(2, n), 300000));
+    })();
   </script>
   <script type="module" src="/js/main.js"></script>
 </body>

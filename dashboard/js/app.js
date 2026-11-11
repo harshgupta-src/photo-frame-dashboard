@@ -1,4 +1,6 @@
 // Core shell: router, demo clock, idle/ambient, toasts, sheets, helpers.
+import { assetKey, decide, markApplied } from './update.js';
+
 (function () {
   'use strict';
   var D = window.DATA;
@@ -386,7 +388,7 @@
   function onIdleTick() {
     idleSec++;
     var blocked = $('#takeover').classList.contains('is-open');
-    if (updatePending && idleSec >= 30 && !blocked) { location.reload(); return; }
+    if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
     var asleep = App.isSleep();
     if (!asleep && (App.mode === 'night' || App.mode === 'nightdash')) { App.setMode('day'); App.go('home'); return; }
     if (App.mode === 'nightdash' && idleSec >= 20) { App.setMode('night'); return; }
@@ -404,20 +406,40 @@
   App.resetIdle = function () { idleSec = 0; };
 
   // ------------------------------------------------------------ self-update (hosted builds)
-  // A deploy changes the hashed /assets/ files index.html points at. Check every 5 min and reload
-  // once nobody has touched the screen for 30 s. No-op on the dev server (no /assets/ tags).
-  var updatePending = false;
-  function assetKey(list) { return list.slice().sort().join(' '); }
+  // A deploy changes the hashed /assets/ files index.html points at. Every 5 min, fetch index.html
+  // and compare its asset set with this page's, both read by the same parser (js/update.js). A new
+  // build must show up in two checks in a row, and is applied at most once per 6 h (persisted), so a
+  // reload that lands on the old build again can't loop. Applied once nobody has touched the screen
+  // for 30 s and no takeover, sheet, demo drawer or dog walk is open. UPDATE-FREEZE.md has the why.
+  // No-op on the dev server (no /assets/ tags) and on the APK's bundled copy.
+  var updatePending = null, updateState = { candidate: null, seen: 0 }, myAssets = '';
+  function store() { try { return window.localStorage; } catch (e) { return null; } }
+  function captureAssets() {
+    myAssets = assetKey(App.$$('script[src], link[href]').map(function (n) { return n.outerHTML; }).join('\n'));
+  }
   function checkUpdate() {
     if (location.hostname === '127.0.0.1') return; // bundled offline copy: updates come with the APK
-    var mine = App.$$('script[src*="/assets/"], link[href*="/assets/"]').map(function (n) {
-      return n.getAttribute('src') || n.getAttribute('href');
-    });
-    if (!mine.length) return;
-    fetch('/', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (html) {
-      var live = html.match(/\/assets\/[^"']+\.(?:js|css)/g);
-      if (live && assetKey(live) !== assetKey(mine)) updatePending = true;
+    var storage = store();
+    if (!myAssets || !storage) return;
+    fetch('/', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+      // A redirect or non-HTML answer is a captive portal or an error page, not our index.html.
+      var html = r.ok && !r.redirected && /text\/html/i.test(r.headers.get('Content-Type') || '');
+      return html ? r.text() : '';
+    }).then(function (html) {
+      var live = assetKey(html);
+      var verdict = decide(updateState, myAssets, live, storage, Date.now());
+      updatePending = verdict === 'apply' ? live : null;
+      if (verdict === 'blocked') console.warn('Update already tried in the last 6 h; not reloading again');
     }).catch(function () { /* offline: try again next time */ });
+  }
+  function updateSafe() {
+    if ($('#sheetLayer').classList.contains('is-open') || $('#demo').classList.contains('is-open')) return false;
+    return !(App.walk && App.walk.active);
+  }
+  function applyUpdate() {
+    var key = updatePending, storage = store();
+    updatePending = null;
+    if (storage && markApplied(storage, key, Date.now())) location.reload();
   }
 
   // ------------------------------------------------------------ stage scaling
@@ -457,21 +479,32 @@
   }
 
   // ------------------------------------------------------------ clock tick
-  var lastMin = -1, lastTick = Date.now();
+  // Date-based; scheduled as a setTimeout chain aligned to the next whole second, so timer drift
+  // never accumulates. lastMin is the absolute minute (not getMinutes()), so a stall of exactly an
+  // hour still re-renders. A gap of over 90 s (frozen main thread, paused timers, NTP correction)
+  // re-renders everything for the current time instead of waiting or reloading.
+  var CLOCK_SET = Date.UTC(2026, 0, 1);
+  var lastMin = -1, lastTick = Date.now(), tickTimer = null;
   function tick() {
-    // Frames without an RTC boot at 1970 and jump forward when NTP syncs; the mock data is dated
-    // at load, so reload once the clock jumps.
     var real = Date.now();
-    if (Math.abs(real - lastTick) > 10 * 60000) { location.reload(); return; }
+    // Frames without an RTC boot at 1970 and jump forward when NTP syncs; reload once then, so
+    // everything dated at load (caches, mock data) starts from the real date.
+    if (lastTick < CLOCK_SET && real >= CLOCK_SET) { location.reload(); return; }
+    var gap = Math.abs(real - lastTick);
     lastTick = real;
-    var n = App.now();
+    if (gap > 90000) { lastMin = -1; App.emit('time'); App.rerender(); }
+    var n = App.now(), min = Math.floor(n.getTime() / 60000);
     App.emit('second', n);
-    if (n.getMinutes() !== lastMin) {
-      lastMin = n.getMinutes();
+    if (min !== lastMin) {
+      lastMin = min;
       $('#railClock').innerHTML = '<b>' + App.fmt.time(n, false) + '</b><span>' + App.fmt.ampm(n) + '</span>';
       App.emit('minute', n);
     }
     onIdleTick();
+  }
+  function tickLoop() {
+    clearTimeout(tickTimer);
+    try { tick(); } finally { tickTimer = setTimeout(tickLoop, 1000 - (Date.now() % 1000) + 5); }
   }
 
   // ------------------------------------------------------------ boot
@@ -493,8 +526,10 @@
     document.addEventListener('pointerdown', App.resetIdle, true);
     window.addEventListener('hashchange', function () { App.go(location.hash.slice(1)); });
     App.go(location.hash.slice(1) || 'home');
-    tick();
-    setInterval(tick, 1000);
+    try { sessionStorage.removeItem('selfheal'); } catch (e) { /* storage disabled */ }
+    captureAssets();
+    tickLoop();
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) tickLoop(); });
     setInterval(checkUpdate, 5 * 60000);
     App.emit('ready');
     refreshStale(1500);

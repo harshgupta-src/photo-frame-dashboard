@@ -55,8 +55,9 @@ adb shell am start -n com.wesbos.homehq/.MainActivity --es url 'https://frame-da
   own files; anything else gets 401. The key is also baked into the built JavaScript, so never
   deploy `dist/` anywhere public.
 - To ship a UI change, run `npm run deploy` from `dashboard/`. It builds and deploys the Worker
-  together with `dist/`. The page checks for a new build every 5 minutes and reloads once the
-  screen has been untouched for 30 seconds. No USB needed.
+  together with `dist/`. The page checks for a new build every 5 minutes; once two checks in a row
+  see it, it reloads when the screen has been untouched for 30 seconds and no sheet, alert or dog
+  walk is open (at most once per build every 6 hours; `../UPDATE-FREEZE.md`). No USB needed.
 - Changes to the kiosk app itself (Java, `build.sh`) still need a USB install.
 - The kiosk passes the frame's ambient light sensor to the page as `window.frameLux(lux)` every
   few seconds. The dashboard's Auto theme uses it (`js/theme.js`) and falls back to sunset/sunrise

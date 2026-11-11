@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "vite build && node worker/scripts/deploy.mjs"
+    "deploy": "vite build && node worker/scripts/deploy.mjs",
+    "test": "node --test worker/test/*.test.js test/*.test.js"
   },
   "devDependencies": {
     "vite": "^8.3.1",
