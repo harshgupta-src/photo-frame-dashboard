@@ -2,6 +2,8 @@
 // walk log (worker/src/walkapi.js, WALKS.md).
 //   App.walk.active   the walk in progress {id, startedAt, endedAt: null, walkers}, or null
 //   App.walk.recent   completed walks from the last 14 days, newest first
+//   App.walk.plans    today's and tomorrow's walk plans (the HA agent's, see WALKS.md); App.walk.next()
+//                     is the next planned walk, whose walkers are the default (tap an avatar to change)
 // Changes are saved to localStorage first and queued in an outbox, so a reload, a reboot or no
 // Wi-Fi loses nothing; the outbox is sent in order (PUT is a full upsert, DELETE removes) and the
 // Worker's copy is adopted whenever the outbox is empty. Times are real time (Date.now(), never the
@@ -10,14 +12,15 @@
 (function () {
   'use strict';
   var API = import.meta.env.VITE_FRAME_API, KEY = import.meta.env.VITE_FRAME_KEY;
-  var STATE = 'walk-state-v1', OUTBOX = 'walk-outbox-v1', MIN_TIME = Date.UTC(2026, 0, 1);
+  var STATE = 'walk-state-v1', OUTBOX = 'walk-outbox-v1', CHOSEN = 'walk-walkers-v1', MIN_TIME = Date.UTC(2026, 0, 1);
   var people = window.CONFIG.people;
-  var W = App.walk = { on: !!(API && KEY), active: null, recent: [], pending: 0, error: null };
+  var W = App.walk = { on: !!(API && KEY), active: null, recent: [], plans: [], pending: 0, error: null };
+  var PLAN_AHEAD = 90 * 60e3; // a walk started this close to a planned one is that one
   var syncing = false, again = false;
 
   function read(k, d) { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } }
   function write(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage full or disabled */ } }
-  function save() { write(STATE, { active: W.active, recent: W.recent }); }
+  function save() { write(STATE, { active: W.active, recent: W.recent, plans: W.plans }); }
   function changed() { save(); W.pending = read(OUTBOX, []).length; App.emit('walk'); }
 
   function newId() {
@@ -25,14 +28,45 @@
     return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
   }
   function person(id) { return people.filter(function (p) { return p.id === id; })[0]; }
-  W.defaultWalkers = function () { return people.length ? [{ id: people[0].id, name: people[0].name }] : []; };
+  // The next planned walk that hasn't happened: {id, start, end, durationMin, walkers, walkerIds, ...}.
+  W.next = function () {
+    var now = Date.now(), best = null;
+    W.plans.forEach(function (p) {
+      (p.walks || []).forEach(function (x) {
+        if (x.status === 'planned' && Date.parse(x.end) > now && (!best || Date.parse(x.start) < Date.parse(best.start))) best = x;
+      });
+    });
+    return best;
+  };
+  function planned(x) {
+    return (x ? x.walkerIds : []).map(function (id, i) { var p = person(id); return { id: id, name: p ? p.name : x.walkers[i] }; })
+      .filter(function (w) { return person(w.id); });
+  }
+  // Who's walking: picked on the tile for this planned walk, else the plan's, else the first person.
+  W.defaultWalkers = function () {
+    var x = W.next(), c = read(CHOSEN, null);
+    if (c && c.key === (x ? x.id : '') && c.walkers.length) return c.walkers;
+    var p = planned(x);
+    if (p.length) return p;
+    return people.length ? [{ id: people[0].id, name: people[0].name }] : [];
+  };
+  W.toggleWalker = function (id) {
+    var p = person(id), cur = W.defaultWalkers(), x = W.next();
+    if (!p) return;
+    var has = cur.some(function (w) { return w.id === id; });
+    if (has && cur.length < 2) return;
+    cur = has ? cur.filter(function (w) { return w.id !== id; }) : cur.concat([{ id: p.id, name: p.name }]);
+    cur.sort(function (a, b) { return people.indexOf(person(a.id)) - people.indexOf(person(b.id)); });
+    write(CHOSEN, { key: x ? x.id : '', walkers: cur });
+    App.emit('walk');
+  };
   W.clockOk = function () { return Date.now() >= MIN_TIME; };
 
   // Worker JSON → frame record
   function fromServer(j) {
     return {
       id: j.id, startedAt: Date.parse(j.startedAt), endedAt: j.endedAt ? Date.parse(j.endedAt) : null,
-      pee: j.pee, poop: j.poop, notes: j.notes || '', calendar: j.calendar,
+      pee: j.pee, poop: j.poop, notes: j.notes || '', calendar: j.calendar, planId: j.planId || undefined,
       walkers: (j.walkerIds || []).map(function (id, i) { var p = person(id); return { id: id, name: p ? p.name : j.walkers[i] }; })
     };
   }
@@ -50,7 +84,7 @@
     var init = { method: o.op === 'put' ? 'PUT' : 'DELETE', headers: { 'X-Frame-Key': KEY, 'Content-Type': 'application/json' }, cache: 'no-store' };
     if (o.op === 'put') {
       init.body = JSON.stringify({
-        startedAt: r.startedAt, endedAt: r.endedAt, pee: r.pee, poop: r.poop, walkers: r.walkers, notes: r.notes || '',
+        startedAt: r.startedAt, endedAt: r.endedAt, pee: r.pee, poop: r.poop, walkers: r.walkers, notes: r.notes || '', planId: r.planId,
         dog: window.CONFIG.dog, tz: tz, source: 'frame', clientNow: Date.now()
       });
     }
@@ -105,14 +139,15 @@
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (j) {
           if (read(OUTBOX, []).length) return; // changed while we were asking
-          var before = JSON.stringify([W.active, W.recent]);
+          var before = JSON.stringify([W.active, W.recent, W.plans]);
           var a = j.active ? fromServer(j.active) : null;
           // Keep the frame's "I'm back" (sheet open) on top of the server's still-active walk.
           if (a && W.active && W.active.id === a.id && W.active.endedAt) a = W.active;
           W.active = a;
           W.recent = (j.recent || []).map(fromServer);
+          W.plans = j.plans || [];
           W.error = null;
-          if (JSON.stringify([W.active, W.recent]) !== before) changed();
+          if (JSON.stringify([W.active, W.recent, W.plans]) !== before) changed();
         });
     }).catch(function (e) { console.warn('Walk sync failed', e); });
   };
@@ -121,7 +156,13 @@
   W.start = function () {
     if (W.active) return W.active;
     if (!W.clockOk()) { App.toast('The frame’s clock isn’t set yet. Try again in a minute.', { tone: 'error', icon: 'clock' }); return null; }
-    W.active = { id: newId(), startedAt: Date.now(), endedAt: null, walkers: W.defaultWalkers() };
+    var x = W.next(), now = Date.now();
+    W.active = { id: newId(), startedAt: now, endedAt: null, walkers: W.defaultWalkers() };
+    if (x && Date.parse(x.start) - now <= PLAN_AHEAD) {
+      W.active.planId = x.id;
+      x.status = 'active';
+    }
+    write(CHOSEN, null);
     enqueue('put', W.active);
     changed();
     return W.active;
@@ -164,6 +205,7 @@
   var s = read(STATE, {});
   W.active = s.active || null;
   W.recent = s.recent || [];
+  W.plans = s.plans || [];
   W.pending = read(OUTBOX, []).length;
   // Reloaded with the end-of-walk sheet open: they were back, so log it with what's known.
   if (W.active && W.active.endedAt) {

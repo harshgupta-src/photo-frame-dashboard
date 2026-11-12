@@ -8,6 +8,11 @@
 //   POST   /walks/start     server-timed start {by?}      (iPhone Shortcut)
 //   POST   /walks/stop      server-timed stop {pee?, poop?, by?}
 //   POST   /walks/resync    retry calendar writes that gave up
+//   GET    /walks/active    just the walk in progress (Home Assistant polls it)
+//   PUT    /walks/:id/route {points: [{who, lat, lon, acc, t}]}  the route from the walkers' phones
+//   GET    /walks/plan?date=YYYY-MM-DD   the day's walk plan (default today) with each walk's status
+//   PUT    /walks/plan/:date {walks: [{start, end?|durationMin?, walkers, note?, id?}]}  replace it
+//   DELETE /walks/plan/:date             drop it (and its calendar events)
 // Keys, in a header only: READ_KEY (X-Frame-Key) or WALK_KEY, both read and write. WALK_KEY is a
 // Worker secret if set, else derived from PUSH_TOKEN (HMAC-SHA256), so it needs no setup;
 // scripts/walk-keys.mjs prints it. Agents read and log walks in Lifelog directly.
@@ -61,6 +66,23 @@ export async function walkRoute(req, url, env, ctx, access) {
     const r = await s.run('log');
     if (r.status !== 200) return r;
     return new Response(r.body, { headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store' } });
+  }
+  if (p === '/walks/active' && m === 'GET') return need('read') || s.run('active');
+  const route = /^\/walks\/([A-Za-z0-9_-]{6,64})\/route$/.exec(p);
+  if (route && m === 'PUT') {
+    const denied = need('write');
+    if (denied) return denied;
+    const b = await body(req);
+    return b ? s.run('putRoute', route[1], b) : { status: 400, body: { error: 'body must be JSON' } };
+  }
+  if (p === '/walks/plan' && m === 'GET') return need('read') || s.run('getPlan', url.searchParams.get('date'));
+  const plan = /^\/walks\/plan\/([0-9-]{10})$/.exec(p);
+  if (plan && (m === 'PUT' || m === 'DELETE')) {
+    const denied = need('write');
+    if (denied) return denied;
+    if (m === 'DELETE') return s.run('deletePlan', plan[1]);
+    const b = await body(req);
+    return b ? s.run('putPlan', plan[1], b) : { status: 400, body: { error: 'body must be JSON' } };
   }
   const op = { '/walks/start': 'start', '/walks/stop': 'stop', '/walks/resync': 'resync' }[p];
   if (op && m === 'POST') {

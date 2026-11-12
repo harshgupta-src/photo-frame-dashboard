@@ -6,6 +6,11 @@ export const MIN_TIME = Date.UTC(2026, 0, 1); // frames without an RTC boot at 1
 export const MAX_WALK = 6 * 3600e3;
 const SKEW = 2 * 60e3;
 export const UID_PREFIX = 'dog-walk-';
+export const PLAN_PREFIX = 'walk-plan-';
+// Pee is logged 1 min into the walk and poop 2 min after that (both capped at the walk's end).
+export const PEE_AFTER = 60e3, POOP_AFTER = 120e3;
+// Bumped when the calendar events change shape, so every walk is rewritten once (v2: Life Log + potty events).
+const CAL_VERSION = 2;
 
 export class WalkError extends Error {
   constructor(message, status = 400, extra) { super(message); this.status = status; this.extra = extra; }
@@ -74,6 +79,7 @@ export function normalize(body, now) {
     dog: clean(body.dog, 40) || null,
     tz: validTz(body.tz),
     source: clean(body.source, 20) || 'api',
+    planId: validId(body.planId ?? body.plan_id) ? (body.planId ?? body.plan_id) : null,
   };
 }
 
@@ -112,6 +118,7 @@ export function walkJSON(w, tz) {
     walkers: w.walkers.map((x) => x.name), walkerIds: w.walkers.map((x) => x.id),
     notes: w.notes || undefined,
     source: w.source,
+    planId: w.planId || undefined,
     calendar: w.endedAt == null ? undefined : calState(w),
   };
 }
@@ -133,6 +140,7 @@ export function toEvent(w, type) {
       dog: w.dog || null, pee: w.pee, poop: w.poop,
       walkers: w.walkers.map((x) => x.name), walker_ids: w.walkers.map((x) => x.id),
       notes: w.notes || null, tz: w.tz || null,
+      ...(w.planId ? { plan_id: w.planId } : {}),
       max_open_s: MAX_WALK / 1000, // Lifelog marks open events abandoned after this
       calendar: w.cal || { state: 'none' },
     },
@@ -151,12 +159,14 @@ export function fromEvent(e) {
     pee: b(d.pee), poop: b(d.poop), walkers, notes: d.notes || null, dog: d.dog || null, tz: validTz(d.tz),
     source: e.source, updatedAt: Date.parse(e.updated_at) || null, deletedAt: e.deleted_at ? Date.parse(e.deleted_at) : null,
     cal: d.calendar && typeof d.calendar === 'object' ? d.calendar : null,
+    abandoned: !!d.abandoned,
+    planId: validId(d.plan_id) ? d.plan_id : null,
   };
 }
 
 // What the calendar event shows; a change means the event must be rewritten.
 export function calRev(w) {
-  const s = JSON.stringify([w.startedAt, w.endedAt, w.pee, w.poop, w.walkers.map((x) => x.name), w.notes || null, w.dog || null]);
+  const s = JSON.stringify([CAL_VERSION, w.startedAt, w.endedAt, w.pee, w.poop, w.walkers.map((x) => x.name), w.notes || null, w.dog || null]);
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(36);
@@ -241,6 +251,38 @@ export function eventTitle(w) {
   const potty = [w.pee ? '💧' : '', w.poop ? '💩' : ''].join('');
   return dog + ' walk' + who + ' · ' + (potty || 'no potty');
 }
+
+// When the pee and poop of a walk are logged: start + 1 min, then 2 min later, never after the end.
+export function pottyTimes(w) {
+  const end = w.endedAt == null ? Infinity : w.endedAt;
+  const pee = Math.min(w.startedAt + PEE_AFTER, end);
+  return { pee, poop: Math.min(pee + POOP_AFTER, end) };
+}
+
+// 'maya_walk' → 'maya_pee' / 'maya_poop' (the Lifelog types of a walk's potty events).
+export const pottyType = (walkType, kind) => (/_walk$/.test(walkType) ? walkType.replace(/_walk$/, '_' + kind) : walkType + '_' + kind);
+
+function vcal(lines) {
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walks//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+    ...lines, 'END:VEVENT', 'END:VCALENDAR', ''].map(fold).join('\r\n');
+}
+
+// A 1-minute event for the pee or poop of a completed walk.
+export function pottyICS(w, kind, now) {
+  const at = pottyTimes(w)[kind], dog = w.dog || 'Dog';
+  return vcal([
+    'UID:' + UID_PREFIX + w.id + '-' + kind + '@frame-data',
+    'DTSTAMP:' + stamp(now),
+    'DTSTART:' + stamp(at),
+    'DTEND:' + stamp(at + 60e3),
+    'SUMMARY:' + icsText(dog + (kind === 'pee' ? ' pee 💧' : ' poop 💩')),
+    'DESCRIPTION:' + icsText('On the ' + clockUTC(w) + ' walk' + (w.walkers.length ? ' with ' + w.walkers.map((x) => x.name).join(' & ') : '') +
+      '.\nLogged with the walk timer on the photo frame; edit the walk there.'),
+    'CATEGORIES:' + icsText(dog + ' ' + kind),
+    'TRANSP:TRANSPARENT',
+  ]);
+}
+const clockUTC = (w) => clock(w.startedAt, w.tz || 'UTC');
 
 export function walkICS(w, now) {
   const yn = (v) => (v == null ? 'not logged' : v ? 'yes' : 'no');
@@ -340,4 +382,44 @@ export function renderLog(walks, now, tz, dog = 'Dog') {
   }
   L.push('');
   return L.join('\n');
+}
+
+// ------------------------------------------------------------------ walking route (from Home Assistant)
+// body {points: [{who, lat, lon, acc?, t}]} (t: epoch seconds or ms, or ISO) → {paths: {who: [[lat, lon, acc, t_s]]},
+// distances: {who: metres}, distance_m}. Distance skips fixes worse than 50 m and jumps faster than 4 m/s.
+export const ROUTE_MAX_ACC = 50;
+function metres(a, b) {
+  const r = Math.PI / 180, dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+export function normalizeRoute(body) {
+  const pts = body && Array.isArray(body.points) ? body.points : null;
+  if (!pts) throw new WalkError('body must be {"points": [{who, lat, lon, acc, t}]}');
+  if (pts.length > 5000) throw new WalkError('at most 5000 points');
+  const paths = {};
+  for (const p of pts) {
+    if (!p || typeof p !== 'object') continue;
+    const who = clean(p.who || p.p || 'unknown', 32).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'unknown';
+    const lat = Number(p.lat), lon = Number(p.lon), acc = p.acc == null ? null : Math.round(Number(p.acc));
+    let t = typeof p.t === 'number' ? p.t : Date.parse(p.t) / 1000;
+    if (t > 1e11) t /= 1000;
+    if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && Number.isFinite(t))) continue;
+    (paths[who] = paths[who] || []).push([+lat.toFixed(6), +lon.toFixed(6), Number.isFinite(acc) ? acc : null, Math.round(t)]);
+  }
+  const distances = {};
+  for (const [who, list] of Object.entries(paths)) {
+    list.sort((a, b) => a[3] - b[3]);
+    paths[who] = list.filter((x, i) => !i || x[0] !== list[i - 1][0] || x[1] !== list[i - 1][1]);
+    let d = 0, prev = null;
+    for (const x of paths[who]) {
+      if (x[2] != null && x[2] > ROUTE_MAX_ACC) continue;
+      if (prev) {
+        const m = metres(prev, x);
+        if (m / Math.max(1, x[3] - prev[3]) <= 4) { d += m; prev = x; }
+      } else prev = x;
+    }
+    distances[who] = Math.round(d);
+  }
+  return { paths, distances, distance_m: Math.max(0, ...Object.values(distances)) };
 }

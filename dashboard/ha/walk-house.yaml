@@ -1,0 +1,329 @@
+# Maya walk, house side. Copy to /config/packages/walk_house.yaml (packages: !include_dir_named packages).
+#
+# The frame's walk tile starts and ends walks in the frame-data Worker. The Worker pings the webhook
+# below on every change, and HA also polls GET /walks/active once a minute, so a missed ping only
+# delays things by a minute.
+#   start → track the walkers' phones; 1 min later, if nobody else is home, snapshot and turn off the
+#           lights, fans and TVs that are on
+#   end   → turn those back on and PUT the route to the Worker (it stores it in Lifelog with the walk)
+#
+# secrets.yaml:
+#   frame_walk_auth: "Bearer <WALK_KEY>"        # same key the frame uses
+#   frame_walk_webhook_id: "<random id>"        # Worker env HA_WALK_WEBHOOK_URL = <HA url>/api/webhook/<id>
+#
+# Edit the people/devices below (person first name, lowercased = the frame's walker id).
+
+rest_command:
+  frame_walk_active:
+    url: "https://frame-data.<your-subdomain>.workers.dev/walks/active"
+    method: GET
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 15
+  frame_walk_route:
+    url: "https://frame-data.<your-subdomain>.workers.dev/walks/{{ id }}/route"
+    method: PUT
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 20
+
+template:
+  # The walk HA is tracking. Restored across restarts. Ops (event maya_walk_update):
+  #   start {walk_id, walkers, started_at, points} · point {walk_id, point} · turned_off {walk_id, entities} · end {walk_id}
+  - trigger:
+      - trigger: event
+        event_type: maya_walk_update
+    sensor:
+      - name: Maya walk
+        unique_id: maya_walk_tracker
+        icon: mdi:dog-side
+        state: >-
+          {%- set op = trigger.event.data.op -%}
+          {%- if op == 'start' -%}out
+          {%- elif op == 'end' and trigger.event.data.walk_id == this.attributes.walk_id -%}home
+          {%- else -%}{{ this.state if this.state in ['out', 'home'] else 'home' }}{%- endif -%}
+        attributes:
+          walk_id: >-
+            {{ trigger.event.data.walk_id if trigger.event.data.op == 'start' else this.attributes.walk_id | default(none) }}
+          walkers: >-
+            {{ trigger.event.data.walkers if trigger.event.data.op == 'start' else this.attributes.walkers | default([]) }}
+          started_at: >-
+            {{ trigger.event.data.started_at if trigger.event.data.op == 'start' else this.attributes.started_at | default(none) }}
+          turned_off: >-
+            {%- set d = trigger.event.data -%}
+            {%- if d.op == 'start' -%}{{ [] }}
+            {%- elif d.op == 'turned_off' and d.walk_id == this.attributes.walk_id -%}{{ d.entities }}
+            {%- else -%}{{ this.attributes.turned_off | default([]) }}{%- endif -%}
+          route: >-
+            {%- set d = trigger.event.data -%}
+            {%- set old = this.attributes.route | default([]) -%}
+            {%- if d.op == 'start' -%}{{ d.points | default([]) }}
+            {%- elif d.op == 'point' and this.state == 'out' and d.walk_id == this.attributes.walk_id and old | count < 3000 -%}{{ old + [d.point] }}
+            {%- else -%}{{ old }}{%- endif -%}
+
+script:
+  maya_walk_start:
+    alias: "Maya walk: start"
+    description: Track a new walk; 1 min after it starts, turn the house off if nobody else is home.
+    mode: restart
+    fields:
+      walk: { description: "The Worker's walk JSON (id, startedAt, walkerIds)" }
+    variables:
+      # Turned off when the house is empty. Lights and fans by domain, TVs by name (not speakers).
+      tvs:
+        - media_player.living_room_tv
+        - media_player.living_room_samsung_living_room_tv
+        - media_player.living_room_living_room_tv_chromecast
+        - media_player.living_room_living_room_tv
+        - media_player.bedroom_tv
+      # People also count as home in these zones (Maya's bathroom is just outside).
+      home_zones: ["home", "Maya's Bathroom"]
+      walkers: "{{ walk.walkerIds | default([]) }}"
+      started: "{{ as_timestamp(walk.startedAt) }}"
+    sequence:
+      - event: maya_walk_update
+        event_data:
+          op: start
+          walk_id: "{{ walk.id }}"
+          walkers: "{{ walkers }}"
+          started_at: "{{ walk.startedAt }}"
+          points: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for p in states.person if p.name.split(' ')[0] | lower in walkers and p.attributes.latitude is defined -%}
+              {%- set ns.out = ns.out + [{'who': p.name.split(' ')[0] | lower, 'lat': p.attributes.latitude, 'lon': p.attributes.longitude,
+                  'acc': p.attributes.gps_accuracy | default(none), 't': as_timestamp(p.last_updated) | round(0)}] -%}
+            {%- endfor -%}
+            {{ ns.out }}
+      - action: script.maya_walk_locate
+        data:
+          walkers: "{{ walkers }}"
+      # Only act on a fresh start (not one HA noticed late, e.g. after a restart).
+      - condition: template
+        value_template: "{{ now().timestamp() - started < 300 }}"
+      - delay:
+          seconds: "{{ [0, (started + 60 - now().timestamp()) | round(0, 'ceil')] | max }}"
+      - condition: template
+        value_template: "{{ is_state('sensor.maya_walk', 'out') and state_attr('sensor.maya_walk', 'walk_id') == walk.id }}"
+      - variables:
+          others_home: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for p in states.person if p.name.split(' ')[0] | lower not in walkers and p.state in home_zones -%}
+              {%- set ns.out = ns.out + [p.entity_id] -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          to_off: >-
+            {{ (states.light | selectattr('state', 'eq', 'on') | map(attribute='entity_id') | list)
+               + (states.fan | selectattr('state', 'eq', 'on') | map(attribute='entity_id') | list)
+               + (tvs | select('is_state', ['on', 'playing', 'paused', 'idle', 'buffering']) | list) }}
+      - condition: template
+        value_template: "{{ others_home | count == 0 and to_off | count > 0 }}"
+      - action: scene.create
+        data:
+          scene_id: maya_walk_restore
+          snapshot_entities: "{{ to_off }}"
+      - event: maya_walk_update
+        event_data:
+          op: turned_off
+          walk_id: "{{ walk.id }}"
+          entities: "{{ to_off }}"
+      - action: homeassistant.turn_off
+        target:
+          entity_id: "{{ to_off }}"
+        continue_on_error: true
+      - action: logbook.log
+        data:
+          name: Maya walk
+          message: "Nobody else home, turned off {{ to_off | count }}: {{ to_off | join(', ') }}"
+
+  maya_walk_end:
+    alias: "Maya walk: end"
+    description: Turn back on what the walk turned off and send the route to the Worker.
+    mode: queued
+    fields:
+      walk_id: { description: The walk id being ended }
+    sequence:
+      - action: script.turn_off
+        target:
+          entity_id: script.maya_walk_start
+      - variables:
+          turned_off: "{{ state_attr('sensor.maya_walk', 'turned_off') or [] }}"
+          route: "{{ state_attr('sensor.maya_walk', 'route') or [] }}"
+          walkers: "{{ state_attr('sensor.maya_walk', 'walkers') or [] }}"
+          last: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for p in states.person if p.name.split(' ')[0] | lower in walkers and p.attributes.latitude is defined -%}
+              {%- set ns.out = ns.out + [{'who': p.name.split(' ')[0] | lower, 'lat': p.attributes.latitude, 'lon': p.attributes.longitude,
+                  'acc': p.attributes.gps_accuracy | default(none), 't': as_timestamp(p.last_updated) | round(0)}] -%}
+            {%- endfor -%}
+            {{ ns.out }}
+      - event: maya_walk_update
+        event_data:
+          op: end
+          walk_id: "{{ walk_id }}"
+      - if:
+          - condition: template
+            value_template: "{{ turned_off | count > 0 }}"
+        then:
+          - if:
+              - condition: template
+                value_template: "{{ states('scene.maya_walk_restore') not in ['unknown', 'unavailable'] }}"
+            then:
+              - action: scene.turn_on
+                target:
+                  entity_id: scene.maya_walk_restore
+                continue_on_error: true
+            else:
+              - action: homeassistant.turn_on
+                target:
+                  entity_id: "{{ turned_off }}"
+                continue_on_error: true
+          - action: logbook.log
+            data:
+              name: Maya walk
+              message: "Back home, turned on {{ turned_off | count }} again"
+      - if:
+          - condition: template
+            value_template: "{{ (route + last) | count > 0 }}"
+        then:
+          - action: rest_command.frame_walk_route
+            data:
+              id: "{{ walk_id }}"
+              body:
+                points: "{{ route + last }}"
+            response_variable: put
+            continue_on_error: true
+          - action: logbook.log
+            data:
+              name: Maya walk
+              message: >-
+                Route {{ 'saved' if put is defined and put.status == 200 else 'not saved (' ~ (put.status if put is defined else 'error') ~ ')' }}:
+                {{ (route + last) | count }} points{{ ', ' ~ put.content.distanceM ~ ' m' if put is defined and put.status == 200 and put.content.distanceM is defined else '' }}
+
+  maya_walk_locate:
+    alias: "Maya walk: ask phones for location"
+    description: Ask the walkers' phones for a fresh location (iOS may throttle this).
+    mode: parallel
+    fields:
+      walkers: { description: "Walker ids (harsh, ambuja)" }
+    sequence:
+      - repeat:
+          for_each: "{{ walkers }}"
+          sequence:
+            - variables:
+                svc: >-
+                  {% from 'home.jinja' import notify_service %}{{ notify_service(repeat.item) }}
+            - if:
+                - condition: template
+                  value_template: "{{ svc != '' }}"
+              then:
+                - action: "{{ svc }}"
+                  data:
+                    message: request_location_update
+                  continue_on_error: true
+
+automation:
+  - id: maya_walk_reconcile
+    alias: "Maya walk: follow the frame"
+    description: Match HA's tracked walk to the Worker's active walk (start/end), and keep phones reporting while out.
+    mode: queued
+    max: 5
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret frame_walk_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+        id: hook
+      - trigger: time_pattern
+        minutes: /1
+        id: tick
+      - trigger: homeassistant
+        event: start
+        id: boot
+    actions:
+      # A finished walk changed (logged, edited, deleted): walk_plan.yaml replans the rest of the day.
+      - if:
+          - condition: template
+            value_template: >-
+              {{ trigger.id == 'hook' and trigger.json is mapping and trigger.json.walk is mapping
+                 and trigger.json.event in ['stop', 'logged', 'change', 'delete']
+                 and (trigger.json.walk.endedAt or trigger.json.walk.deleted) }}
+        then:
+          - event: maya_walk_logged
+            event_data:
+              event: "{{ trigger.json.event }}"
+              walk_id: "{{ trigger.json.walk.id }}"
+              local_date: "{{ trigger.json.walk.localDate }}"
+      - action: rest_command.frame_walk_active
+        response_variable: resp
+        continue_on_error: true
+      - condition: template
+        value_template: "{{ resp is defined and resp.status == 200 and resp.content is mapping }}"
+      - variables:
+          active: "{{ resp.content.active }}"
+          tracked: "{{ state_attr('sensor.maya_walk', 'walk_id') if is_state('sensor.maya_walk', 'out') else none }}"
+      - if:
+          - condition: template
+            value_template: "{{ tracked and (not active or active.id != tracked) }}"
+        then:
+          - action: script.maya_walk_end
+            data:
+              walk_id: "{{ tracked }}"
+      - if:
+          - condition: template
+            value_template: "{{ active and active.id != tracked }}"
+        then:
+          - action: script.turn_on
+            target:
+              entity_id: script.maya_walk_start
+            data:
+              variables:
+                walk: "{{ active }}"
+        else:
+          - if:
+              - condition: template
+                value_template: "{{ active and trigger.id == 'tick' }}"
+            then:
+              - action: script.maya_walk_locate
+                data:
+                  walkers: "{{ active.walkerIds }}"
+
+  - id: maya_walk_route_point
+    alias: "Maya walk: record route"
+    description: Add each walker's location updates to the walk's route.
+    mode: queued
+    max: 20
+    triggers:
+      - trigger: state
+        entity_id:
+          - device_tracker.harsh_s_iphone
+          - device_tracker.ambuja_s_iphone
+    conditions:
+      - condition: state
+        entity_id: sensor.maya_walk
+        state: "out"
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state is not none and trigger.to_state.attributes.latitude is defined
+             and (trigger.from_state is none
+                  or trigger.from_state.attributes.latitude != trigger.to_state.attributes.latitude
+                  or trigger.from_state.attributes.longitude != trigger.to_state.attributes.longitude) }}
+    actions:
+      - variables:
+          who: >-
+            {{ states.person | selectattr('attributes.device_trackers', 'defined')
+               | selectattr('attributes.device_trackers', 'contains', trigger.entity_id)
+               | map(attribute='name') | map('regex_replace', ' .*$', '') | map('lower') | first | default('') }}
+      - condition: template
+        value_template: "{{ who in (state_attr('sensor.maya_walk', 'walkers') or []) }}"
+      - event: maya_walk_update
+        event_data:
+          op: point
+          walk_id: "{{ state_attr('sensor.maya_walk', 'walk_id') }}"
+          point:
+            who: "{{ who }}"
+            lat: "{{ trigger.to_state.attributes.latitude }}"
+            lon: "{{ trigger.to_state.attributes.longitude }}"
+            acc: "{{ trigger.to_state.attributes.gps_accuracy | default(none) }}"
+            t: "{{ as_timestamp(trigger.to_state.last_updated) | round(0) }}"

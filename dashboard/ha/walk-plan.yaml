@@ -1,0 +1,282 @@
+# Maya's walk plan. Copy to /config/packages/walk_plan.yaml (needs walk_house.yaml's secrets).
+#
+# At 04:30 HA plans the day, and after every walk is logged (or edited or deleted) it replans the rest
+# of the day: it gathers the calendars, the last 14 days of walks with Maya's pee/poop rhythm (gaps
+# between them, time since the last ones), the hourly forecast and Maya's vault note, asks the HA
+# Copilot Agent for the walks as JSON, and PUTs the plan to the Worker (PUT /walks/plan/<date>). A
+# replan keeps the walks already done (or due) and replaces only the ones still ahead. The Worker
+# writes each planned walk to its walkers' calendar, moves or removes events when the plan changes,
+# and removes a walk's event once it is logged. The frame shows the next one.
+
+rest_command:
+  frame_walk_history:
+    url: "https://frame-data.<your-subdomain>.workers.dev/walks?days=14"
+    method: GET
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 15
+  frame_walk_plan_get:
+    url: "https://frame-data.<your-subdomain>.workers.dev/walks/plan?date={{ date }}"
+    method: GET
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 15
+  frame_walk_plan_put:
+    url: "https://frame-data.<your-subdomain>.workers.dev/walks/plan/{{ date }}"
+    method: PUT
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 30
+
+shell_command:
+  maya_walk_note: "head -c 8000 '/share/obsidian/harsh-memory/Areas/People/Maya.md'"
+
+script:
+  maya_walk_plan:
+    alias: "Maya walk: plan the day"
+    description: >-
+      Ask the Copilot Agent for the day's walks (times, lengths, walkers) from Maya's pee/poop rhythm and
+      both calendars, and send them to the frame. replan keeps what's done and replaces what's ahead.
+    mode: queued
+    max: 2
+    fields:
+      date:
+        description: "YYYY-MM-DD (default today)"
+        example: "2026-11-20"
+      replan:
+        description: Only replan the walks still ahead (after a walk is logged)
+        selector:
+          boolean:
+    variables:
+      day: "{{ date if date is defined and date else now().date().isoformat() }}"
+      rest: "{{ replan | default(false) | bool and day == now().date().isoformat() }}"
+      calendars:
+        calendar.harshs_calendar: "Harsh's calendar (Harsh only)"
+        calendar.ambujas_calendar: "Ambuja's calendar (Ambuja only)"
+        calendar.a_h_life: "A&H Life (shared, both)"
+      start_ts: "{{ as_timestamp(strptime(day ~ ' 00:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) }}"
+      # Replanned walks start at least this far ahead.
+      from_ts: "{{ [start_ts, now().timestamp() + 15 * 60] | max if rest else start_ts }}"
+    sequence:
+      - action: calendar.get_events
+        target:
+          entity_id: "{{ calendars.keys() | list }}"
+        data:
+          start_date_time: "{{ (start_ts - 4 * 3600) | timestamp_local }}"
+          end_date_time: "{{ (start_ts + 28 * 3600) | timestamp_local }}"
+        response_variable: cal
+        continue_on_error: true
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: wx
+        continue_on_error: true
+      - action: rest_command.frame_walk_history
+        response_variable: hist
+        continue_on_error: true
+      - action: rest_command.frame_walk_plan_get
+        data:
+          date: "{{ day }}"
+        response_variable: cur
+        continue_on_error: true
+      - action: shell_command.maya_walk_note
+        response_variable: note
+        continue_on_error: true
+      - variables:
+          walks: >-
+            {{ (hist.content.walks if hist is defined and hist.status == 200 and hist.content is mapping and hist.content.walks is defined else [])
+               | selectattr('endedAt') | sort(attribute='startedAt') | list }}
+          # Planned walks to keep on a replan: done, under way, or already started.
+          kept: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for x in (cur.content.walks if rest and cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
+              {%- if x.status in ['done', 'active'] or as_timestamp(x.start) < from_ts -%}
+                {%- set ns.out = ns.out + [{'id': x.id, 'start': x.start, 'end': x.end, 'walkers': x.walkerIds, 'note': x.note | default(none), 'status': x.status}] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          # Pee/poop are logged at walk start + 1 min / + 3 min; gaps over 10 h (overnight) don't count for the daytime stats.
+          potty: >-
+            {%- set ns = namespace(lp=none, lo=none, rows=[], pg=[], og=[]) -%}
+            {%- for w in walks -%}
+              {%- set t = as_timestamp(w.startedAt) -%}
+              {%- set txt = as_local(as_datetime(w.startedAt)).strftime('%a %m-%d %H:%M') ~ ' walk ' ~ (w.durationMin | default('?')) ~ ' min (' ~ (w.walkers | join(' & ')) ~ ')' -%}
+              {%- if w.pee -%}
+                {%- if ns.lp is not none -%}
+                  {%- set g = ((t + 60 - ns.lp) / 60) | round(0) | int -%}
+                  {%- set txt = txt ~ ' · pee ' ~ (g // 60) ~ 'h' ~ '%02d' | format(g % 60) ~ ' after the previous' -%}
+                  {%- if g < 600 -%}{%- set ns.pg = ns.pg + [g] -%}{%- endif -%}
+                {%- else -%}{%- set txt = txt ~ ' · pee' -%}{%- endif -%}
+                {%- set ns.lp = t + 60 -%}
+              {%- else -%}{%- set txt = txt ~ ' · no pee' -%}{%- endif -%}
+              {%- if w.poop -%}
+                {%- if ns.lo is not none -%}
+                  {%- set g = ((t + 180 - ns.lo) / 60) | round(0) | int -%}
+                  {%- set txt = txt ~ ' · poop ' ~ (g // 60) ~ 'h' ~ '%02d' | format(g % 60) ~ ' after the previous' -%}
+                  {%- set ns.og = ns.og + [g] -%}
+                {%- else -%}{%- set txt = txt ~ ' · poop' -%}{%- endif -%}
+                {%- set ns.lo = t + 180 -%}
+              {%- endif -%}
+              {%- set ns.rows = ns.rows + [txt] -%}
+            {%- endfor -%}
+            {%- set pg = ns.pg | sort -%}{%- set og = ns.og | sort -%}
+            {%- set hm = '%dh%02d' -%}
+            {{ {'rows': ns.rows[-60:],
+                'pee_gap': (hm % (pg[pg | count // 2] // 60, pg[pg | count // 2] % 60) ~ ' median, ' ~ hm % (pg | max // 60, pg | max % 60) ~ ' longest (daytime, over ' ~ pg | count ~ ' gaps)') if pg else 'unknown',
+                'poop_gap': (hm % (og[og | count // 2] // 60, og[og | count // 2] % 60) ~ ' median, ' ~ hm % (og | min // 60, og | min % 60) ~ '–' ~ hm % (og | max // 60, og | max % 60) ~ ' range (' ~ og | count ~ ' gaps)') if og else 'unknown',
+                'last_pee': (as_timestamp(ns.lp) | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lp) / 60) | round(0) | int ~ ' min ago') if ns.lp else 'unknown',
+                'last_poop': (as_timestamp(ns.lo) | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lo) / 60) | round(0) | int ~ ' min ago') if ns.lo else 'unknown'} }}
+          prompt: |-
+            {%- set lines = namespace(cal=[], wx=[]) -%}
+            {%- for ent, label in calendars.items() -%}
+              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') -%}
+                {%- set lines.cal = lines.cal + ['- ' ~ label ~ ': ' ~ e.start ~ ' → ' ~ e.end ~ ' · ' ~ e.summary ~ (' @ ' ~ e.location if e.location else '')] -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {%- for f in (wx['weather.forecast_home'].forecast if wx is defined and wx['weather.forecast_home'] is defined else []) if as_timestamp(f.datetime) < start_ts + 24 * 3600 and as_timestamp(f.datetime) >= from_ts - 3600 -%}
+              {%- set lines.wx = lines.wx + ['- ' ~ as_local(as_datetime(f.datetime)).strftime('%H:%M') ~ ' ' ~ f.condition ~ ' ' ~ f.temperature ~ '°'
+                  ~ (' feels ' ~ f.apparent_temperature ~ '°' if f.apparent_temperature is defined else '') ~ (' rain ' ~ f.precipitation_probability ~ '%' if f.precipitation_probability is defined else '')] -%}
+            {%- endfor -%}
+            You plan the dog walks for {{ day }} ({{ strptime(day, '%Y-%m-%d').strftime('%A') }}) for Maya, Harsh and Ambuja's dog. Do not use any tools; everything you need is below.
+            {% if rest %}
+            It is now {{ now().strftime('%H:%M') }} and a walk was just logged or edited. Replan only the REST of the day: walks starting at or after {{ from_ts | timestamp_custom('%H:%M') }}. These planned walks are already done or under way and stay as they are:
+            {%- for k in kept %}
+            - {{ as_local(as_datetime(k.start)).strftime('%H:%M') }}–{{ as_local(as_datetime(k.end)).strftime('%H:%M') }} {{ k.walkers | join(' & ') }} ({{ k.status }}){% endfor %}
+            {% endif %}
+            Maya only pees and poops on walks, so the walks must fit her bladder and bowel rhythm. Learn it from her history below and her note: how long she usually goes between pees and how long she can hold it at most (daytime and overnight), when she usually poops (e.g. after which meals and how long after), and how her meals and walk snack fall. Then:
+            - Time each walk before she would need to go: no longer between pee walks than her usual daytime gap (never past her longest comfortable hold), and a poop opportunity around when she usually poops (counting from her last poop and her meals). Count from her last pee and poop below, not from the plan.
+            - Only plan a walk when the chosen walkers are free: not in a calendar event and not travelling to or from one (allow ~30 min for anything away from home). Harsh's calendar blocks Harsh, Ambuja's blocks Ambuja, A&H Life blocks both. All-day events usually don't block unless they are travel or away from home. If her timing clashes with both people's commitments, move the walk just before the clash rather than after.
+            - Keep her usual rhythm from the recent walks (times and lengths), avoid bad weather (heavy rain, extreme heat or cold) when a nearby slot works, and include a last walk before bed.
+            - Prefer both walkers together when both are free and it suits the day; otherwise share the walks fairly.
+            - Every walk lasts 5–180 minutes and starts on {{ day }} (local time, 24h){{ ' at or after ' ~ from_ts | timestamp_custom('%H:%M') if rest else '' }}.
+
+            Reply with ONLY this JSON, no prose or code fences{{ ' (only the walks still ahead; an empty list if none are needed)' if rest else '' }}:
+            {"walks": [{"start": "HH:MM", "durationMin": 30, "walkers": ["harsh"], "note": "short reason, e.g. pee due ~3h after the 13:05 walk"}], "notes": "one line: Maya's rhythm as you understand it (pee every ~Xh, holds up to ~Yh, poops ~Z after meals) and the day's plan"}
+
+            Maya now: last pee {{ potty.last_pee }}; last poop {{ potty.last_poop }}.
+            Gaps between pees: {{ potty.pee_gap }}. Gaps between poops: {{ potty.poop_gap }}.
+
+            Maya's note:
+            {{ (note.stdout if note is defined and note.stdout is defined else '(unavailable)')[:8000] }}
+
+            Walks of the last 14 days, oldest first, with pees and poops (times are the walk's start):
+            {{ potty.rows | join('\n') if potty.rows else '- none' }}
+
+            Calendar events (local times):
+            {{ lines.cal | join('\n') if lines.cal else '- none' }}
+
+            Hourly forecast:
+            {{ lines.wx | join('\n') if lines.wx else '- unavailable' }}
+      - action: ha_copilot_agent.submit
+        data:
+          prompt: "{{ prompt[:31000] }}"
+          profile: home
+        response_variable: job
+      - wait_for_trigger:
+          - trigger: event
+            event_type: ha_copilot_agent_job_finished
+            event_data:
+              job_id: "{{ job.job_id }}"
+        timeout: "00:15:00"
+        continue_on_timeout: true
+      - action: ha_copilot_agent.get_job
+        data:
+          job_id: "{{ job.job_id }}"
+        response_variable: done
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: "ha_copilot_agent_{{ job.job_id }}"
+      - variables:
+          text: "{{ done.result if done.result is string else '' }}"
+          plan: >-
+            {%- set m = text | regex_findall('(?s)\\{.*\\}') -%}
+            {{ (m | first) | from_json(default=none) if m else none }}
+          ok: "{{ plan is mapping and plan.walks is defined and plan.walks is list }}"
+          # The agent's walks that start in time (HH:MM today, else whatever the Worker accepts).
+          fresh: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for w in (plan.walks if ok else []) if w is mapping -%}
+              {%- set s = w.start | default('') | string -%}
+              {%- set ts = as_timestamp(strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none).replace(tzinfo=now().tzinfo)) if strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none) else none -%}
+              {%- if ts is none or ts >= from_ts - 60 -%}
+                {%- set ns.out = ns.out + [{'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none)}] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+      - if:
+          - condition: template
+            value_template: "{{ ok }}"
+        then:
+          - action: rest_command.frame_walk_plan_put
+            data:
+              date: "{{ day }}"
+              body:
+                walks: "{{ kept + fresh }}"
+                notes: "{{ plan.notes | default('') }}"
+                source: "{{ 'ha-copilot-replan' if rest else 'ha-copilot' }}"
+            response_variable: put
+            continue_on_error: true
+      - variables:
+          error: >-
+            {%- if done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
+            {%- elif not ok -%}no plan JSON in the agent's reply
+            {%- elif put is not defined -%}could not reach the frame Worker
+            {%- elif put.status != 200 -%}Worker said {{ put.status }}: {{ put.content.error if put.content is mapping and put.content.error is defined else put.content }}
+            {%- endif -%}
+      - if:
+          - condition: template
+            value_template: "{{ error != '' }}"
+        then:
+          - variables:
+              svc: "{% from 'home.jinja' import notify_service %}{{ notify_service('harsh') }}"
+          - action: "{{ svc }}"
+            data:
+              title: "🐕 Maya's walk {{ 'replan' if rest else 'plan' }} failed"
+              message: "{{ day }}: {{ error[:300] }}"
+            continue_on_error: true
+          - stop: "{{ error }}"
+            error: true
+        else:
+          - action: logbook.log
+            data:
+              name: Maya walk plan
+              message: >-
+                {{ day }}{{ ' (replan)' if rest else '' }}: {% for w in fresh %}{{ w.start }} {{ w.durationMin }}m {{ w.walkers | join('+') }}{{ ', ' if not loop.last }}{% endfor %}{{ 'no more walks' if not fresh }} · {{ plan.notes | default('') }}
+
+automation:
+  - id: maya_walk_plan_daily
+    alias: "Maya walk: plan each morning"
+    description: Plan today's walks at 04:30.
+    mode: single
+    triggers:
+      - trigger: time
+        at: "04:30:00"
+    actions:
+      - action: script.turn_on
+        target:
+          entity_id: script.maya_walk_plan
+
+  - id: maya_walk_plan_after_walk
+    alias: "Maya walk: replan after a walk"
+    description: >-
+      When a walk of today is logged, edited or deleted (event from walk_house.yaml's webhook), wait 2 min
+      for more edits, then replan the rest of the day around Maya's new last pee/poop.
+    mode: restart
+    triggers:
+      - trigger: event
+        event_type: maya_walk_logged
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.local_date == now().date().isoformat() }}"
+    actions:
+      - delay: "00:02:00"
+      - action: script.turn_on
+        target:
+          entity_id: script.maya_walk_plan
+        data:
+          variables:
+            replan: true

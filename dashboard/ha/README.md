@@ -69,6 +69,20 @@ Lifelog, see `../WALKS.md`) into a vault note, for agents that read the vault. C
 `/config/.frame_agent_key` with `chmod 600`, and add the two parts of `walk-log.yaml` to
 `configuration.yaml` and `automations.yaml`. Restart HA. The note is rewritten only when a walk changes.
 
+## Dog walks: the empty house, the route and the daily plan
+
+`walk-house.yaml` and `walk-plan.yaml` are packages (copy to `/config/packages/` as `walk_house.yaml`
+and `walk_plan.yaml`, with your Worker subdomain and entity ids; see `../WALKS.md`):
+
+- **walk-house:** when a walk starts on the frame, HA tracks the walkers' phones; after a minute, if
+  nobody else is home, it turns off the lights, fans and TVs that are on (a scene snapshot) and turns
+  them back on when the walk ends, then sends the route to the Worker.
+- **walk-plan:** at 04:30 and after each logged walk, the HA Copilot Agent plans the day's (remaining)
+  walks from the dog's pee/poop rhythm and both calendars; the Worker puts them in the walkers' calendars.
+
+Secrets: `frame_walk_auth: "Bearer <WALK_KEY>"` and `frame_walk_webhook_id` (random). The Worker's
+`HA_WALK_WEBHOOK_URL` is `https://<ha external url>/api/webhook/<that id>`.
+
 ## The frame as a device (MQTT)
 
 The kiosk can register the frame as a Home Assistant device over MQTT discovery: screen on/off,

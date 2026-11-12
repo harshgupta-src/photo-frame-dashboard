@@ -55,6 +55,13 @@
 }
 .h-walk--2 .h-walk-go { background: rgb(0 0 0 / .1); }
 .h-walk-last { font-size: 16px; font-weight: 700; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-walk-plan { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.h-walk-when { font-family: var(--serif); font-size: 20px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-walk-who { flex: none; display: flex; gap: 4px; }
+/* Bigger hit area than the avatar; a walker who isn't coming is faded. */
+.h-walk-p { display: grid; place-items: center; width: 40px; height: 40px; margin: -5px -2px; border-radius: 50%; opacity: .4; }
+.h-walk-p.is-on { opacity: 1; }
+.h-walk-p .avatar { box-shadow: 0 0 0 2px rgb(255 255 255 / .85); }
 .h-walk-sync { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: currentColor; opacity: .7; vertical-align: middle; }
 .h-walk--out { --c: #0E7C86; --c-ink: #fff; gap: 2px; }
 .h-walk-x { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin: -8px -10px -8px 0; border-radius: 50%; color: inherit; opacity: .75; }

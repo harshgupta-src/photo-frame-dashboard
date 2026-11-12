@@ -73,3 +73,28 @@ test('markdown log is stable for the same data and day', () => {
   assert.match(a, /\| 2026-10 \| 1 \| 1 \| 1 \| 40 \| 0 \|/);
   assert.doesNotMatch(a, /2026-10-01 ·/); // older than 30 days: only in the monthly table
 });
+
+test('plan: local times in the home zone; walks match by planId, else the nearest within 90 min', async () => {
+  const { normalizePlan, matchPlan } = await import('../src/walkplan.js');
+  const p = normalizePlan({ walks: [{ start: '16:00', durationMin: 40, walkers: 'harsh & ambuja' }, { start: '07:30', end: '08:00', walkers: ['harsh'] }] },
+    '2026-11-09', 'America/New_York', { harsh: 'Harsh G' }, Date.parse('2026-11-09T09:30:00Z'));
+  assert.deepEqual(p.items.map((x) => [new Date(x.start).toISOString(), x.walkers.map((w) => w.name).join('+')]),
+    [['2026-11-09T12:30:00.000Z', 'Harsh G'], ['2026-11-09T21:00:00.000Z', 'Harsh G+Ambuja']]);
+  assert.throws(() => normalizePlan({ walks: [{ start: '23:50', walkers: 'harsh', durationMin: 2 }] }, '2026-11-09', 'UTC'), /5 to 180/);
+  const [am, pm] = p.items;
+  const m = matchPlan(p.items, [
+    { id: 'a', startedAt: am.start + 80 * 60e3, endedAt: am.start + 100 * 60e3 },
+    { id: 'b', startedAt: am.start, endedAt: am.end, planId: pm.id },
+  ]);
+  assert.deepEqual([m.get(am.id).id, m.get(pm.id).id], ['a', 'b']);
+  assert.equal(matchPlan(p.items, [{ id: 'c', startedAt: am.start + 91 * 60e3 }]).size, 0);
+});
+
+test('plan: a walk planned after another walk ended is not matched to it', async () => {
+  const { matchPlan } = await import('../src/walkplan.js');
+  const t = Date.parse('2026-11-09T15:00:00Z');
+  const walk = { id: 'w', startedAt: t, endedAt: t + 30 * 60e3 };
+  const replanned = { id: 'p', start: t + 80 * 60e3, end: t + 110 * 60e3, created: t + 31 * 60e3 };
+  assert.equal(matchPlan([replanned], [walk]).size, 0);
+  assert.equal(matchPlan([{ ...replanned, created: t - 3600e3 }], [walk]).get('p'), walk);
+});

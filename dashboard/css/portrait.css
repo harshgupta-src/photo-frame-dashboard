@@ -41,6 +41,7 @@
 [data-orient="portrait"] .h-walk-title { font-size: 34px; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-sub { font-size: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-now { display: none; }
+[data-orient="portrait"] .h-walk-plan { flex: 0 1 auto; gap: 14px; }
 [data-orient="portrait"] .h-walk-head { display: contents; }
 [data-orient="portrait"] .h-walk-head .label { white-space: normal; overflow: visible; }
 [data-orient="portrait"] .h-walk-go { order: 9; margin-left: auto; }

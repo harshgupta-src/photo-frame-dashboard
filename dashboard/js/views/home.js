@@ -69,10 +69,21 @@
     return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '’s walk' + sync() + '</div>' +
       '<span class="h-walk-go">' + App.icon('play', 16) + 'Start</span></div>' +
       '<div class="h-walk-title">' + m.title + '</div>' +
-      '<div class="h-walk-sub">' + m.sub + '</div>' +
+      (W.next() ? planRow(W.next()) : '<div class="h-walk-sub">' + m.sub + '</div>') +
       (last
         ? '<div class="h-walk-last" data-walk="history">Walked ' + ago(last.endedAt) + ' · ' + potty(last) + '</div>'
         : '<div class="h-walk-now">' + App.icon(w.cond, 20) + '<b class="num">' + w.temp + '°</b><span>' + w.label + '</span></div>');
+  }
+  // The next planned walk (HA agent) and who walks it: tap an avatar to add or remove someone.
+  function planRow(x) {
+    var who = App.walk.defaultWalkers(), s = Date.parse(x.start);
+    var when = s - Date.now() < 15 * 60e3 ? 'Due now' : 'Next ' + App.fmt.time(new Date(s));
+    return '<div class="h-walk-plan"><span class="h-walk-when">' + when + ' · ' + App.fmt.mins(x.durationMin) + '</span>' +
+      '<span class="h-walk-who">' + window.CONFIG.people.map(function (p) {
+        var on = who.some(function (w) { return w.id === p.id; });
+        return '<button class="h-walk-p' + (on ? ' is-on' : '') + '" data-walk="who:' + App.esc(p.id) + '" aria-pressed="' + on + '" aria-label="' +
+          App.esc(p.name) + '">' + App.avatar(p, 30) + '</button>';
+      }).join('') + '</span></div>';
   }
   function paintWalk() {
     var mel = V.el && V.el.querySelector('.h-walk');
@@ -88,7 +99,7 @@
   function walkSheet(rec, opts) {
     opts = opts || {};
     var r = {
-      id: rec.id, startedAt: rec.startedAt, endedAt: rec.endedAt, notes: rec.notes || '',
+      id: rec.id, startedAt: rec.startedAt, endedAt: rec.endedAt, notes: rec.notes || '', planId: rec.planId,
       pee: rec.pee == null ? true : rec.pee, poop: rec.poop == null ? false : rec.poop,
       walkers: rec.walkers && rec.walkers.length ? rec.walkers.slice() : App.walk.defaultWalkers()
     };
@@ -204,6 +215,7 @@
   function walkTap(kind) {
     var W = App.walk;
     if (kind === 'history') { historySheet(); return; }
+    if (kind.indexOf('who:') === 0) { W.toggleWalker(kind.slice(4)); return; }
     if (kind === 'cancel') {
       var a = W.active;
       if (!a) return;
@@ -213,7 +225,7 @@
     }
     if (kind === 'back') { var rec = W.back(); if (rec) walkSheet(rec, { finishing: true }); return; }
     if (kind === 'start' && W.start()) {
-      App.toast(App.esc(window.CONFIG.dog) + '’s walk started · tap the tile when you’re back', {
+      App.toast(App.esc(window.CONFIG.dog) + '’s walk started' + (W.active.walkers.length ? ' with ' + App.esc(walkers(W.active)) : '') + ' · tap the tile when you’re back', {
         icon: 'clock', undo: function () { if (W.active) W.remove(W.active); }
       });
     }
