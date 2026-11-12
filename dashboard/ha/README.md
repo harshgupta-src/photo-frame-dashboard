@@ -129,6 +129,7 @@ unavailable when it drops (a retained last will).
    topic readwrite homehq/homehq_<android_id>/#
    topic write homeassistant/device/homehq_<android_id>/config
    topic read homeassistant/status
+   topic read homehq/dashboard/update
    ```
 
    An ACL file denies every user it doesn't list. If the MQTT integration logs in with its own
@@ -139,6 +140,24 @@ unavailable when it drops (a retained last will).
 
 Ideas: turn the screen off at night or when nobody is home, and on when the room's lux rises
 above a threshold (someone turned the lights on) or when the frame is touched.
+
+## Dashboard deploys (push to the frames)
+
+`npm run deploy` can tell the frames a new dashboard is live, so they don't wait for their next
+poll: it POSTs the build to an HA webhook, `dashboard-update.yaml` publishes it (retained) on
+`homehq/dashboard/update`, and every kiosk on MQTT hands it to the page, which applies it once the
+frame is idle, behind an "Updating…" screen.
+
+1. In `dashboard-update.yaml`, replace `WEBHOOK_ID` with a long random id
+   (`echo "frame_deploy_$(openssl rand -hex 16)"`), add it to `/config/automations.yaml` and reload
+   automations.
+2. In the dashboard's `.env.local`: `HA_DEPLOY_WEBHOOK_URL=https://<ha external url>/api/webhook/<id>`
+   (or the LAN URL if you only deploy from home). It stays on your computer; it isn't uploaded as a
+   Worker secret. If HA can't be reached, the deploy still succeeds and the frames find the build on
+   their next poll (hourly while MQTT is up, else every 5 minutes).
+3. With the ACL above, the frame's login needs `topic read homehq/dashboard/update`.
+
+Needs kiosk 1.3 or later on the frame (one USB install).
 
 To undo: on the frame, `--es mqtt_url ''` and `--ez screen_admin false`; delete the Photo Frame
 device in the MQTT integration; remove the login (and `customize`) from the Mosquitto app, or

@@ -100,3 +100,23 @@ self-heal; and a stalled or sleeping page shows the right time on its first tick
 - Optional follow-ups (not done here): self-host or make the Google Fonts stylesheet non-blocking so
   a slow fonts.googleapis.com can't hold the first paint; a reload during the sleep window boots in
   day mode and lights the screen for ~60 s before going back to night (pre-existing, `onIdleTick`).
+
+## Follow-up: pushed deploys, an "Updating…" screen, fewer redraws
+
+The reload itself is the slow part on the A33, and the old page's last frame (usually a slideshow
+photo, since updates wait for 30 s of idle) stayed on screen ignoring touches until the new page
+painted. With deploys several times a day, that was a frozen photo several times a day.
+
+- **Push.** `npm run deploy` POSTs the build's asset key to an HA webhook (`HA_DEPLOY_WEBHOOK_URL`,
+  `ha/dashboard-update.yaml`), which publishes it retained on `homehq/dashboard/update`. The kiosk
+  (1.3+, `HaDevice.UPDATE_TOPIC`) calls `window.frameUpdate(build)`; the page ignores its own build,
+  otherwise checks `/` once (`decide(..., need = 1)`) and retries at 20 s, 1 min and 3 min while the
+  deploy propagates. Polling stays as the fallback: hourly while `HomeHQ.updatePush()` reports the
+  MQTT link up, every 5 min otherwise, still needing two polls in a row.
+- **"Updating…" screen.** `applyUpdate()` puts a plain full-screen "Updating…" layer up and reloads
+  after it paints (1 s fallback when rAF is paused), so the frame held during the reload explains
+  itself. Skipped in night mode, where the screen stays black.
+- **Data redraws.** Calendar (every 5 min) and weather (every 15 min) refreshes emitted `'data'` and
+  re-rendered the current view even when nothing changed, and `'data'` re-builds every hidden view
+  400 ms apart — a few seconds of main-thread work on the A33 every 5 minutes. Both now compare with
+  what's shown first; the Home card's HA status (every 15 s) only touches the DOM when it changed.
