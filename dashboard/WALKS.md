@@ -202,7 +202,12 @@ planned walk whose time has passed shows as `missed`. A new PUT moves changed ev
 ones and keeps the rest. Plans are kept for 90 days in the Worker's KV; `GET /walk` includes today's and tomorrow's.
 
 Home Assistant writes the plan at 04:30 and replans the rest of the day 2 minutes after each walk of
-the day is logged, edited or deleted (`ha/walk-plan.yaml`). It asks the HA Copilot Agent to pick times,
+the day is logged, edited or deleted (`ha/walk-plan.yaml`). It also reassesses when the calendars change:
+`sensor.maya_calendar_watch` reads Harsh's, Ambuja's and the shared calendar (now to the end of tomorrow,
+without the 🐕 walk events) every 5 minutes, and 30 s after HA writes a calendar, so it catches events
+added, moved or deleted anywhere (Apple Calendar, HA, agents). For each day with an upcoming change it
+replans: the rest of today (from 04:30), or tomorrow if it already has a plan. The agent sees the
+change and the current plan, and moves only what needs to move. It asks the HA Copilot Agent to pick times,
 lengths and walkers from the dog's pee/poop rhythm (the last 14 days of walks with the gaps between
 pees and between poops, and the time since the last ones), both people's calendars, the forecast and
 the dog's vault note. A replan keeps the walks already done or under way and replaces the rest; the

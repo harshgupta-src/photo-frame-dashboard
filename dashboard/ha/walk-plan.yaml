@@ -1,7 +1,7 @@
 # Maya's walk plan. Copy to /config/packages/walk_plan.yaml (needs walk_house.yaml's secrets).
 #
-# At 04:30 HA plans the day, and after every walk is logged (or edited or deleted) it replans the rest
-# of the day: it gathers the calendars, the last 14 days of walks with Maya's pee/poop rhythm (gaps
+# At 04:30 HA plans the day, and after every walk is logged (or edited or deleted), or a calendar event
+# changes (sensor.maya_calendar_watch, polled every 5 min), it replans the rest of the day: it gathers the calendars, the last 14 days of walks with Maya's pee/poop rhythm (gaps
 # between them, time since the last ones), the hourly forecast and Maya's vault note, asks the HA
 # Copilot Agent for the walks as JSON, and PUTs the plan to the Worker (PUT /walks/plan/<date>). A
 # replan keeps the walks already done (or due) and replaces only the ones still ahead. The Worker
@@ -71,6 +71,47 @@ template:
               {{ this.attributes.walks | default([]) }}
             {%- endif -%}
 
+  # Everyone's calendar events from now to the end of tomorrow (except the planner's own 🐕 walk events), for
+  # maya_walk_plan_on_calendar_change. Polled every 5 min, so it sees events added anywhere (Apple Calendar,
+  # HA, agents); refreshed sooner after HA itself writes a calendar. On an error it keeps the last list.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: maya_calendar_refresh
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id:
+            - calendar.harshs_calendar
+            - calendar.ambujas_calendar
+            - calendar.a_h_life
+        data:
+          start_date_time: "{{ now().isoformat() }}"
+          end_date_time: "{{ (today_at() + timedelta(days=2)).isoformat() }}"
+        response_variable: cal
+        continue_on_error: true
+    sensor:
+      - name: Maya calendar watch
+        unique_id: maya_calendar_watch
+        icon: mdi:calendar-search
+        state: "{{ 'ok' if cal is defined else 'calendar error' }}"
+        attributes:
+          events: >-
+            {%- if cal is not defined -%}
+              {{ this.attributes.events | default([]) }}
+            {%- else -%}
+              {%- set ns = namespace(out=[]) -%}
+              {%- for ent, v in cal.items() -%}
+                {%- for e in v.events if not (e.summary | default('')).startswith('🐕') -%}
+                  {%- set ns.out = ns.out + [{'c': ent.split('.')[1], 's': e.start, 'e': e.end, 't': (e.summary | default(''))[:80]}] -%}
+                {%- endfor -%}
+              {%- endfor -%}
+              {{ ns.out | sort(attribute='s') }}
+            {%- endif -%}
+
 shell_command:
   maya_walk_note: "head -c 8000 '/share/obsidian/harsh-memory/Areas/People/Maya.md'"
 
@@ -81,15 +122,18 @@ script:
       Ask the Copilot Agent for the day's walks (times, lengths, walkers) from Maya's pee/poop rhythm and
       both calendars, and send them to the frame. replan keeps what's done and replaces what's ahead.
     mode: queued
-    max: 2
+    max: 5
     fields:
       date:
         description: "YYYY-MM-DD (default today)"
         example: "2026-11-20"
       replan:
-        description: Only replan the walks still ahead (after a walk is logged)
+        description: Only replan the walks still ahead (after a walk is logged or a calendar changes)
         selector:
           boolean:
+      reason:
+        description: Why a replan is needed (shown to the agent)
+        example: "a walk was just logged"
     variables:
       day: "{{ date if date is defined and date else now().date().isoformat() }}"
       rest: "{{ replan | default(false) | bool and day == now().date().isoformat() }}"
@@ -140,6 +184,15 @@ script:
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
+          # The rest of the current plan, which a replan may keep or change.
+          ahead: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for x in (cur.content.walks if cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
+              {%- if x.status == 'planned' and as_timestamp(x.start) >= from_ts -%}
+                {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ (' (' ~ x.note ~ ')' if x.note else '')] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
           # Pee/poop are logged at walk start + 1 min / + 3 min; gaps over 10 h (overnight) don't count for the daytime stats.
           potty: >-
             {%- set ns = namespace(lp=none, lo=none, rows=[], pg=[], og=[]) -%}
@@ -184,9 +237,15 @@ script:
             {%- endfor -%}
             You plan the dog walks for {{ day }} ({{ strptime(day, '%Y-%m-%d').strftime('%A') }}) for Maya, Harsh and Ambuja's dog. Do not use any tools; everything you need is below.
             {% if rest %}
-            It is now {{ now().strftime('%H:%M') }} and a walk was just logged or edited. Replan only the REST of the day: walks starting at or after {{ from_ts | timestamp_custom('%H:%M') }}. These planned walks are already done or under way and stay as they are:
+            It is now {{ now().strftime('%H:%M') }} and {{ reason if reason is defined and reason else 'a walk was just logged or edited' }}. Replan only the REST of the day: walks starting at or after {{ from_ts | timestamp_custom('%H:%M') }}. These planned walks are already done or under way and stay as they are:
             {%- for k in kept %}
             - {{ as_local(as_datetime(k.start)).strftime('%H:%M') }}–{{ as_local(as_datetime(k.end)).strftime('%H:%M') }} {{ k.walkers | join(' & ') }} ({{ k.status }}){% endfor %}
+            {% elif reason is defined and reason %}
+            This day's plan is being redone because {{ reason }}.
+            {% endif %}
+            {%- if ahead %}
+            The current plan{{ ' for the rest of the day' if rest else '' }} is below. Keep a walk as it is (same time, length and walkers) unless Maya's rhythm or the calendars now call for a change; move only what needs to move:
+            {{ ahead | join('\n') }}
             {% endif %}
             Maya only pees and poops on walks, so the walks must fit her bladder and bowel rhythm. Learn it from her history below and her note: how long she usually goes between pees and how long she can hold it at most (daytime and overnight), when she usually poops (e.g. after which meals and how long after), and how her meals and walk snack fall. Then:
             - Time each walk before she would need to go: no longer between pee walks than her usual daytime gap (never past her longest comfortable hold), and a poop opportunity around when she usually poops (counting from her last poop and her meals). Count from her last pee and poop below, not from the plan.
@@ -372,3 +431,93 @@ automation:
                         tag: "maya_walk_heads_up-{{ w.id }}"
                         push:
                           interruption-level: time-sensitive
+
+  - id: maya_walk_plan_on_calendar_change
+    alias: "Maya walk: reassess when a calendar changes"
+    description: >-
+      When an upcoming event in Harsh's, Ambuja's or A&H Life calendar is added, moved, renamed or removed
+      (sensor.maya_calendar_watch), ask the Copilot Agent to reassess that day's walks: the rest of today
+      (from 04:30 on; earlier, the morning plan picks it up), or tomorrow if it already has a plan.
+    mode: queued
+    max: 5
+    triggers:
+      - trigger: state
+        entity_id: sensor.maya_calendar_watch
+        attribute: events
+    variables:
+      old: "{{ trigger.from_state.attributes.events if trigger.from_state and trigger.from_state.attributes.events is defined else none }}"
+      new: "{{ trigger.to_state.attributes.events if trigger.to_state and trigger.to_state.attributes.events is defined else none }}"
+      # Changes still ahead: events that are new or changed, and old ones gone before they ended.
+      changes: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- if old is list and new is list -%}
+          {%- set nowts = now().timestamp() -%}
+          {%- for e in new if e not in old -%}{%- set ns.out = ns.out + [dict(e, op='added or changed')] -%}{%- endfor -%}
+          {%- for e in old if e not in new and (e.e > now().date().isoformat() if e.e | length == 10 else as_timestamp(e.e, 0) > nowts) -%}{%- set ns.out = ns.out + [dict(e, op='removed or changed')] -%}{%- endfor -%}
+        {%- endif -%}
+        {{ ns.out }}
+      dates: >-
+        {%- set ns = namespace(d=[]) -%}
+        {%- for e in changes if e.s[:10] not in ns.d -%}{%- set ns.d = ns.d + [e.s[:10]] -%}{%- endfor -%}
+        {{ ns.d | sort }}
+      reason: >-
+        the calendars changed: {% for e in changes[:8] %}{{ e.op }} '{{ e.t }}' {{ e.s[:16] | replace('T', ' ') }}–{{ e.e[11:16] if 'T' in e.e else e.e }} ({{ e.c | replace('_', ' ') }}){{ '; ' if not loop.last }}{% endfor %}{{ ' and more' if changes | count > 8 }}
+    conditions:
+      - condition: template
+        value_template: "{{ changes | count > 0 }}"
+    actions:
+      - action: logbook.log
+        data:
+          name: Maya walk plan
+          message: "Calendar change for {{ dates | join(', ') }}: {{ reason[:400] }}"
+      - repeat:
+          for_each: "{{ dates }}"
+          sequence:
+            - variables:
+                d: "{{ repeat.item }}"
+                today: "{{ d == now().date().isoformat() }}"
+            - if:
+                - condition: template
+                  value_template: "{{ today }}"
+              then:
+                - condition: template
+                  value_template: "{{ now().hour * 60 + now().minute >= 4 * 60 + 30 }}"
+                - action: script.turn_on
+                  target:
+                    entity_id: script.maya_walk_plan
+                  data:
+                    variables:
+                      replan: true
+                      reason: "{{ reason }}"
+              else:
+                - action: rest_command.frame_walk_plan_get
+                  data:
+                    date: "{{ d }}"
+                  response_variable: fp
+                  continue_on_error: true
+                - condition: template
+                  value_template: >-
+                    {{ fp is defined and fp.status == 200 and fp.content is mapping and (fp.content.walks | default([]) | count) > 0 }}
+                - action: script.turn_on
+                  target:
+                    entity_id: script.maya_walk_plan
+                  data:
+                    variables:
+                      date: "{{ d }}"
+                      reason: "{{ reason }}"
+
+  - id: maya_calendar_refresh_after_ha_write
+    alias: "Maya walk: recheck calendars after HA writes one"
+    description: When HA creates or deletes a calendar event, recheck the calendars 30 s later instead of at the next 5-min poll.
+    mode: restart
+    triggers:
+      - trigger: event
+        event_type: call_service
+        event_data:
+          domain: calendar
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.service in ['create_event', 'delete_event', 'update_event'] }}"
+    actions:
+      - delay: "00:00:30"
+      - event: maya_calendar_refresh
