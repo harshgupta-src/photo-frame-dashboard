@@ -128,8 +128,8 @@ script:
             {{ {'rows': ns.rows[-60:],
                 'pee_gap': (hm % (pg[pg | count // 2] // 60, pg[pg | count // 2] % 60) ~ ' median, ' ~ hm % (pg | max // 60, pg | max % 60) ~ ' longest (daytime, over ' ~ pg | count ~ ' gaps)') if pg else 'unknown',
                 'poop_gap': (hm % (og[og | count // 2] // 60, og[og | count // 2] % 60) ~ ' median, ' ~ hm % (og | min // 60, og | min % 60) ~ '–' ~ hm % (og | max // 60, og | max % 60) ~ ' range (' ~ og | count ~ ' gaps)') if og else 'unknown',
-                'last_pee': (as_timestamp(ns.lp) | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lp) / 60) | round(0) | int ~ ' min ago') if ns.lp else 'unknown',
-                'last_poop': (as_timestamp(ns.lo) | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lo) / 60) | round(0) | int ~ ' min ago') if ns.lo else 'unknown'} }}
+                'last_pee': (ns.lp | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lp) / 60) | round(0) | int ~ ' min ago') if ns.lp else 'unknown',
+                'last_poop': (ns.lo | timestamp_custom('%a %H:%M') ~ ', ' ~ ((now().timestamp() - ns.lo) / 60) | round(0) | int ~ ' min ago') if ns.lo else 'unknown'} }}
           prompt: |-
             {%- set lines = namespace(cal=[], wx=[]) -%}
             {%- for ent, label in calendars.items() -%}

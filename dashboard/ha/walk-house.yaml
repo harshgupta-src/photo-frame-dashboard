@@ -248,7 +248,7 @@ automation:
             value_template: >-
               {{ trigger.id == 'hook' and trigger.json is mapping and trigger.json.walk is mapping
                  and trigger.json.event in ['stop', 'logged', 'change', 'delete']
-                 and (trigger.json.walk.endedAt or trigger.json.walk.deleted) }}
+                 and (trigger.json.walk.endedAt is string or trigger.json.walk.deleted | default(false) | bool) }}
         then:
           - event: maya_walk_logged
             event_data:
@@ -265,14 +265,14 @@ automation:
           tracked: "{{ state_attr('sensor.maya_walk', 'walk_id') if is_state('sensor.maya_walk', 'out') else none }}"
       - if:
           - condition: template
-            value_template: "{{ tracked and (not active or active.id != tracked) }}"
+            value_template: "{{ tracked not in [none, ''] and (active is none or active.id != tracked) }}"
         then:
           - action: script.maya_walk_end
             data:
               walk_id: "{{ tracked }}"
       - if:
           - condition: template
-            value_template: "{{ active and active.id != tracked }}"
+            value_template: "{{ active is mapping and active.id != tracked }}"
         then:
           - action: script.turn_on
             target:
@@ -283,7 +283,7 @@ automation:
         else:
           - if:
               - condition: template
-                value_template: "{{ active and trigger.id == 'tick' }}"
+                value_template: "{{ active is mapping and trigger.id == 'tick' }}"
             then:
               - action: script.maya_walk_locate
                 data:
