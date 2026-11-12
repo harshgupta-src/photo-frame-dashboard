@@ -93,3 +93,12 @@ test('lastRoute takes the newest walk and the walker with the most accurate fixe
   assert.deepEqual([out.walkId, out.m, out.path], ['new', 900, [[1, 1], [2, 2]]]);
   assert.equal(lastRoute([r('x', '2026-11-12T10:00:00Z', { harsh: [[1, 1, 5, 0]] })]), null);
 });
+
+test('weightJSON reads kg, lb and estimated ranges', async () => {
+  const { weightJSON } = await import('../src/dogapi.js');
+  const w = (data) => weightJSON({ id: 'x', started_at: '2026-10-15T16:00:00Z', data });
+  assert.deepEqual([w({ kg: 16.8 }).kg, w({ kg: 16.8 }).estimate], [16.8, false]);
+  assert.equal(w({ lb: 25, estimate: true }).kg, 11.3);
+  assert.deepEqual([w({ kg_low: 13.6, kg_high: 14.5 }).kg, w({ kg_low: 13.6, kg_high: 14.5 }).low, w({ kg_low: 13.6, kg_high: 14.5 }).estimate], [14.1, 13.6, true]);
+  assert.equal(w({ note: 'no number' }), null);
+});

@@ -4,6 +4,7 @@
 //   today   today's meals as a checklist (fed by whom, or due/late), the kibble mix, and today's walks
 //   route   the last walk's GPS path on a map, with distance, time and who walked
 //   week    one bar chart: minutes walked per day, with each day's pee and poop counts
+//   weight  the latest weigh-in, the weekly gain, and every weigh-in on one line (estimates hollow)
 // Tap a walk (or the map) to edit it.
 (function () {
   'use strict';
@@ -39,9 +40,8 @@
     return '<button class="dg-walk" data-walk="start">' + App.icon('paw', 26) + '<b>Start walk</b></button>';
   }
   function top() {
-    var age = App.dog.age(), w = App.dog.weights(), last = w[w.length - 1], meta = [];
+    var age = App.dog.age(), meta = [];
     if (age) meta.push(age.weeks < 52 ? age.weeks + ' weeks old' : age.months + ' months old');
-    if (last) meta.push(last.kg + ' kg');
     var up = App.dog.upcoming(1)[0];
     if (up) meta.push('Next: ' + esc(up.title.replace(new RegExp('^\\s*' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:’s|\'s)?\\s*', 'i'), '') || up.title) + ' ' + dayLabel(+up.start) + ' ' + App.fmt.hour(up.start));
     return '<header class="dg-top"><div class="dg-id"><h1 class="serif">' + esc(name) + '</h1>' +
@@ -193,12 +193,50 @@
       }).join('') + '</div></section>';
   }
 
+  // ---------------------------------------------------------------- weight
+  function md(ms) { var d = new Date(ms); return App.fmt.monthShort(d) + ' ' + d.getDate(); }
+  function weight() {
+    var w = App.dog.weights(), last = w[w.length - 1];
+    if (!last) return '<section class="dg-card dg-weight"><header class="dg-head"><span class="label">Weight</span></header><p class="dg-empty">No weigh-ins yet. Log a ' + esc(name.toLowerCase()) + '_weight event in Lifelog.</p></section>';
+    // Gain per week from the latest weigh-in back to one at least 5 days earlier (a real one if there is).
+    var back = w.filter(function (p) { return p.at <= last.at - 5 * 864e5; }), prev = back.filter(function (p) { return !p.estimate; }).pop() || back.pop();
+    var rate = prev ? (last.kg - prev.kg) / ((last.at - prev.at) / (7 * 864e5)) : null;
+    return '<section class="dg-card dg-weight"><header class="dg-head"><span class="label">Weight</span><span class="dg-sum">' + md(last.at) + (last.where ? ' · ' + esc(last.where) : '') + '</span></header>' +
+      '<div class="dg-wt"><b class="num">' + last.kg + '</b> kg' + (last.estimate ? ' <small>about</small>' : '') +
+      (rate != null ? '<span class="dg-wt-r' + (rate < 0 ? ' is-down' : '') + '">' + (rate >= 0 ? '+' : '−') + Math.abs(rate).toFixed(1) + ' kg a week</span>' : '') + '</div>' +
+      '<div class="dg-wchart" data-wchart></div></section>';
+  }
+  function weightChart(w, W, H) {
+    var pad = { l: 34, r: 12, t: 12, b: 24 }, a = w[0].at, b = w[w.length - 1].at;
+    var lo = Math.min.apply(null, w.map(function (p) { return p.low != null ? p.low : p.kg; })), hi = Math.max.apply(null, w.map(function (p) { return p.high != null ? p.high : p.kg; }));
+    var step = hi - lo > 8 ? 4 : hi - lo > 3 ? 2 : 1;
+    lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step; if (hi === lo) hi = lo + step;
+    function X(t) { return pad.l + (b > a ? (t - a) / (b - a) : 0.5) * (W - pad.l - pad.r); }
+    function Y(kg) { return pad.t + (1 - (kg - lo) / (hi - lo)) * (H - pad.t - pad.b); }
+    var g = '';
+    for (var v = lo; v <= hi + 1e-6; v += step) g += '<line class="dg-wc-g" x1="' + pad.l + '" x2="' + (W - pad.r) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text class="dg-wc-y" x="' + (pad.l - 8) + '" y="' + (Y(v) + 5) + '">' + v + '</text>';
+    var line = w.map(function (p) { return X(p.at).toFixed(1) + ',' + Y(p.kg).toFixed(1); }).join(' ');
+    var dots = w.map(function (p, i) {
+      var x = X(p.at).toFixed(1), y = Y(p.kg).toFixed(1);
+      return (p.low != null ? '<line class="dg-wc-rng" x1="' + x + '" x2="' + x + '" y1="' + Y(p.low) + '" y2="' + Y(p.high) + '"/>' : '') +
+        '<circle class="dg-wc-d' + (p.estimate ? ' is-est' : '') + (i === w.length - 1 ? ' is-last' : '') + '" cx="' + x + '" cy="' + y + '" r="' + (i === w.length - 1 ? 7 : 5) + '"/>';
+    }).join('');
+    var xl = '<text class="dg-wc-x" x="' + X(a) + '" y="' + (H - 4) + '" text-anchor="start">' + md(a) + '</text>' +
+      (b > a ? '<text class="dg-wc-x" x="' + X(b) + '" y="' + (H - 4) + '" text-anchor="end">' + md(b) + '</text>' : '');
+    return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' + g + '<polyline class="dg-wc-l" points="' + line + '"/>' + dots + xl + '</svg>';
+  }
+  function placeWeight() {
+    var slot = V.el.querySelector('[data-wchart]'), w = App.dog.weights();
+    if (slot && w.length > 1 && slot.clientWidth && slot.clientHeight) slot.innerHTML = weightChart(w, slot.clientWidth, slot.clientHeight);
+  }
+
   function render() {
     if (!V.el) return;
     V.el.innerHTML = '<div class="dg">' + top() +
       '<div class="dg-now">' + pottyTile('pee') + pottyTile('poop') + mealTile() + walkTile() + '</div>' +
-      today() + route() + week() + '</div>';
+      today() + route() + week() + weight() + '</div>';
     placeMap();
+    placeWeight();
   }
 
   function click(e) {

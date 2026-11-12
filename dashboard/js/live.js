@@ -195,6 +195,10 @@
     }) : workerEvents())
       .then(function (j) {
         if (!j.events) throw new Error(j.error || 'no events');
+        // Unchanged calendars (the usual case) skip the redraw: 'data' rebuilds every view.
+        var key = eventsKey(j);
+        if (key === shownEvents) return;
+        shownEvents = key;
         apply(j);
         try { localStorage.setItem(CACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
         App.emit('data');
@@ -205,9 +209,11 @@
 
   D.events = [];
   D.busyExtras = [];
+  function eventsKey(j) { return JSON.stringify([j.events, !!j.stale]); }
+  var shownEvents = null;
   try {
     var cached = JSON.parse(localStorage.getItem(CACHE) || 'null');
-    if (cached && cached.events) apply(cached);
+    if (cached && cached.events) { apply(cached); shownEvents = eventsKey(cached); }
   } catch (e) { /* ignore a bad cache */ }
 
   D.stores = [{ id: 'grocer', name: 'Groceries' }];

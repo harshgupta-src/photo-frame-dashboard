@@ -43,14 +43,17 @@ export var APPLY_KEY = 'update-applied-v1';
 export var RETRY_MS = 6 * 3600e3;
 
 // Decides what one check means. state = { candidate, seen } (in memory; a reload starts over).
+// `need` is how many consecutive checks must see the new build: 2 for a timed poll, 1 when a deploy
+// pushed the news (the push itself is the first sighting).
 //   'none'     same build (or nothing usable fetched): nothing to do
-//   'seen'     a different build, seen once: wait for the next check to confirm it
-//   'apply'    seen in two consecutive checks and not tried in the last RETRY_MS: reload when idle
+//   'seen'     a different build, seen fewer than `need` times: wait for the next check to confirm it
+//   'apply'    seen in `need` consecutive checks and not tried in the last RETRY_MS: reload when idle
 //   'blocked'  already tried for this build within RETRY_MS (the reload didn't take): don't loop
-export function decide(state, mine, live, storage, now) {
+export function decide(state, mine, live, storage, now, need) {
   if (!mine || !live || mine === live) { state.candidate = null; state.seen = 0; return 'none'; }
-  if (state.candidate !== live) { state.candidate = live; state.seen = 1; return 'seen'; }
+  if (state.candidate !== live) { state.candidate = live; state.seen = 0; }
   state.seen++;
+  if (state.seen < (need || 2)) return 'seen';
   var last = readApplied(storage);
   if (last && last.key === live && now - last.at >= 0 && now - last.at < RETRY_MS) return 'blocked';
   return 'apply';

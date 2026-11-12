@@ -48,7 +48,7 @@ happened**:
   1/2 cup Royal Canin GI"), the [walk plan](#walk-plan), and any other "Maya …" event (training,
   vet, grooming). A meal's people come from the calendar it's on.
 - **Happened:** the walks, and the Worker's `GET /dog` (below): meals logged in Lifelog (NFC tag
-  taps), pee/poop, weigh-ins (`<dog>_weight`, `data.kg`), walk distances, and the **Life Log**
+  taps), pee/poop, weigh-ins (`<dog>_weight`: `data.kg` or `lb`, or a range `kg_low`/`kg_high` or `lb_low`/`lb_high`, plotted at the middle; `estimate: true` marks a guess), walk distances, and the **Life Log**
   calendar, where done meals, walks and pee/poop end up. A planned meal moved to Life Log is still
   that meal (matched by day + meal), so it counts as fed, not missing; pee/poop are merged by walk
   id or within 3 minutes.
@@ -59,8 +59,9 @@ daytime gap (amber past it, red at 1½×), the next meal and the next walk (and 
 it are busy then). Below them: today's meals as a checklist (who fed each and how late, or due /
 late) with the kibble mix, today's walks, the **last walk's route** on an OpenStreetMap map (the
 Worker's `/tile` proxy) with distance, time and who walked, and one bar chart of minutes walked per
-day for the last 7 days with each day's pee and poop counts. The header has age, weight and the next
-other "Maya …" event. Tap a walk or the map to edit that walk. Without the Worker it shows
+day for the last 7 days with each day's pee and poop counts, beside a **weight** card: the latest
+weigh-in, kg a week since one at least 5 days earlier, and every weigh-in on a line (estimates
+hollow, ranges as a bar). The header has age and the next other "Maya …" event. Tap a walk or the map to edit that walk. Without the Worker it shows
 demo data. Set `VITE_DOG_BIRTHDAY` (YYYY-MM-DD) for the age.
 
 Everything is saved in the browser first and queued, so a reload, a reboot, a Wi-Fi drop or Lifelog

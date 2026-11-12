@@ -485,5 +485,8 @@
   });
   App.on('walk', paintWalk);
   App.on('data', function () { if (App.current === 'home') paint(); });
-  App.on('ha', function () { if (V.el && V.el.firstChild) V.el.querySelector('.h-status').innerHTML = status(); });
+  App.on('ha', function () {
+    var el = V.el && V.el.firstChild && V.el.querySelector('.h-status'), h = el && status();
+    if (el && h !== el._html) { el._html = h; el.innerHTML = h; }
+  });
 })();

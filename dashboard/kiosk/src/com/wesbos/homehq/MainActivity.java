@@ -168,6 +168,13 @@ public class MainActivity extends Activity implements HaDevice.Host {
       return pageAllowed() && haPrefs()[0] != null && haPrefs()[1] != null;
     }
 
+    /** True while the MQTT link is up, so deploys reach the page as window.frameUpdate(). */
+    @JavascriptInterface
+    public boolean updatePush() {
+      HaDevice d = haDevice;
+      return pageAllowed() && d != null && d.connected();
+    }
+
     @JavascriptInterface
     public void call(final String id, final String method, final String path, final String body) {
       if (!pageAllowed()) { reply(id, 0, "page not allowed"); return; }
@@ -260,7 +267,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
   }
   static final String PREF_MQTT_URL = "mqtt_url", PREF_MQTT_USER = "mqtt_user", PREF_MQTT_PASS = "mqtt_pass",
       PREF_MQTT_NAME = "mqtt_name", PREF_BRIGHTNESS = "brightness", PREF_AUTO_BRIGHTNESS = "auto_brightness";
-  private HaDevice haDevice;
+  private volatile HaDevice haDevice;
   // Screen "off" without device admin: the page is covered in black at the lowest backlight.
   private View blackout;
   private boolean softOff;
@@ -391,6 +398,12 @@ public class MainActivity extends Activity implements HaDevice.Host {
   public void reloadDashboard() {
     Log.i(TAG, "Reloading the dashboard (Home Assistant)");
     if (web != null) web.reload();
+  }
+
+  @Override
+  public void dashboardUpdated(String build) {
+    if (web == null || !pageAllowed()) return;
+    web.evaluateJavascript("window.frameUpdate&&window.frameUpdate(" + JSONObject.quote(build) + ")", null);
   }
 
   /**

@@ -32,10 +32,18 @@ export function mealJSON(e) {
   };
 }
 
+// A weigh-in: data.kg, or lb/lbs, or a range (kg_low/kg_high, lb_low/lb_high → the middle, with low/high
+// kept). data.estimate marks a guess (e.g. lifting her on a bathroom scale).
 export function weightJSON(e) {
   const d = e.data && typeof e.data === 'object' ? e.data : {};
-  const kg = num(d.kg) ?? (num(d.lbs) == null ? null : Math.round(num(d.lbs) * 0.45359237 * 10) / 10);
-  return kg == null ? null : { id: e.id, at: e.started_at, kg, where: d.where || null, note: d.note || null };
+  const kgOf = (k, lb) => num(d[k]) ?? (num(d[lb]) == null ? null : num(d[lb]) * 0.45359237);
+  const r1 = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  let low = kgOf('kg_low', 'lb_low'), high = kgOf('kg_high', 'lb_high');
+  const kg = r1(kgOf('kg', 'lb') ?? kgOf('kg', 'lbs') ?? (low != null && high != null ? (low + high) / 2 : low ?? high));
+  if (kg == null) return null;
+  [low, high] = [r1(low), r1(high)];
+  return { id: e.id, at: e.started_at, kg, ...(low != null && high != null ? { low, high } : {}), estimate: d.estimate === true || low != null || high != null,
+    where: d.where || null, note: d.note || null };
 }
 
 export function logCalendarName(env) {

@@ -227,8 +227,10 @@ import { assetKey, decide, markApplied } from './update.js';
   function loadWeather() {
     fetch(WX_URL).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (j) {
       if (!isToday(j)) return;
+      var before = JSON.stringify(D.weather);
       applyWeather(j);
       try { localStorage.setItem(WX_KEY, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
+      if (JSON.stringify(D.weather) === before) return; // unchanged: skip the redraw
       App.emit('data');
       App.rerender();
     }).catch(function (e) { console.warn('Weather fetch failed', e); });
@@ -406,32 +408,62 @@ import { assetKey, decide, markApplied } from './update.js';
   App.resetIdle = function () { idleSec = 0; };
 
   // ------------------------------------------------------------ self-update (hosted builds)
-  // A deploy changes the hashed /assets/ files index.html points at. Every 5 min, fetch index.html
-  // and compare its asset set with this page's, both read by the same parser (js/update.js). A new
-  // build must show up in two checks in a row, and is applied at most once per 6 h (persisted), so a
-  // reload that lands on the old build again can't loop. Applied once nobody has touched the screen
-  // for 30 s and no takeover, sheet, demo drawer or dog walk is open. UPDATE-FREEZE.md has the why.
+  // A deploy changes the hashed /assets/ files index.html points at. The page fetches index.html
+  // and compares its asset set with its own, both read by the same parser (js/update.js).
+  //  - Pushed: `npm run deploy` tells Home Assistant, which tells the kiosk over MQTT, which calls
+  //    window.frameUpdate(build). One check is enough; it retries a few times while the deploy
+  //    propagates.
+  //  - Polled (fallback): every 5 min, or hourly while the kiosk's MQTT push is connected. A new
+  //    build must show up in two polls in a row.
+  // A build is applied at most once per 6 h (persisted), so a reload that lands on the old build
+  // again can't loop. Applied once nobody has touched the screen for 30 s and no takeover, sheet,
+  // demo drawer or dog walk is open, behind an "Updating…" screen so the frame never sits on a
+  // frozen photo while the new page loads. UPDATE-FREEZE.md has the why.
   // No-op on the dev server (no /assets/ tags) and on the APK's bundled copy.
-  var updatePending = null, updateState = { candidate: null, seen: 0 }, myAssets = '';
+  var POLL_MS = 5 * 60000, PUSHED_POLL_MS = 60 * 60000, PUSH_RETRY_MS = [20000, 60000, 180000];
+  var updatePending = null, updateState = { candidate: null, seen: 0 }, myAssets = '', lastCheck = 0, pushTimer = null;
   function store() { try { return window.localStorage; } catch (e) { return null; } }
   function captureAssets() {
     myAssets = assetKey(App.$$('script[src], link[href]').map(function (n) { return n.outerHTML; }).join('\n'));
   }
-  function checkUpdate() {
-    if (location.hostname === '127.0.0.1') return; // bundled offline copy: updates come with the APK
+  function pushConnected() {
+    try { return !!(window.HomeHQ && window.HomeHQ.updatePush && window.HomeHQ.updatePush()); } catch (e) { return false; }
+  }
+  // Resolves to the verdict (see decide in js/update.js), or 'off' when checks don't apply here.
+  function checkUpdate(need) {
+    if (location.hostname === '127.0.0.1') return Promise.resolve('off'); // bundled copy: updates come with the APK
     var storage = store();
-    if (!myAssets || !storage) return;
-    fetch('/', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+    if (!myAssets || !storage) return Promise.resolve('off');
+    lastCheck = Date.now();
+    return fetch('/', { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
       // A redirect or non-HTML answer is a captive portal or an error page, not our index.html.
       var html = r.ok && !r.redirected && /text\/html/i.test(r.headers.get('Content-Type') || '');
       return html ? r.text() : '';
     }).then(function (html) {
       var live = assetKey(html);
-      var verdict = decide(updateState, myAssets, live, storage, Date.now());
+      var verdict = decide(updateState, myAssets, live, storage, Date.now(), need);
       updatePending = verdict === 'apply' ? live : null;
       if (verdict === 'blocked') console.warn('Update already tried in the last 6 h; not reloading again');
-    }).catch(function () { /* offline: try again next time */ });
+      return verdict;
+    }).catch(function () { return 'none'; /* offline: try again next time */ });
   }
+  function pollUpdate() {
+    // Hourly while pushes arrive, but a build seen once is confirmed on the next 5-min slot.
+    if (!pushConnected() || updateState.seen || Date.now() - lastCheck >= PUSHED_POLL_MS - 5000) checkUpdate(2);
+  }
+  // Called by the kiosk when a deploy is announced. `build` is the deployed asset key, if known.
+  window.frameUpdate = function (build) {
+    if (!myAssets && !App.started) { App.on('ready', function () { window.frameUpdate(build); }); return; }
+    if (build && build === myAssets) return;
+    clearTimeout(pushTimer);
+    var attempt = 0;
+    (function run() {
+      checkUpdate(1).then(function (v) {
+        // 'none': the deploy hasn't reached this edge yet (or the fetch failed); ask again shortly.
+        if (v === 'none' && attempt < PUSH_RETRY_MS.length) pushTimer = setTimeout(run, PUSH_RETRY_MS[attempt++]);
+      });
+    })();
+  };
   function updateSafe() {
     if ($('#sheetLayer').classList.contains('is-open') || $('#demo').classList.contains('is-open')) return false;
     return !(App.walk && App.walk.active);
@@ -439,7 +471,19 @@ import { assetKey, decide, markApplied } from './update.js';
   function applyUpdate() {
     var key = updatePending, storage = store();
     updatePending = null;
-    if (storage && markApplied(storage, key, Date.now())) location.reload();
+    if (!storage || !markApplied(storage, key, Date.now())) return;
+    var done = false;
+    function reload() { if (!done) { done = true; location.reload(); } }
+    // The last frame stays on screen until the new page paints, so make that frame say so. Not at
+    // night: the screen is black and should stay that way.
+    if (App.mode !== 'night') {
+      var o = document.createElement('div');
+      o.className = 'updating';
+      o.innerHTML = '<div class="updating-box"><b>Updating…</b><span>Back in a moment</span></div>';
+      document.body.appendChild(o);
+      requestAnimationFrame(function () { requestAnimationFrame(reload); });
+    }
+    setTimeout(reload, 1000); // rAF doesn't run while the page is hidden
   }
 
   // ------------------------------------------------------------ stage scaling
@@ -528,9 +572,10 @@ import { assetKey, decide, markApplied } from './update.js';
     App.go(location.hash.slice(1) || 'home');
     try { sessionStorage.removeItem('selfheal'); } catch (e) { /* storage disabled */ }
     captureAssets();
+    App.started = true;
     tickLoop();
     document.addEventListener('visibilitychange', function () { if (!document.hidden) tickLoop(); });
-    setInterval(checkUpdate, 5 * 60000);
+    setInterval(pollUpdate, POLL_MS);
     App.emit('ready');
     refreshStale(1500);
     setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);

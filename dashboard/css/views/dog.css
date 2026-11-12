@@ -3,8 +3,8 @@
   --pee: #E0A800; --poop: #8A5A33; --walk: #0E7C86; --walk-rgb: 14 124 134; --food: #00A36C;
   height: 100%; display: grid; gap: var(--gap);
   grid-template-columns: 1.1fr 1fr 1fr;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  grid-template-areas: "top top top" "now now now" "today route week";
+  grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: "top top top" "now now now" "today route week" "today route weight";
 }
 :root[data-theme="dark"] .dg { --pee: #F2C230; --poop: #C08A5C; --walk: #2BB3BF; --walk-rgb: 43 179 191; }
 
@@ -107,3 +107,21 @@
 .dg-week .dg-sum { display: none; }
 .dg-week .dg-bars { gap: 4px; }
 .dg-col-p { font-size: 12px; letter-spacing: -1px; }
+
+/* ---------------------------------------------------------------- weight */
+.dg-weight { grid-area: weight; }
+.dg-wt { display: flex; align-items: baseline; gap: 6px; font-size: 20px; color: var(--ink-2); flex: none; white-space: nowrap; }
+.dg-wt b { font-size: 40px; font-weight: 800; color: var(--ink); line-height: 1; }
+.dg-wt small { font-size: 16px; color: var(--mute); }
+.dg-wt-r { margin-left: auto; font-size: 17px; font-weight: 700; color: var(--food); }
+.dg-wt-r.is-down { color: var(--alert); }
+.dg-wchart { flex: 1; min-height: 0; margin-top: 6px; }
+.dg-wchart svg { display: block; }
+.dg-wc-g { stroke: var(--line); stroke-width: 1; }
+.dg-wc-y, .dg-wc-x { fill: var(--mute); font-size: 13px; font-weight: 700; font-family: var(--sans); }
+.dg-wc-y { text-anchor: end; }
+.dg-wc-l { fill: none; stroke: var(--food); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.dg-wc-rng { stroke: var(--food); stroke-width: 6; stroke-linecap: round; opacity: .3; }
+.dg-wc-d { fill: var(--food); stroke: var(--card); stroke-width: 2; }
+.dg-wc-d.is-est { fill: var(--card); stroke: var(--food); stroke-width: 2.5; }
+.dg-wc-d.is-last { stroke-width: 3; }

@@ -37,10 +37,14 @@ final class HaDevice implements MqttClient.Listener {
     void setBrightness(int percent);
     void setAutoBrightness(boolean auto);
     void reloadDashboard();
+    /** A dashboard deploy was announced on UPDATE_TOPIC; payload is the build's asset key. */
+    void dashboardUpdated(String build);
   }
 
   static final String TAG = "HomeHQ.ha";
   static final String DISCOVERY_PREFIX = "homeassistant";
+  // Shared by every frame: `npm run deploy` → HA webhook (ha/dashboard-update.yaml) → here.
+  static final String UPDATE_TOPIC = "homehq/dashboard/update";
   static final long LUX_MIN_MS = 2000, LUX_HEARTBEAT_MS = 5 * 60 * 1000;
   static final long MOVED_HOLD_MS = 30 * 1000, TOUCHED_HOLD_MS = 60 * 1000;
   // Change in m/s² from the slow average that counts as the frame being moved or bumped. The
@@ -151,6 +155,11 @@ final class HaDevice implements MqttClient.Listener {
     Log.i(TAG, "Home Assistant device " + id + " started");
   }
 
+  /** Connected to the broker, so dashboard deploys are pushed (the page can poll less). */
+  boolean connected() {
+    return client.connected();
+  }
+
   void stop() {
     if (sensors != null) {
       sensors.unregisterListener(light);
@@ -215,7 +224,7 @@ final class HaDevice implements MqttClient.Listener {
 
   @Override
   public void onConnected(MqttClient c) throws IOException {
-    c.subscribe(base + "/+/set", DISCOVERY_PREFIX + "/status");
+    c.subscribe(base + "/+/set", DISCOVERY_PREFIX + "/status", UPDATE_TOPIC);
     c.publish(DISCOVERY_PREFIX + "/device/" + id + "/config", discovery(), true);
     c.publish(base + "/availability", "online", true);
     main.post(this::publishAll);
@@ -224,6 +233,11 @@ final class HaDevice implements MqttClient.Listener {
   @Override
   public void onMessage(String topic, String payload) {
     String p = payload.trim();
+    if (topic.equals(UPDATE_TOPIC)) {
+      Log.i(TAG, "Dashboard deploy announced");
+      main.post(() -> host.dashboardUpdated(p.length() > 1000 ? "" : p));
+      return;
+    }
     if (topic.equals(DISCOVERY_PREFIX + "/status")) {
       // Home Assistant restarted: send the config and states again.
       if ("online".equals(p)) {

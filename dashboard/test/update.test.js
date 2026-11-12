@@ -82,3 +82,12 @@ test('the persisted guard blocks re-applying the same build for 6 hours, not oth
   decide(s2, mine, other, store, t + 60e3);
   assert.equal(decide(s2, mine, other, store, t + 6 * 60e3), 'apply');
 });
+
+test('a pushed deploy applies on the first sighting, but still not twice in 6 hours', () => {
+  const store = mem(), mine = assetKey(BUILT), t = Date.UTC(2026, 10, 12);
+  const live = assetKey(BUILT.replace(JS, '/assets/index-PUSHED.js'));
+  assert.equal(decide({}, mine, mine, store, t, 1), 'none'); // deploy not propagated yet
+  assert.equal(decide({}, mine, live, store, t, 1), 'apply');
+  markApplied(store, live, t);
+  assert.equal(decide({}, mine, live, store, t + 60e3, 1), 'blocked');
+});

@@ -134,9 +134,7 @@
 [data-orient="portrait"] .tk-alarm { left: 40px; right: 40px; }
 [data-orient="portrait"] .tk-huge { font-size: 150px; }
 
-/* Dog tab: the four tiles 2 × 2, then meals beside the route map, the week chart across the bottom. */
-[data-orient="portrait"] .dg { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto minmax(0, 1fr) 230px; grid-template-areas: "top top" "now now" "today route" "week week"; }
+/* Dog tab: the four tiles 2 × 2, then meals beside the route map, walking beside weight at the bottom. */
+[data-orient="portrait"] .dg { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto minmax(0, 1fr) 250px; grid-template-areas: "top top" "now now" "today route" "week weight"; }
 [data-orient="portrait"] .dg-now { grid-template-columns: 1fr 1fr; }
-[data-orient="portrait"] .dg-week .dg-sum { display: block; }
-[data-orient="portrait"] .dg-week .dg-bars { gap: 10px; }
-[data-orient="portrait"] .dg-col-p { font-size: 14px; letter-spacing: 0; }
+[data-orient="portrait"] .dg-week .dg-bars { gap: 6px; }

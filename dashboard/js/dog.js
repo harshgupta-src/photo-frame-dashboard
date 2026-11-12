@@ -228,7 +228,7 @@
   };
 
   G.weights = function () {
-    return (data().weights || []).map(function (w) { return { at: Date.parse(w.at), kg: w.kg, where: w.where } })
+    return (data().weights || []).map(function (w) { return { at: Date.parse(w.at), kg: w.kg, low: w.low, high: w.high, estimate: !!w.estimate, where: w.where }; })
       .sort(function (a, b) { return a.at - b.at; });
   };
   G.age = function () {
@@ -285,7 +285,7 @@
     var demoRoute = lw ? { walkId: lw.id, start: new Date(lw.startedAt).toISOString(), end: new Date(lw.endedAt).toISOString(), m: 1240, path: path } : null;
     demoData = {
       made: now, walks: walksD.sort(function (a, b) { return b.startedAt - a.startedAt; }), meals: mealsD, potty: pottyD, log: [], routes: [], lastRoute: demoRoute,
-      weights: [[0, 13.1], [14, 14.6], [28, 15.9], [35, 16.8], [42, 17.2]].map(function (w) { return { at: new Date(w0 + w[0] * 864e5).toISOString(), kg: w[1] }; })
+      weights: [[0, 13.1, 1], [14, 14.6], [28, 15.9], [35, 16.8], [42, 17.2]].map(function (w) { return { at: new Date(w0 + w[0] * 864e5).toISOString(), kg: w[1], estimate: !!w[2] }; })
     };
     return demoData;
   }
