@@ -157,9 +157,9 @@ poll: it POSTs the build to an HA webhook, `dashboard-update.yaml` publishes it 
 `homehq/dashboard/update`, and every kiosk on MQTT hands it to the page, which applies it once the
 frame is idle, behind an "Updating…" screen.
 
-1. In `dashboard-update.yaml`, replace `WEBHOOK_ID` with a long random id
-   (`echo "frame_deploy_$(openssl rand -hex 16)"`), add it to `/config/automations.yaml` and reload
-   automations.
+1. Add `frame_deploy_webhook_id: "<long random id>"` to `secrets.yaml`
+   (`echo "frame_deploy_$(openssl rand -hex 16)"`), copy `dashboard-update.yaml` to
+   `/config/packages/dashboard_update.yaml` and restart HA.
 2. In the dashboard's `.env.local`: `HA_DEPLOY_WEBHOOK_URL=https://<ha external url>/api/webhook/<id>`
    (or the LAN URL if you only deploy from home). It stays on your computer; it isn't uploaded as a
    Worker secret. If HA can't be reached, the deploy still succeeds and the frames find the build on
