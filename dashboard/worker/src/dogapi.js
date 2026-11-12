@@ -3,14 +3,16 @@
 // prefix (LIFELOG_WALK_TYPE maya_walk → maya_meal, maya_weight, maya_walk_route):
 //   <dog>_meal        one per meal fed (Home Assistant's NFC tap, ../../WALKS.md "Lifelog"); data
 //                     {meal, cups, planned_at, delta_min, ate, purina_pct, fortiflora, calendar}
-//   <dog>_weight      a weigh-in; data {kg} or {lbs}, optional {where, note}
+//   <dog>_weight      a weigh-in; data {kg} or {lb}, or a range {kg_low, kg_high}; optional {estimate, where, note}
 //   <dog>_walk_route  a walk's route; only {walk_id, distance_m} is sent
 //   <dog>_pee, <dog>_poop  potty breaks: the walk's own (id <walk id>-pee) and any logged on their own
 // Plus `log`: the events in the Life Log calendar (LOG_CALENDAR, default WALK_CALENDAR), where what
 // actually happened ends up (walks, pee/poop, and planned meals moved there once they're done), so
 // the frame can tell the plan (everyone's calendars) from what was done. Kept out of /events so the
-// schedule doesn't fill up with it. A calendar error only sets logError.
+// schedule doesn't fill up with it. A calendar error only sets logError. `food` is the food check's
+// latest decision (food.js), and /dog/food* are its routes.
 // Read-only, same keys as /walk.
+import { foodAdvice, foodFacts, foodRoute } from './food.js';
 import { Lifelog, WalkStore, walkCalendarName } from './walkstore.js';
 import { calendarObjects } from './icloud.js';
 import { expandICS } from './ics.js';
@@ -94,7 +96,19 @@ export async function dogData(env, days, now = Date.now()) {
     routes: routes.map((e) => ({ walkId: (e.data || {}).walk_id || null, m: num((e.data || {}).distance_m) }))
       .filter((r) => r.walkId && r.m != null),
     lastRoute: lastRoute(routes),
+    food: await foodAdvice(env),
   };
+}
+
+// Facts for the food check: all weigh-ins and the last 14 days of meals from Lifelog.
+async function foodFactsFor(env, plan, history, now = Date.now()) {
+  const p = dogPrefix(env), ll = new Lifelog(env);
+  const q = (type, extra) => ll.req('GET', '/events?' + new URLSearchParams({ type, limit: '500', ...extra }));
+  const [w, m] = await Promise.all([q(p + '_weight'), q(p + '_meal', { since: new Date(now - 14 * DAY).toISOString() })]);
+  return foodFacts({
+    birthday: String(env.DOG_BIRTHDAY || '').trim(), now, history, plan,
+    weights: (w || []).map(weightJSON).filter(Boolean), meals: (m || []).map(mealJSON),
+  });
 }
 
 // The newest walk's path for the route map: the walker with the most good fixes (≤ 50 m), at most
@@ -115,6 +129,13 @@ export function lastRoute(routes) {
 }
 
 export async function dogRoute(req, url, env, access) {
+  if (url.pathname.startsWith('/dog/food')) {
+    try {
+      return await foodRoute(req, url, env, access, (plan, history) => foodFactsFor(env, plan, history));
+    } catch (e) {
+      return { status: e.status || 502, body: { error: e.message } };
+    }
+  }
   if (req.method !== 'GET') return { status: 404, body: { error: 'not found' } };
   if (!access.read) return { status: 401, body: { error: 'unauthorized' } };
   const n = parseInt(url.searchParams.get('days'), 10);

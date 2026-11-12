@@ -83,6 +83,15 @@ and `walk_plan.yaml`, with your Worker subdomain and entity ids; see `../WALKS.m
 Secrets: `frame_walk_auth: "Bearer <WALK_KEY>"` and `frame_walk_webhook_id` (random). The Worker's
 `HA_WALK_WEBHOOK_URL` is `https://<ha external url>/api/webhook/<that id>`.
 
+## Dog food bumps
+
+`maya-food.yaml` (copy to `/config/packages/maya_food.yaml` with your Worker subdomain; it uses
+`frame_walk_auth` and the meal package's `script.maya_meal_notify`): at 04:40 it reads the meal
+plan from the calendars, the Worker's facts and the dog's vault notes, asks the HA Copilot Agent
+whether to raise the daily food by ¼ cup (one change at a time; see `../WALKS.md`) and stores the
+answer on the Worker. On the bump day both phones are notified 30 min before breakfast, with a Done
+action. Run `script.maya_food_check` as an admin (the agent call needs one) to check now.
+
 ## The frame as a device (MQTT)
 
 The kiosk can register the frame as a Home Assistant device over MQTT discovery: screen on/off,

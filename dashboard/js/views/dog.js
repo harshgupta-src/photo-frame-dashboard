@@ -49,6 +49,24 @@
       walkButton() + '</header>';
   }
 
+  // ---------------------------------------------------------------- food bump notice
+  // Shown from when HA's daily food check schedules a 1/4-cup bump until it's marked done or the
+  // calendar's meals for that day already add up to the new total.
+  function foodNote() {
+    var a = App.dog.food(), d0 = new Date(now()), today = d0.getFullYear() + '-' + ('0' + (d0.getMonth() + 1)).slice(-2) + '-' + ('0' + d0.getDate()).slice(-2);
+    if (!a || a.decision !== 'bump' || a.doneAt || !a.date) return '';
+    var day = new Date(a.date + 'T12:00:00'), planned = App.dog.plannedOnDay(day), total = 0;
+    planned.forEach(function (m) { total += m.cups || 0; });
+    if (planned.length && total >= a.toCups - 0.01) return '';
+    var due = a.date <= today;
+    var when = due ? (a.date < today ? 'Since ' + App.fmt.dayShort(day) : 'Today') : dayLabel(+day) + ' ' + App.fmt.monthShort(day) + ' ' + day.getDate();
+    return '<div class="dg-food' + (due ? ' is-due' : '') + '"><span class="dg-food-ic">' + App.icon('utensils', 22) + '</span>' +
+      '<div class="dg-food-t"><b>' + (due ? 'Bump ' + esc(name) + '’s food' : 'Food bump') + ' · ' + when + '</b>' +
+      '<span>' + cups(a.fromCups).replace(/ cups?$/, '') + ' → ' + cups(a.toCups) + ' a day' + (a.meal ? ' · +¼ cup at ' + esc(a.meal.toLowerCase()) : '') +
+      (a.reason ? ' · ' + esc(a.reason) : '') + '</span></div>' +
+      (due ? '<button class="dg-food-ok" data-food="done">Done</button>' : '') + '</div>';
+  }
+
   // ---------------------------------------------------------------- the four "now" tiles
   function tile(kind, icon, k, v, sub, state) {
     return '<div class="dg-tile dg-tile--' + kind + (state ? ' is-' + state : '') + '">' +
@@ -232,7 +250,7 @@
 
   function render() {
     if (!V.el) return;
-    V.el.innerHTML = '<div class="dg">' + top() +
+    V.el.innerHTML = '<div class="dg"><div class="dg-topbox">' + top() + foodNote() + '</div>' +
       '<div class="dg-now">' + pottyTile('pee') + pottyTile('poop') + mealTile() + walkTile() + '</div>' +
       today() + route() + week() + weight() + '</div>';
     placeMap();
@@ -242,6 +260,10 @@
   function click(e) {
     var b = e.target.closest('[data-walk]');
     if (b) { App.walkTap(b.dataset.walk); return; }
+    if (e.target.closest('[data-food]')) {
+      App.dog.foodDone().then(function () { App.toast('Food bump marked done', { icon: 'check' }); }, function () { App.toast('Couldn’t reach the Worker, try again', { icon: 'x' }); });
+      return;
+    }
     b = e.target.closest('[data-walk-id]');
     if (!b) return;
     var id = b.dataset.walkId, w = App.dog.walks().filter(function (r) { return r.id === id; })[0];

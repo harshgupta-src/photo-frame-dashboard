@@ -22,7 +22,7 @@
 // Optional: WALK_CALENDAR (calendar for walk events, or "none"; default: the CALENDARS entry with the
 // most people), WALK_PLAN_CALENDARS (planned walks: {"id+id": "Calendar name"}; default: the CALENDARS
 // entry with exactly those walkers), HA_WALK_WEBHOOK_URL (pinged on walk changes), WALK_KEY (default:
-// derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS.
+// derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, DOG_BIRTHDAY (YYYY-MM-DD, for the food check in food.js), AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS.
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
@@ -177,7 +177,7 @@ export default {
         return json({ error: e.message }, 500);
       }
     }
-    if (url.pathname === '/dog') {
+    if (url.pathname === '/dog' || url.pathname.startsWith('/dog/food')) {
       const r = await dogRoute(req, url, env, await walkAccess(req, env, same));
       return json(r.body, r.status);
     }

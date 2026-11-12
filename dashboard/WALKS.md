@@ -64,6 +64,18 @@ weigh-in, kg a week since one at least 5 days earlier, and every weigh-in on a l
 hollow, ranges as a bar). The header has age and the next other "Maya …" event. Tap a walk or the map to edit that walk. Without the Worker it shows
 demo data. Set `VITE_DOG_BIRTHDAY` (YYYY-MM-DD) for the age.
 
+**Food bumps.** A banner under the header says when the daily food should go up by ¼ cup ("Bump
+Maya's food · Today, 3½ → 3¾ cups a day", with a **Done** button), or the day a bump is coming. It
+hides once the planned meals on that day already add up to the new amount. Home Assistant decides
+(`ha/maya-food.yaml`): every morning it asks the Worker for the facts (age, the adult weight
+projected from recent weigh-ins on a large-breed growth curve, growth pace, the food label's cups
+for that weight and age, appetite from logged meals, and the plan's changes) and the HA Copilot
+Agent reads her vault notes and decides. The Worker refuses a bump (422) unless she's healthy, it's
+exactly +¼ cup from today's amount, stays within the label's range, and **one change at a time**:
+no mixed food (a transition) that day and no other change (food mix, meal count, amount, an
+earlier bump) within 7 days either side. 30 min before breakfast on the day, both phones get a
+notification with a Done action. Set the Worker secret `DOG_BIRTHDAY` (YYYY-MM-DD).
+
 Everything is saved in the browser first and queued, so a reload, a reboot, a Wi-Fi drop or Lifelog
 being unreachable (the Worker answers 502) loses nothing; a small dot after the label means changes are waiting to be sent. The frame refreshes from
 the Worker every minute while a walk is out (every 5 otherwise), so a walk started or stopped from
@@ -117,7 +129,11 @@ the home time zone (sent by the frame).
 | `GET /walks/plan?date=` | the day's plan (default today) with each walk's status |
 | `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], note?, id?}], notes?, source?}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
-| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]]}, the newest walk's path (≤ 300 points) |
+| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]]}, the newest walk's path (≤ 300 points), and `food` (below) |
+| `GET /dog/food` | the food advice `{advice, history}` |
+| `POST /dog/food/facts` | `{plan: [{date, meals, cups, mixed}]}` → the facts the decision uses |
+| `PUT /dog/food` | store advice `{decision: "bump"\|"hold", date?, fromCups?, toCups?, meal?, healthy, reason, projection?, nextCheck?}` (422 with `error` when the rules refuse it) |
+| `POST /dog/food/done` | mark the bump done `{by?}` |
 | `GET /tile?z=&x=&y=` | an OpenStreetMap tile for the route map, cached a week (needs READ_KEY, also as `?key=`) |
 
 `PUT /walks/:id` and `POST /walks/start` also take `planId` (a plan item's id).

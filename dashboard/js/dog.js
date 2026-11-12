@@ -237,6 +237,13 @@
     var days = Math.floor((+App.now() - b) / 864e5);
     return { weeks: Math.floor(days / 7), months: Math.floor(days / 30.44), days: days };
   };
+  // The food check's latest decision (Worker food.js): {decision, date, fromCups, toCups, meal, reason, doneAt}.
+  G.food = function () { return data().food || null; };
+  G.foodDone = function () {
+    if (!G.on) return Promise.reject(new Error('demo'));
+    return fetch(API + '/dog/food/done', { method: 'POST', headers: { 'X-Frame-Key': KEY, 'Content-Type': 'application/json' }, body: '{"by":"frame"}' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return G.refresh(); });
+  };
   G.fedOnDay = function (day) { return meals(day).filter(function (m) { return m.status === 'fed'; }); };
   G.plannedOnDay = plannedMeals;
   G.MEALS = MEALS;
@@ -285,6 +292,7 @@
     var demoRoute = lw ? { walkId: lw.id, start: new Date(lw.startedAt).toISOString(), end: new Date(lw.endedAt).toISOString(), m: 1240, path: path } : null;
     demoData = {
       made: now, walks: walksD.sort(function (a, b) { return b.startedAt - a.startedAt; }), meals: mealsD, potty: pottyD, log: [], routes: [], lastRoute: demoRoute,
+      food: { decision: 'bump', date: ymd(+App.now()), fromCups: 3.5, toCups: 3.75, meal: 'Breakfast', reason: 'healthy, growing on track, below the label floor for 6 months', doneAt: null },
       weights: [[0, 13.1, 1], [14, 14.6], [28, 15.9], [35, 16.8], [42, 17.2]].map(function (w) { return { at: new Date(w0 + w[0] * 864e5).toISOString(), kg: w[1], estimate: !!w[2] }; })
     };
     return demoData;

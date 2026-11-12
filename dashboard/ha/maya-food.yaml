@@ -1,0 +1,345 @@
+# Maya's food check: when to go up by 1/4 cup a day. Copy to /config/packages/maya_food.yaml (needs
+# walk_plan.yaml's frame_walk_auth secret, and maya_meal.yaml's sensor.maya_meal_plan and
+# script.maya_meal_notify).
+#
+# Every morning at 04:40 HA reads Maya's meal plan per day from the calendars (14 days back, 21 ahead:
+# meals, total cups, and whether two foods are mixed), asks the Worker for the facts (POST
+# /dog/food/facts: age, adult-weight projection, growth pace, the label's band, appetite, the plan's
+# changes), reads her vault notes (Maya.md, Maya Feeding Chart.md), and asks the Copilot Agent whether
+# and when to bump her food by 1/4 cup. The Worker re-checks the answer (exactly +1/4, within the
+# label's band, healthy, one change at a time: never mid-transition or within 7 days of another
+# change) before storing it (PUT /dog/food); a blocked bump is stored as a hold with the reason.
+# The frame's Maya tab shows a stored bump. On its day, both phones get it 30 min before breakfast,
+# with a "Done" button (POST /dog/food/done; the frame has one too).
+
+rest_command:
+  frame_dog_food_facts:
+    url: "https://frame-data.<your-subdomain>.workers.dev/dog/food/facts"
+    method: POST
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 30
+  frame_dog_food_put:
+    url: "https://frame-data.<your-subdomain>.workers.dev/dog/food"
+    method: PUT
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 30
+  frame_dog_food_get:
+    url: "https://frame-data.<your-subdomain>.workers.dev/dog/food"
+    method: GET
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 15
+  frame_dog_food_done:
+    url: "https://frame-data.<your-subdomain>.workers.dev/dog/food/done"
+    method: POST
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: '{"by": "{{ by }}"}'
+    timeout: 15
+
+shell_command:
+  maya_food_notes: >-
+    cat '/share/obsidian/harsh-memory/Areas/People/Maya.md' '/share/obsidian/harsh-memory/Areas/People/Maya Feeding Chart.md' | head -c 16000
+
+template:
+  # The stored decision, for the before-breakfast notification. Kept on a Worker error.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/15"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: maya_food_updated
+    actions:
+      - action: rest_command.frame_dog_food_get
+        response_variable: food
+        continue_on_error: true
+    sensor:
+      - name: Maya food advice
+        unique_id: maya_food_advice
+        icon: mdi:bowl-mix
+        state: >-
+          {%- set ok = food is defined and food.status == 200 and food.content is mapping -%}
+          {%- set a = food.content.advice if ok else none -%}
+          {%- if not ok -%}{{ this.state | default('unknown') }}
+          {%- elif a is not mapping -%}none
+          {%- elif a.decision == 'bump' and a.doneAt -%}done
+          {%- else -%}{{ a.decision }}{%- endif -%}
+        attributes:
+          advice: >-
+            {%- set ok = food is defined and food.status == 200 and food.content is mapping -%}
+            {{ (food.content.advice if ok else this.attributes.advice | default(none)) }}
+
+script:
+  maya_food_check:
+    alias: "Maya food: daily check"
+    description: >-
+      Ask the Copilot Agent whether Maya's daily food should go up by 1/4 cup (her notes, weight
+      trajectory, projected adult weight, age, the label's chart), one change at a time; the Worker
+      checks and stores the answer for the frame and the before-breakfast notification.
+    mode: single
+    variables:
+      today: "{{ now().date().isoformat() }}"
+      calendars:
+        - calendar.harshs_calendar
+        - calendar.ambujas_calendar
+        - calendar.a_h_life
+        - calendar.life_log
+    sequence:
+      - action: calendar.get_events
+        target:
+          entity_id: "{{ calendars }}"
+        data:
+          start_date_time: "{{ (today_at('00:00') - timedelta(days=14)).isoformat() }}"
+          end_date_time: "{{ (today_at('00:00') + timedelta(days=22)).isoformat() }}"
+        response_variable: cal
+        continue_on_error: true
+      # Per day: the meals (one per kind), their total cups (none if any meal has no amount), and
+      # whether two foods are mixed ("2 1/4 cups Purina Pro Plan + 3/4 cup Royal Canin GI").
+      - variables:
+          rows: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for ent in calendars if cal is defined and cal[ent] is defined -%}
+              {%- for e in cal[ent].events if 'T' in e.start -%}
+                {%- set t = e.summary | lower -%}
+                {%- set d = (e.description or '') | lower -%}
+                {%- set st = as_datetime(e.start) | as_local -%}
+                {%- set mixed = (d ~ ' ' ~ t) is search('\\d\\s*cups?\\s+[a-z][^+\\n.]*\\+\\s*\\d') -%}
+                {%- set kinds = t | regex_findall('breakfast|lunch|dinner|walk snack|night snack|snack') -%}
+                {%- if t is match('maya\\b') and 'prep' in t -%}
+                  {%- set ns.out = ns.out + [{'date': st.date().isoformat(), 'kind': 'prep', 'cups': none, 'mixed': mixed}] -%}
+                {%- elif t is match('maya\\b') and kinds -%}
+                  {%- set k = kinds[0] if kinds[0] != 'snack' else ('walk snack' if st.hour < 15 else 'night snack') -%}
+                  {%- set c1 = d | regex_findall('cups?\\s*:\\s*([0-9.]+)') -%}
+                  {%- set c2 = t | regex_findall('(?:(\\d+)\\s+)?(\\d+)/(\\d+)\\s*cups?') -%}
+                  {%- set c3 = t | regex_findall('(\\d+(?:\\.\\d+)?)\\s*cups?') -%}
+                  {%- if c1 -%}{%- set cups = c1[0] | float(none) -%}
+                  {%- elif c2 -%}{%- set cups = ((c2[0][0] | int(0)) + (c2[0][1] | int) / (c2[0][2] | int)) | round(2) -%}
+                  {%- elif c3 -%}{%- set cups = c3[0] | float(none) -%}
+                  {%- else -%}{%- set cups = none -%}{%- endif -%}
+                  {%- set ns.out = ns.out + [{'date': st.date().isoformat(), 'kind': k, 'cups': cups, 'mixed': mixed}] -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          plan: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for date, items in rows | groupby('date') -%}
+              {%- set m = namespace(kinds=[], cups=0, known=true) -%}
+              {%- for r in items if r.kind != 'prep' and r.kind not in m.kinds -%}
+                {%- set m.kinds = m.kinds + [r.kind] -%}
+                {%- if r.cups is none -%}{%- set m.known = false -%}{%- else -%}{%- set m.cups = m.cups + r.cups -%}{%- endif -%}
+              {%- endfor -%}
+              {%- if m.kinds -%}
+                {%- set ns.out = ns.out + [{'date': date, 'meals': m.kinds | count, 'cups': (m.cups | round(2)) if m.known else none,
+                    'mixed': items | selectattr('mixed') | list | count > 0}] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          breakfast: >-
+            {%- set b = (state_attr('sensor.maya_meal_plan', 'meals') or []) | selectattr('meal', 'eq', 'Breakfast')
+                | selectattr('at', 'search', '^' ~ today) | map(attribute='at') | first | default(none) -%}
+            {{ (as_datetime(b) | as_local) if b else today_at('06:45') }}
+          earliest: "{{ today if now() < as_datetime(breakfast) - timedelta(minutes=30) else (now().date() + timedelta(days=1)).isoformat() }}"
+      - action: rest_command.frame_dog_food_facts
+        data:
+          body:
+            plan: "{{ plan }}"
+        response_variable: fx
+        continue_on_error: true
+      - if:
+          - condition: template
+            value_template: "{{ fx is not defined or fx.status != 200 or fx.content is not mapping }}"
+        then:
+          - action: script.maya_meal_notify
+            data:
+              people: [harsh]
+              title: "🐕 Maya's food check failed"
+              message: "No facts from the frame Worker ({{ fx.status if fx is defined else 'unreachable' }})."
+              tag: maya_food_check_error
+          - stop: no facts
+            error: true
+      - action: shell_command.maya_food_notes
+        response_variable: notes
+        continue_on_error: true
+      - variables:
+          facts: "{{ fx.content.facts }}"
+          prompt: |-
+            You decide whether Maya's daily food should go up by 1/4 cup, and on which day. Maya is Harsh and Ambuja's Bernedoodle puppy (born {{ facts.birthday }}). Do not use any tools; everything you need is below. Today is {{ today }} ({{ now().strftime('%A') }}).
+
+            Rules, in order:
+            1. Health first. From her notes, is she healthy and doing OK? Any illness, vomiting, diarrhoea or loose stool, low appetite or leaving food, vet advice to hold or cut back, injury, or being overweight means "hold".
+            2. One change at a time. Never bump while her food is mid-transition (two foods mixed) or within 7 days after or before any other change to her plan: a food switch, a change in the number of meals (she is going from 5 meals to 4, and later to 3), or a change in daily cups. The plan's changes are listed below; also look for planned changes in her notes that aren't on the calendar yet.
+            3. A reason to bump: she eats below the label's band floor for her age and projected adult size, or she is growing slower than expected, or her notes say she seems hungry or too lean. Large-breed puppies should grow lean, so if she is within the band and growing on track or fast, hold. Never go above the band's top.
+            4. A bump is exactly +1/4 cup a day ({{ facts.cups }} → {{ (facts.cups or 0) + 0.25 }} cups), added to one meal (usually breakfast). Pick the earliest good day from {{ earliest }} within the next 14 days that satisfies rule 2 (bumping as she turns 6 months, when the band rises, is fine if nothing else changes that week). If no day in that window works, hold.
+
+            Reply with ONLY this JSON, no prose or code fences:
+            {"decision": "bump" or "hold", "date": "YYYY-MM-DD (bump only)", "toCups": {{ (facts.cups or 0) + 0.25 }}, "meal": "Breakfast", "healthy": true or false, "reason": "under 110 characters, shown on the photo frame", "projection": "one line: her projected adult weight and what it means for her band", "nextCheck": "one line: what would change your answer, or when to look again"}
+
+            Facts from her weigh-ins, meals and calendar plan (computed by the frame Worker):
+            - Age: {{ facts.age.weeks }} weeks ({{ facts.age.months }} months).
+            - Weigh-ins (kg; estimates are rough home guesses): {% for w in facts.weighIns %}{{ w.date }} {{ w.kg }}{{ ' (estimate)' if w.estimate }}{{ ' @' ~ w.where if w.where }}{{ ', ' if not loop.last }}{% endfor %}.
+            - Projected adult weight: {{ facts.adult.kg if facts.adult else 'unknown' }} kg ({{ facts.adult.lb if facts.adult else '?' }} lb) from a typical large-breed growth curve; her notes say about 28 kg is expected.
+            - Growth pace: {{ facts.growth.kgPerWeek }} kg/week over the last 5 weeks vs {{ facts.growth.expectedKgPerWeek }} expected now → {{ facts.growth.pace }}.
+            - Label band (Purina Pro Plan Puppy Large Breed, {{ facts.band.matureLb }} lb at maturity): {{ facts.band.name }}: {{ facts.band.low }}–{{ facts.band.high }} cups/day{% if facts.nextStage %}; from {{ facts.nextStage.date }} ({{ facts.nextStage.name }}): {{ facts.nextStage.low }}–{{ facts.nextStage.high }} cups/day{% endif %}.
+            - Today's plan: {{ facts.cups }} cups/day{{ ' in ' ~ facts.today_plan.meals ~ ' meals' if facts.today_plan }}.
+            - Plan changes (calendar, {{ facts.plannedDays | join(' to ') if facts.plannedDays else 'no plan found' }}): {% for c in facts.changes %}{{ c.date }} {{ c.what }}{{ '; ' if not loop.last }}{% else %}none{% endfor %}.
+            - Days with two foods mixed (transition) from today: {{ facts.transition | join(', ') if facts.transition else 'none' }}.
+            - Last 1/4-cup bump: {{ facts.lastBump or 'none recorded' }}.
+            - Appetite, last 7 days: {{ facts.appetite.meals7d }} meals logged; not finished: {% for m in facts.appetite.notAllEaten %}{{ m.at[:10] }} {{ m.meal }} ({{ m.ate }}){{ ', ' if not loop.last }}{% else %}none{% endfor %}.
+
+            Her notes (Obsidian vault):
+            {{ (notes.stdout if notes is defined and notes.stdout is defined else '(unavailable)')[:16000] }}
+      - action: ha_copilot_agent.submit
+        data:
+          prompt: "{{ prompt[:31000] }}"
+          profile: home
+        response_variable: job
+      - wait_for_trigger:
+          - trigger: event
+            event_type: ha_copilot_agent_job_finished
+            event_data:
+              job_id: "{{ job.job_id }}"
+        timeout: "00:15:00"
+        continue_on_timeout: true
+      - action: ha_copilot_agent.get_job
+        data:
+          job_id: "{{ job.job_id }}"
+        response_variable: done
+      - action: persistent_notification.dismiss
+        data:
+          notification_id: "ha_copilot_agent_{{ job.job_id }}"
+      - variables:
+          text: "{{ done.result if done.result is string else '' }}"
+          ans: >-
+            {%- set m = text | regex_findall('(?s)\\{.*\\}') -%}
+            {{ (m | first) | from_json(default=none) if m else none }}
+          ok: "{{ ans is mapping and ans.decision in ['bump', 'hold'] }}"
+          body: >-
+            {{ dict(ans if ok else {}, fromCups=facts.cups, plan=plan, source='ha-copilot') }}
+      - if:
+          - condition: template
+            value_template: "{{ ok }}"
+        then:
+          - action: rest_command.frame_dog_food_put
+            data:
+              body: "{{ body }}"
+            response_variable: put
+            continue_on_error: true
+          # A bump the Worker's rules block is kept as a hold with the reason.
+          - if:
+              - condition: template
+                value_template: "{{ put is defined and put.status == 422 }}"
+            then:
+              - variables:
+                  blocked: "{{ put.content.error if put.content is mapping else put.content }}"
+              - action: rest_command.frame_dog_food_put
+                data:
+                  body: >-
+                    {{ dict(body, decision='hold', date=none, reason=('Bump on ' ~ ans.date ~ ' held: ' ~ blocked)[:200]) }}
+                response_variable: put
+                continue_on_error: true
+      - variables:
+          error: >-
+            {%- if done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
+            {%- elif not ok -%}no decision JSON in the agent's reply
+            {%- elif put is not defined -%}could not reach the frame Worker
+            {%- elif put.status != 200 -%}Worker said {{ put.status }}: {{ put.content.error if put.content is mapping and put.content.error is defined else put.content }}
+            {%- endif -%}
+      - if:
+          - condition: template
+            value_template: "{{ error != '' }}"
+        then:
+          - action: script.maya_meal_notify
+            data:
+              people: [harsh]
+              title: "🐕 Maya's food check failed"
+              message: "{{ error[:300] }}"
+              tag: maya_food_check_error
+          - stop: "{{ error }}"
+            error: true
+      - event: maya_food_updated
+        event_data:
+          decision: "{{ put.content.advice.decision }}"
+      - action: logbook.log
+        data:
+          name: Maya food check
+          message: >-
+            {%- set a = put.content.advice -%}
+            {{ a.decision }}{{ ' on ' ~ a.date ~ ' to ' ~ a.toCups ~ ' cups' if a.decision == 'bump' }} · {{ a.reason }} · {{ a.projection }} · next: {{ a.nextCheck }}
+
+automation:
+  - id: maya_food_check_daily
+    alias: "Maya food: daily check"
+    description: Decide at 04:40 whether (and when) Maya's daily food goes up by 1/4 cup.
+    mode: single
+    triggers:
+      - trigger: time
+        at: "04:40:00"
+    actions:
+      - action: script.turn_on
+        target:
+          entity_id: script.maya_food_check
+
+  - id: maya_food_bump_notify
+    alias: "Maya food: bump day, before breakfast"
+    description: >-
+      On a bump's day, 30 min before her first planned breakfast (06:15 without a plan), tell Harsh and
+      Ambuja on their phones, with a Done button.
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    variables:
+      a: "{{ state_attr('sensor.maya_food_advice', 'advice') }}"
+      breakfast: >-
+        {%- set b = (state_attr('sensor.maya_meal_plan', 'meals') or []) | selectattr('meal', 'eq', 'Breakfast')
+            | selectattr('at', 'search', '^' ~ now().date().isoformat()) | map(attribute='at') | first | default(none) -%}
+        {{ (as_datetime(b) | as_local) if b else today_at('06:45') }}
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ a is mapping and a.decision == 'bump' and not a.doneAt and a.date == now().date().isoformat()
+             and now().strftime('%H:%M') == (as_datetime(breakfast) - timedelta(minutes=30)).strftime('%H:%M') }}
+    actions:
+      - variables:
+          fr: "{{ {0: '', 25: '¼', 33: '⅓', 50: '½', 67: '⅔', 75: '¾'} }}"
+          from_txt: "{{ (a.fromCups | int if a.fromCups | int else '') ~ fr.get(((a.fromCups - a.fromCups | int) * 100) | round(0) | int, '') }}"
+          to_txt: "{{ (a.toCups | int if a.toCups | int else '') ~ fr.get(((a.toCups - a.toCups | int) * 100) | round(0) | int, '') }}"
+      - action: script.maya_meal_notify
+        data:
+          people: [harsh, ambuja]
+          title: "🐕 Maya's food goes up today"
+          message: >-
+            {{ from_txt }} → {{ to_txt }} cups a day{{ ': +¼ cup at ' ~ a.meal | lower if a.meal }}. {{ a.reason }}
+          tag: maya_food_bump
+          level: time-sensitive
+          actions:
+            - action: MAYA_FOOD_DONE
+              title: "Done ✓"
+
+  - id: maya_food_bump_done
+    alias: "Maya food: Done from the notification"
+    mode: queued
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: MAYA_FOOD_DONE
+    actions:
+      - action: rest_command.frame_dog_food_done
+        data:
+          by: >-
+            {{ (states.person | selectattr('attributes.user_id', 'eq', trigger.event.context.user_id)
+                | map(attribute='name') | first | default('phone')).split(' ')[0] | lower }}
+        continue_on_error: true
+      - event: maya_food_updated
+        event_data:
+          decision: done
