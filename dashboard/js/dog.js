@@ -10,6 +10,7 @@
 //   App.dog.day(date)        {meals, walks, plannedWalks, potty, prep} for that day
 //   App.dog.potty(sinceMs)   [{kind: 'pee'|'poop', at}] newest first
 //   App.dog.upcoming(n)      the next n other "Maya …" events (training, vet, …)
+//   App.dog.lastRoute()      the newest walk's GPS path, for the route map
 // Emits 'dog' when the Worker's data changes.
 (function () {
   'use strict';
@@ -157,6 +158,11 @@
     return r ? r.m : null;
   };
 
+  // The newest walk's GPS path {walkId, start, end, m, path: [[lat, lon]]} for the route map.
+  G.lastRoute = function () { return data().lastRoute || null; };
+  // A map tile through the Worker (OpenStreetMap, cached), or null without a Worker.
+  G.tileUrl = function (z, x, y) { return G.on ? API + '/tile?z=' + z + '&x=' + x + '&y=' + y + '&key=' + encodeURIComponent(KEY) : null; };
+
   // Pee/poop times: Lifelog's events, the walks' ticks (pee 1 min after the start, poop 2 min after
   // that, like the Worker) and Life Log calendar entries, merged within 3 minutes of each other.
   G.potty = function (sinceMs) {
@@ -271,9 +277,14 @@
         mealsD.push({ id: 'demo-meal-' + d + '-' + i, at: new Date(fed).toISOString(), meal: m[0], person: people.length ? people[(d + i) % people.length].id : null, cups: m[2], plannedAt: new Date(at).toISOString() });
       });
     }
-    var w0 = +App.addDays(t0, -42);
+    var w0 = +App.addDays(t0, -42), lw = walksD.slice().sort(function (a, b) { return b.startedAt - a.startedAt; })[0], path = [];
+    for (var k = 0; k <= 40; k++) {
+      var a = k / 40 * 2 * Math.PI;
+      path.push([+(window.CONFIG.lat + 0.0022 * Math.sin(a) + 0.0006 * Math.sin(3 * a)).toFixed(6), +(window.CONFIG.lon + 0.0035 * (1 - Math.cos(a))).toFixed(6)]);
+    }
+    var demoRoute = lw ? { walkId: lw.id, start: new Date(lw.startedAt).toISOString(), end: new Date(lw.endedAt).toISOString(), m: 1240, path: path } : null;
     demoData = {
-      made: now, walks: walksD.sort(function (a, b) { return b.startedAt - a.startedAt; }), meals: mealsD, potty: pottyD, log: [], routes: [],
+      made: now, walks: walksD.sort(function (a, b) { return b.startedAt - a.startedAt; }), meals: mealsD, potty: pottyD, log: [], routes: [], lastRoute: demoRoute,
       weights: [[0, 13.1], [14, 14.6], [28, 15.9], [35, 16.8], [42, 17.2]].map(function (w) { return { at: new Date(w0 + w[0] * 864e5).toISOString(), kg: w[1] }; })
     };
     return demoData;

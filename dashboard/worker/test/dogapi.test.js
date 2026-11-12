@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { dogData, dogRoute } from '../src/dogapi.js';
+import { dogData, dogRoute, lastRoute } from '../src/dogapi.js';
 
 const LL = 'https://lifelog.test', CAL = 'https://caldav.test/log/';
 let events, env, kv, calendar;
@@ -82,4 +82,14 @@ test('LOG_CALENDAR=none leaves the calendar out; GET only, needs the read key', 
   const r = await dogRoute(new Request(url), url, env, { read: true });
   assert.equal(r.status, 200);
   assert.equal(r.body.days, 365);
+});
+
+test('lastRoute takes the newest walk and the walker with the most accurate fixes', () => {
+  const r = (id, at, paths) => ({ started_at: at, ended_at: at, data: { walk_id: id, distance_m: 900, paths } });
+  const out = lastRoute([
+    r('old', '2026-11-11T10:00:00Z', { harsh: [[1, 1, 5, 0], [2, 2, 5, 1]] }),
+    r('new', '2026-11-12T10:00:00Z', { harsh: [[1, 1, 5, 0], [9, 9, 400, 1], [2, 2, 5, 2]], ambuja: [[3, 3, 90, 0], [4, 4, 90, 1]] }),
+  ]);
+  assert.deepEqual([out.walkId, out.m, out.path], ['new', 900, [[1, 1], [2, 2]]]);
+  assert.equal(lastRoute([r('x', '2026-11-12T10:00:00Z', { harsh: [[1, 1, 5, 0]] })]), null);
 });

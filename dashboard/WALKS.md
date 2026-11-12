@@ -53,12 +53,14 @@ happened**:
   that meal (matched by day + meal), so it counts as fed, not missing; pee/poop are merged by walk
   id or within 3 minutes.
 
-The screen shows the time since the last pee and poop against the usual daytime gap (amber past it,
-red at 1½×), the next meal and walk (and whether the people on it are busy then, from their
-calendars), the walk button, today's timeline (walks, planned walks dashed, pee/poop, meals fed /
-due / late / upcoming), today's meals with cups fed of planned and who fed them, 7 days of rhythm on
-one clock with walk time per person, cups fed per day vs the plan with the kibble mix (today and
-tomorrow, for a food transition), and weight. Tap a walk to edit it. Without the Worker it shows
+The screen is built to be read from across the room (portrait: tiles 2 × 2, meals beside the map,
+the week across the bottom). Four big tiles: time since the last pee and poop against the usual
+daytime gap (amber past it, red at 1½×), the next meal and the next walk (and whether the people on
+it are busy then). Below them: today's meals as a checklist (who fed each and how late, or due /
+late) with the kibble mix, today's walks, the **last walk's route** on an OpenStreetMap map (the
+Worker's `/tile` proxy) with distance, time and who walked, and one bar chart of minutes walked per
+day for the last 7 days with each day's pee and poop counts. The header has age, weight and the next
+other "Maya …" event. Tap a walk or the map to edit that walk. Without the Worker it shows
 demo data. Set `VITE_DOG_BIRTHDAY` (YYYY-MM-DD) for the age.
 
 Everything is saved in the browser first and queued, so a reload, a reboot, a Wi-Fi drop or Lifelog
@@ -114,7 +116,8 @@ the home time zone (sent by the frame).
 | `GET /walks/plan?date=` | the day's plan (default today) with each walk's status |
 | `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], note?, id?}], notes?, source?}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
-| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`) |
+| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]]}, the newest walk's path (≤ 300 points) |
+| `GET /tile?z=&x=&y=` | an OpenStreetMap tile for the route map, cached a week (needs READ_KEY, also as `?key=`) |
 
 `PUT /walks/:id` and `POST /walks/start` also take `planId` (a plan item's id).
 
@@ -131,9 +134,9 @@ the sender's clock is more than 2 minutes off (`clientNow` in the body), its tim
 
 Two Shortcuts with **Get Contents of URL**, method POST, header `Authorization: Bearer <WALK_KEY>`,
 JSON body: `…/walks/start` with `by` = a person id from `VITE_PEOPLE`, and `…/walks/stop` with `pee`/`poop` from a menu.
+The frame picks the walk up within a minute.
 
 A walk stopped less than a minute after it started is treated as a mis-tap and isn't logged, on the frame ("I'm back" shows an Undo toast instead of the sheet) and on `/walks/stop`.
-The frame picks the walk up within a minute.
 
 ## Lifelog
 

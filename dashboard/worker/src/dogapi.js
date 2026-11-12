@@ -85,7 +85,25 @@ export async function dogData(env, days, now = Date.now()) {
     weights: weights.map(weightJSON).filter(Boolean),
     routes: routes.map((e) => ({ walkId: (e.data || {}).walk_id || null, m: num((e.data || {}).distance_m) }))
       .filter((r) => r.walkId && r.m != null),
+    lastRoute: lastRoute(routes),
   };
+}
+
+// The newest walk's path for the route map: the walker with the most good fixes (≤ 50 m), at most
+// 300 points as [lat, lon].
+export function lastRoute(routes) {
+  const e = routes.filter((r) => r.data && r.data.paths && r.data.walk_id)
+    .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))[0];
+  if (!e) return null;
+  let best = [];
+  for (const list of Object.values(e.data.paths)) {
+    const good = (list || []).filter((x) => Array.isArray(x) && (x[2] == null || x[2] <= 50));
+    if (good.length > best.length) best = good;
+  }
+  if (best.length < 2) return null;
+  const step = Math.ceil(best.length / 300);
+  const path = best.filter((x, i) => i % step === 0 || i === best.length - 1).map((x) => [x[0], x[1]]);
+  return { walkId: e.data.walk_id, start: e.started_at, end: e.ended_at, m: num(e.data.distance_m), path };
 }
 
 export async function dogRoute(req, url, env, access) {
@@ -98,4 +116,22 @@ export async function dogRoute(req, url, env, access) {
   } catch (e) {
     return { status: e.status || 502, body: { error: e.message } };
   }
+}
+
+// GET /tile?z=&x=&y=  an OpenStreetMap tile for the dog tab's route map. Proxied so the frame sends
+// a proper User-Agent, and cached for a week at the edge and in the browser (OSM's tile usage policy).
+export async function mapTile(url, ctx) {
+  const n = (k) => Number(url.searchParams.get(k));
+  const z = n('z'), x = n('x'), y = n('y');
+  if (![z, x, y].every(Number.isInteger) || z < 3 || z > 18 || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) return new Response('bad tile', { status: 400 });
+  const key = new Request(`https://tile.cache/${z}/${x}/${y}.png`), cache = typeof caches !== 'undefined' ? caches.default : null;
+  const hit = cache && await cache.match(key);
+  if (hit) return hit;
+  const r = await fetch(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`, {
+    headers: { 'User-Agent': 'photo-frame-dashboard/1.0 (+https://github.com/harshgupta-src/photo-frame-dashboard)' },
+  });
+  if (!r.ok) return new Response('tile unavailable', { status: 502 });
+  const out = new Response(r.body, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' } });
+  if (cache) ctx.waitUntil(cache.put(key, out.clone()));
+  return out;
 }
