@@ -186,7 +186,9 @@ the day is logged, edited or deleted (`ha/walk-plan.yaml`). It asks the HA Copil
 lengths and walkers from the dog's pee/poop rhythm (the last 14 days of walks with the gaps between
 pees and between poops, and the time since the last ones), both people's calendars, the forecast and
 the dog's vault note. A replan keeps the walks already done or under way and replaces the rest; the
-agent's one-line reading of the rhythm is the plan's `notes`.
+agent's one-line reading of the rhythm is the plan's `notes`. 15 minutes before each planned walk that
+hasn't started, HA sends its walkers a time-sensitive "get ready" notification (`sensor.maya_walk_plan`
+caches today's plan; refreshed every 10 min, after a walk and after each plan).
 
 ## Home Assistant
 

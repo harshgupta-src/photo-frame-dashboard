@@ -78,7 +78,7 @@ and `walk_plan.yaml`, with your Worker subdomain and entity ids; see `../WALKS.m
   nobody else is home, it turns off the lights, fans and TVs that are on (a scene snapshot) and turns
   them back on when the walk ends, then sends the route to the Worker.
 - **walk-plan:** at 04:30 and after each logged walk, the HA Copilot Agent plans the day's (remaining)
-  walks from the dog's pee/poop rhythm and both calendars; the Worker puts them in the walkers' calendars.
+  walks from the dog's pee/poop rhythm and both calendars; the Worker puts them in the walkers' calendars. Walkers get a heads-up 15 min before each.
 
 Secrets: `frame_walk_auth: "Bearer <WALK_KEY>"` and `frame_walk_webhook_id` (random). The Worker's
 `HA_WALK_WEBHOOK_URL` is `https://<ha external url>/api/webhook/<that id>`.

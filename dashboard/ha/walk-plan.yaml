@@ -6,7 +6,8 @@
 # Copilot Agent for the walks as JSON, and PUTs the plan to the Worker (PUT /walks/plan/<date>). A
 # replan keeps the walks already done (or due) and replaces only the ones still ahead. The Worker
 # writes each planned walk to its walkers' calendar, moves or removes events when the plan changes,
-# and removes a walk's event once it is logged. The frame shows the next one.
+# and removes a walk's event once it is logged. The frame shows the next one. 15 min before each
+# planned walk, its walkers get a heads-up on their phones (sensor.maya_walk_plan caches the plan).
 
 rest_command:
   frame_walk_history:
@@ -29,6 +30,46 @@ rest_command:
     content_type: application/json
     payload: "{{ body | tojson }}"
     timeout: 30
+
+template:
+  # Today's plan, cached for the 15-min heads-up. Refreshed every 10 min, when a walk is logged and
+  # when the planner writes a plan. On an error it keeps the last good plan.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: maya_walk_plan_updated
+      - trigger: event
+        event_type: maya_walk_logged
+    actions:
+      - action: rest_command.frame_walk_plan_get
+        data:
+          date: "{{ now().date().isoformat() }}"
+        response_variable: plan
+        continue_on_error: true
+    sensor:
+      - name: Maya walk plan
+        unique_id: maya_walk_plan_cache
+        icon: mdi:calendar-clock
+        state: >-
+          {{ 'ok' if plan is defined and plan.status == 200 and plan.content is mapping else 'error' }}
+        attributes:
+          date: >-
+            {{ plan.content.date if plan is defined and plan.status == 200 and plan.content is mapping and plan.content.date is defined
+               else this.attributes.date | default(none) }}
+          walks: >-
+            {%- if plan is defined and plan.status == 200 and plan.content is mapping -%}
+              {%- set ns = namespace(out=[]) -%}
+              {%- for x in plan.content.walks | default([]) -%}
+                {%- set ns.out = ns.out + [{'id': x.id, 'start': x.start, 'durationMin': x.durationMin, 'walkers': x.walkers,
+                     'walkerIds': x.walkerIds, 'note': x.note | default(none), 'status': x.status}] -%}
+              {%- endfor -%}
+              {{ ns.out }}
+            {%- else -%}
+              {{ this.attributes.walks | default([]) }}
+            {%- endif -%}
 
 shell_command:
   maya_walk_note: "head -c 8000 '/share/obsidian/harsh-memory/Areas/People/Maya.md'"
@@ -241,6 +282,9 @@ script:
           - stop: "{{ error }}"
             error: true
         else:
+          - event: maya_walk_plan_updated
+            event_data:
+              date: "{{ day }}"
           - action: logbook.log
             data:
               name: Maya walk plan
@@ -280,3 +324,51 @@ automation:
         data:
           variables:
             replan: true
+
+  - id: maya_walk_heads_up
+    alias: "Maya walk: 15-min heads-up"
+    description: >-
+      15 min before each planned walk (not yet started), tell its walkers on their phones to get ready.
+      Skipped if Maya is already out on a walk.
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    variables:
+      due: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for w in state_attr('sensor.maya_walk_plan', 'walks') or [] if w.status == 'planned' -%}
+          {%- set ds = as_timestamp(w.start) - as_timestamp(now().replace(second=0, microsecond=0)) -%}
+          {%- if 15 * 60 <= ds < 16 * 60 -%}{%- set ns.out = ns.out + [w] -%}{%- endif -%}
+        {%- endfor -%}
+        {{ ns.out }}
+    conditions:
+      - condition: template
+        value_template: "{{ due | count > 0 and not is_state('sensor.maya_walk', 'out') }}"
+    actions:
+      - repeat:
+          for_each: "{{ due }}"
+          sequence:
+            - variables:
+                w: "{{ repeat.item }}"
+                services: >-
+                  {%- from 'home.jinja' import notify_service -%}
+                  {%- set ns = namespace(s=[]) -%}
+                  {%- for p in (w.walkerIds or ['harsh', 'ambuja']) -%}
+                    {%- set svc = notify_service(p) -%}
+                    {%- if svc and svc not in ns.s -%}{%- set ns.s = ns.s + [svc] -%}{%- endif -%}
+                  {%- endfor -%}
+                  {{ ns.s }}
+            - repeat:
+                for_each: "{{ services }}"
+                sequence:
+                  - action: "{{ repeat.item }}"
+                    continue_on_error: true
+                    data:
+                      title: "🐕 Maya's walk in 15 min"
+                      message: >-
+                        {{ (as_datetime(w.start) | as_local).strftime('%-I:%M %p') }} · {{ w.durationMin }} min · {{ w.walkers | join(' & ') }}{{ ' · ' ~ w.note if w.note else '' }}
+                      data:
+                        tag: "maya_walk_heads_up-{{ w.id }}"
+                        push:
+                          interruption-level: time-sensitive
