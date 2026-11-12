@@ -231,6 +231,8 @@
     }
   }
   App.walkPlan = walkPlan;
+  App.walkSheet = walkSheet; // the dog tab (views/dog.js) edits walks and starts/stops them too
+  App.walkTap = walkTap;
 
   function hero() {
     var e = App.nextEvent(), now = App.now();

@@ -36,6 +36,31 @@ iPhone Shortcut ──POST /walks/start|stop──┘   │
 - Once a walk is logged, the tile's last line reads "Walked 2h 15m ago · 💧💩"; tap it for the last
   14 days (tap a walk to edit or delete it).
 
+### The dog tab
+
+The rail's paw button (labelled with the dog's name) opens the dog's care dashboard (`js/dog.js`
+for the data, `js/views/dog.js` for the screen). It keeps **what was planned** apart from **what
+happened**:
+
+- **Plan:** meal events in everyone's calendars ("Maya breakfast 1 cup", "Maya snack 1/2 cup",
+  "Maya · Lunch" with `cups: 1` in the notes; a plain snack before 3 PM is the walk snack, later
+  the night snack), the "Maya prep" event whose notes hold the kibble mix ("3 cups Purina Pro Plan +
+  1/2 cup Royal Canin GI"), the [walk plan](#walk-plan), and any other "Maya …" event (training,
+  vet, grooming). A meal's people come from the calendar it's on.
+- **Happened:** the walks, and the Worker's `GET /dog` (below): meals logged in Lifelog (NFC tag
+  taps), pee/poop, weigh-ins (`<dog>_weight`, `data.kg`), walk distances, and the **Life Log**
+  calendar, where done meals, walks and pee/poop end up. A planned meal moved to Life Log is still
+  that meal (matched by day + meal), so it counts as fed, not missing; pee/poop are merged by walk
+  id or within 3 minutes.
+
+The screen shows the time since the last pee and poop against the usual daytime gap (amber past it,
+red at 1½×), the next meal and walk (and whether the people on it are busy then, from their
+calendars), the walk button, today's timeline (walks, planned walks dashed, pee/poop, meals fed /
+due / late / upcoming), today's meals with cups fed of planned and who fed them, 7 days of rhythm on
+one clock with walk time per person, cups fed per day vs the plan with the kibble mix (today and
+tomorrow, for a food transition), and weight. Tap a walk to edit it. Without the Worker it shows
+demo data. Set `VITE_DOG_BIRTHDAY` (YYYY-MM-DD) for the age.
+
 Everything is saved in the browser first and queued, so a reload, a reboot, a Wi-Fi drop or Lifelog
 being unreachable (the Worker answers 502) loses nothing; a small dot after the label means changes are waiting to be sent. The frame refreshes from
 the Worker every minute while a walk is out (every 5 otherwise), so a walk started or stopped from
@@ -89,6 +114,7 @@ the home time zone (sent by the frame).
 | `GET /walks/plan?date=` | the day's plan (default today) with each walk's status |
 | `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], note?, id?}], notes?, source?}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
+| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`) |
 
 `PUT /walks/:id` and `POST /walks/start` also take `planId` (a plan item's id).
 

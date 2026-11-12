@@ -133,3 +133,16 @@
 [data-orient="portrait"] .tk-actions { flex-wrap: wrap; }
 [data-orient="portrait"] .tk-alarm { left: 40px; right: 40px; }
 [data-orient="portrait"] .tk-huge { font-size: 150px; }
+
+/* Dog tab: compact header (chips in one row, no icons), timeline full width, meals (donut beside the
+   list) + food/growth side by side, rhythm below. */
+[data-orient="portrait"] .dg { grid-template-columns: 1fr 1fr; grid-template-rows: auto 190px minmax(0, .85fr) minmax(0, 1fr); grid-template-areas: "top top" "today today" "meals side" "week week"; }
+[data-orient="portrait"] .dg-top { flex-wrap: wrap; row-gap: 12px; }
+[data-orient="portrait"] .dg-id { flex: 1; }
+[data-orient="portrait"] .dg-chips { order: 3; flex: 1 1 100%; gap: 8px; }
+[data-orient="portrait"] .dg-chip { padding: 8px 10px; }
+[data-orient="portrait"] .dg-chip-ic { display: none; }
+[data-orient="portrait"] .dg-chip b { font-size: 19px; }
+[data-orient="portrait"] .dg-meals-body { flex-direction: row; align-items: center; }
+[data-orient="portrait"] .dg-donut { width: 96px; height: 96px; }
+[data-orient="portrait"] .dg-mrow .avatar { display: none; }

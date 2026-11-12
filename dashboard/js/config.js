@@ -19,7 +19,8 @@
     lat: num(env.VITE_HOME_LAT, 43.6532), // weather and sunset/sunrise; default Toronto
     lon: num(env.VITE_HOME_LON, -79.3832),
     people: people,
-    dog: env.VITE_DOG_NAME || 'Rex', // the "<dog>'s walk" jacket tile
+    dog: env.VITE_DOG_NAME || 'Rex', // the "<dog>'s walk" jacket tile and the dog tab
+    dogBirthday: env.VITE_DOG_BIRTHDAY || '', // YYYY-MM-DD; the dog tab shows the age
     pinnedList: env.VITE_PINNED_LIST || 'To-do', // Reminders list shown on the Today screen
   };
 })();

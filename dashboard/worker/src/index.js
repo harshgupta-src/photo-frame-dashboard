@@ -9,6 +9,7 @@
 //        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md)
 //   /walk, /walks*  the dog walk log (walkapi.js, ../../WALKS.md): an adapter over the walks kept in
 //        Lifelog (secrets LIFELOG_URL, LIFELOG_TOKEN), mirrored to the family calendar
+//   GET  /dog        the dog tab's meals, weigh-ins and walk distances from Lifelog (dogapi.js)
 //   /agent/calendars, /agent/events*  calendar read/write for household agents via the Home Brain
 //        gateway (agentcal.js; Bearer AGENT_CAL_KEY, calendars in secret AGENT_CALENDARS)
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
@@ -27,6 +28,7 @@ import { readAlbum } from './photos.js';
 import { parseReminders, forwardToHA } from './reminders.js';
 import { walkAccess, walkRoute } from './walkapi.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
+import { dogRoute } from './dogapi.js';
 
 const DAY = 864e5;
 const EVENTS_TTL = 300;
@@ -173,6 +175,10 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 500);
       }
+    }
+    if (url.pathname === '/dog') {
+      const r = await dogRoute(req, url, env, await walkAccess(req, env, same));
+      return json(r.body, r.status);
     }
     if (url.pathname.startsWith('/agent/')) {
       const r = await agentCalRoute(req, url, env, ctx, await agentCalAccess(req, env, same));
