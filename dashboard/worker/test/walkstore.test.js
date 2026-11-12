@@ -58,6 +58,15 @@ async function call(op, ...args) {
   return r;
 }
 
+test('a stop within a minute of the start discards the walk instead of logging it', async () => {
+  const id = (await call('start', { by: 'harsh' })).body.id;
+  const r = await call('stop', {});
+  assert.deepEqual([r.status, r.body.discarded, r.body.id], [200, true, id]);
+  assert.ok(events.get(id).deleted_at);
+  assert.equal([...events.values()].filter((x) => !x.deleted_at).length, 0);
+  assert.equal(ical.size, 0);
+});
+
 test('start and stop store one Lifelog event and mirror it to the calendar', async () => {
   const started = await call('start', { by: 'harsh' });
   assert.equal(started.status, 200);
@@ -66,6 +75,7 @@ test('start and stop store one Lifelog event and mirror it to the calendar', asy
   assert.equal(ical.size, 0);
   assert.equal((await call('start', {})).status, 409);
 
+  events.get(id).started_at = new Date(Date.now() - 20 * 60e3).toISOString(); // out for 20 minutes
   const stopped = await call('stop', { poop: 'Yes' });
   assert.equal(stopped.body.id, id);
   const e = events.get(id);

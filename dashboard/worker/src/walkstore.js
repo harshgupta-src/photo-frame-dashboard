@@ -24,6 +24,7 @@ const OPS = ['state', 'list', 'summary', 'log', 'upsert', 'remove', 'start', 'st
 const POTTY = ['pee', 'poop'];
 const sibling = (href, kind) => href.replace(/\.ics$/, '-' + kind + '.ics');
 const iso = (ms) => new Date(ms).toISOString();
+export const MIN_WALK_MS = 60e3; // shorter is a mis-tap (start then stop); see stop() and the frame's W.MIN_MS
 
 // WALK_CALENDAR (a calendar name, or "none"), else the CALENDARS entry shared by the most people
 // (the family calendar), else no calendar.
@@ -221,6 +222,8 @@ export class WalkStore {
   async stop(body = {}) {
     const a = (await this.walks(Date.now() - 30 * DAY)).find((w) => w.endedAt == null);
     if (!a) throw new WalkError('no walk is active', 404);
+    // Stopped within a minute of starting: a mis-tap, not a walk. Drop it instead of logging it.
+    if (Date.now() - a.startedAt < MIN_WALK_MS) return { ...(await this.remove(a.id)), discarded: true };
     const pick = (v, d) => (v == null || v === '' ? d : v);
     return this.upsert(a.id, {
       startedAt: a.startedAt, endedAt: Date.now(), pee: pick(body.pee, true), poop: pick(body.poop, false),

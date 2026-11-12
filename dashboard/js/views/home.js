@@ -167,12 +167,21 @@
       onClose: function () {
         if (opts.finishing && dismissed && !saved) { App.walk.resume(); return; }
         // Saved, or closed by the idle timer while finishing: log it as it stands.
+        if (opts.finishing && r.endedAt - r.startedAt < App.walk.MIN_MS) { App.walk.resume(); discardShort(App.walk.active); return; }
         if (saved || opts.finishing) {
           App.walk.save(r);
           if (opts.finishing) App.toast('Walk logged · ' + App.fmt.mins((r.endedAt - r.startedAt) / 60000) + ' · ' + potty(r), { icon: 'check' });
         }
       }
     });
+  }
+  // A walk stopped within a minute of starting was a mis-tap: drop it (Undo puts the timer back).
+  function discardShort(a) {
+    if (!a) return;
+    var W = App.walk;
+    W.remove(a);
+    a.endedAt = null;
+    App.toast('Under a minute, so it wasn’t logged', { icon: 'x', undo: function () { W.restore(a); } });
   }
   function removeWalk(rec) {
     App.walk.remove(rec);
@@ -223,7 +232,12 @@
       App.toast('Walk cancelled', { icon: 'x', undo: function () { W.restore(a); } });
       return;
     }
-    if (kind === 'back') { var rec = W.back(); if (rec) walkSheet(rec, { finishing: true }); return; }
+    if (kind === 'back') {
+      if (W.active && !W.active.endedAt && Date.now() - W.active.startedAt < W.MIN_MS) { discardShort(W.active); return; }
+      var rec = W.back();
+      if (rec) walkSheet(rec, { finishing: true });
+      return;
+    }
     if (kind === 'start' && W.start()) {
       App.toast(App.esc(window.CONFIG.dog) + '’s walk started' + (W.active.walkers.length ? ' with ' + App.esc(walkers(W.active)) : '') + ' · tap the tile when you’re back', {
         icon: 'clock', undo: function () { if (W.active) W.remove(W.active); }

@@ -167,6 +167,8 @@
     changed();
     return W.active;
   };
+  // Shorter than this isn't a walk (a Start then I'm back tapped by mistake): it's discarded, not logged.
+  W.MIN_MS = 60e3;
   // "I'm back": freeze the end time while the sheet is open (survives a reload, see below).
   W.back = function () {
     if (!W.active) return null;

@@ -107,7 +107,7 @@ the home time zone (sent by the frame).
 | `PUT /walks/:id` | create or replace `{startedAt, endedAt?, pee?, poop?, walkers?: ["<person id>"], notes?}` |
 | `DELETE /walks/:id` | delete a walk and its calendar event |
 | `POST /walks/start` | start now `{by?: "<person id>"}` (409 if one is active) |
-| `POST /walks/stop` | stop now `{pee?: true, poop?: false, by?}` (404 if none is active) |
+| `POST /walks/stop` | stop now `{pee?: true, poop?: false, by?}` (404 if none is active). A stop within a minute of the start discards the walk (`discarded: true`) |
 | `POST /walks/resync` | retry calendar writes |
 | `GET /walks/active` | just the walk in progress, or `active: null` (Home Assistant polls it) |
 | `PUT /walks/:id/route` | `{points: [{who, lat, lon, acc, t}]}` the route (404 if the walk is gone) |
@@ -131,6 +131,8 @@ the sender's clock is more than 2 minutes off (`clientNow` in the body), its tim
 
 Two Shortcuts with **Get Contents of URL**, method POST, header `Authorization: Bearer <WALK_KEY>`,
 JSON body: `…/walks/start` with `by` = a person id from `VITE_PEOPLE`, and `…/walks/stop` with `pee`/`poop` from a menu.
+
+A walk stopped less than a minute after it started is treated as a mis-tap and isn't logged, on the frame ("I'm back" shows an Undo toast instead of the sheet) and on `/walks/stop`.
 The frame picks the walk up within a minute.
 
 ## Lifelog
