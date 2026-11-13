@@ -64,6 +64,19 @@
       '</section>';
   }
 
+  function models() {
+    var t0 = App.dayStart(App.now()), rows = C.byModel(new Date(t0.getFullYear(), t0.getMonth(), 1));
+    var tot = rows.reduce(function (a, r) { return a + r.credits; }, 0), top = rows.slice(0, 4);
+    if (rows.length > 4) top[3] = { name: (rows.length - 3) + ' other models', credits: rows.slice(3).reduce(function (a, r) { return a + r.credits; }, 0), sessions: 0 };
+    return '<section class="ag-card cp-models"><span class="ag-label">Models · this month</span>' +
+      (top.length ? '<div class="cp-mlist">' + top.map(function (r) {
+        var pct = tot ? r.credits / tot * 100 : 0;
+        return '<div class="cp-mrow"><div class="cp-mtop"><b>' + esc(r.name) + '</b><span class="num">' + credits(r.credits) + ' <small>' + (pct >= 1 ? Math.round(pct) : '<1') + '%</small></span></div>' +
+          '<div class="cp-mbar"><i style="width:' + Math.max(pct, 1) + '%"></i></div></div>';
+      }).join('') + '</div>' : '<p class="cp-muted">No model usage yet this month.</p>') +
+      '</section>';
+  }
+
   function week() {
     var rows = C.byDay(7);
     var max = Math.max.apply(null, rows.map(function (r) { return r.development + r.automation; }).concat([1]));
@@ -84,10 +97,15 @@
       return '<button data-filter="' + f[0] + '"' + (V.filter === f[0] ? ' class="is-on"' : '') + '>' + f[1] + '<span class="num">' + f[2] + '</span></button>';
     }).join('') + '</div>';
   }
+  // The model that did most of a session's work, without the vendor ("Opus 5.5").
+  function mainModel(s) {
+    var ids = Object.keys(s.models || {}), id = ids.sort(function (a, b) { return s.models[b].credits - s.models[a].credits; })[0] || s.model;
+    return id ? C.modelName(id, s.models && s.models[id] && s.models[id].name).replace(/^Claude /, '') : '';
+  }
   function row(s) {
     return '<button class="cp-row' + (s.id === V.sel ? ' is-sel' : '') + '" data-id="' + esc(s.id) + '">' +
       '<div class="cp-row-top">' + (live(s) ? '<i class="cp-live" title="Running"></i>' : '') + '<b>' + esc(s.title) + '</b><span class="cp-when">' + esc(ago(s.updatedAt)) + '</span></div>' +
-      '<div class="cp-row-meta">' + tag(s) + '<span>' + esc(where(s)) + '</span>' + (s.credits ? '<span class="num">' + credits(s.credits) + ' cr</span>' : '') + '</div>' +
+      '<div class="cp-row-meta">' + tag(s) + '<span>' + esc(where(s)) + '</span>' + (mainModel(s) ? '<span>' + esc(mainModel(s)) + '</span>' : '') + (s.credits ? '<span class="num">' + credits(s.credits) + ' cr</span>' : '') + '</div>' +
       '</button>';
   }
   function list() {
@@ -149,11 +167,20 @@
 
   function detailHead(s) {
     var started = s.startedAt ? new Date(s.startedAt) : null;
-    var bits = [where(s), s.model, started ? App.fmt.rel(started) + ' ' + App.fmt.time(started, true) : '',
+    var bits = [where(s), (s.models && Object.keys(s.models).length) ? '' : s.model && C.modelName(s.model), started ? App.fmt.rel(started) + ' ' + App.fmt.time(started, true) : '',
       s.prompts ? s.prompts + (s.prompts === 1 ? ' prompt' : ' prompts') : '', s.tools ? s.tools + ' actions' : '', s.credits ? credits(s.credits) + ' credits' : ''].filter(Boolean);
     return '<header class="cp-dhead"><button class="icon-btn cp-back" data-back aria-label="Back">' + App.icon('left', 26) + '</button>' +
       '<div><div class="cp-dtitle">' + (live(s) ? '<i class="cp-live"></i>' : '') + '<b>' + esc(s.title) + '</b></div>' +
-      '<div class="cp-row-meta">' + tag(s) + bits.map(function (b) { return '<span>' + esc(b) + '</span>'; }).join('') + '</div></div></header>';
+      '<div class="cp-row-meta">' + tag(s) + bits.map(function (b) { return '<span>' + esc(b) + '</span>'; }).join('') + '</div>' + sessionModels(s) + '</div></header>';
+  }
+  // Models used in one session, biggest first: "Claude Opus 5.5 · 412 cr · 38 calls".
+  function sessionModels(s) {
+    var ids = Object.keys(s.models || {}).sort(function (a, b) { return s.models[b].credits - s.models[a].credits; });
+    if (!ids.length) return '';
+    return '<div class="cp-smodels">' + ids.map(function (id) {
+      var m = s.models[id], bits = [m.credits ? credits(m.credits) + ' cr' : '', m.calls ? m.calls + (m.calls === 1 ? ' call' : ' calls') : ''].filter(Boolean);
+      return '<span><b>' + esc(C.modelName(id, m.name)) + '</b>' + (bits.length ? ' · ' + bits.join(' · ') : '') + '</span>';
+    }).join('') + '</div>';
   }
 
   function renderDetail() {
@@ -200,7 +227,7 @@
       '<header class="ag-top"><div><div class="label">GitHub Copilot · sessions &amp; usage</div><h1 class="serif">Agents</h1></div>' +
       '<div class="ag-sync"><span class="label" data-synced>' + esc(synced()) + '</span>' +
       '<button class="icon-btn" data-refresh aria-label="Refresh">' + App.icon('undo', 26) + '</button></div></header>' +
-      '<div class="cp-usage">' + plan() + today() + week() + '</div>' +
+      '<div class="cp-usage">' + plan() + today() + models() + week() + '</div>' +
       '<div class="cp-body' + (V.detail ? ' is-detail' : '') + '"><div class="cp-side">' + seg() + '<div class="cp-list">' + list() + '</div></div>' +
       '<div class="cp-detail"></div></div></div>';
     V.el.querySelector('.cp-list').addEventListener('scroll', App.resetIdle, { passive: true });
@@ -211,7 +238,7 @@
     if (!V.el || !V.el.firstChild) return;
     var lst = V.el.querySelector('.cp-list'), top = lst.scrollTop;
     var usage = V.el.querySelector('.cp-usage');
-    usage.innerHTML = plan() + today() + week();
+    usage.innerHTML = plan() + today() + models() + week();
     V.el.querySelector('.cp-seg').outerHTML = seg();
     lst.innerHTML = list();
     lst.scrollTop = top;

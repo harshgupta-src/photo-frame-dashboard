@@ -4,6 +4,7 @@
 //   App.copilot.data              {usage, sources, sessions} (sessions newest first)
 //   App.copilot.transcript(id)    Promise → {items} for one session
 //   App.copilot.byDay(days)       [{day: Date, development, automation}] AI credits per local day
+//   App.copilot.byModel(since)    [{id, name, credits, sessions}] AI credits per model since a date
 // Emits 'copilot' when the list changes.
 (function () {
   'use strict';
@@ -64,6 +65,32 @@
     return sum;
   };
 
+  // Credits per model since a date, biggest first: [{id, name, credits, sessions}]. Sessions pushed
+  // before models were recorded count under their session model.
+  C.byModel = function (since) {
+    var from = Math.floor(+since / H), ix = {};
+    ((C.data && C.data.sessions) || []).forEach(function (s) {
+      var models = s.models && Object.keys(s.models).length ? s.models : null;
+      if (!models) { models = {}; models[s.model || 'unknown'] = { hours: s.hours }; }
+      Object.keys(models).forEach(function (id) {
+        var m = models[id], sum = 0;
+        Object.keys(m.hours || {}).forEach(function (h) { if (+h >= from) sum += m.hours[h]; });
+        if (!sum) return;
+        var row = ix[id] || (ix[id] = { id: id, name: C.modelName(id, m.name), credits: 0, sessions: 0 });
+        row.credits += sum; row.sessions++;
+      });
+    });
+    return Object.keys(ix).map(function (k) { return ix[k]; }).sort(function (a, b) { return b.credits - a.credits; });
+  };
+  // "claude-opus-5.5" → "Claude Opus 5.5", "gpt-6.1-sol" → "GPT-6.1 Sol" (the CLI's display name wins).
+  C.modelName = function (id, name) {
+    if (name) return name;
+    if (!id || id === 'unknown') return 'Unknown model';
+    var p = id.split('-'), cap = function (w) { return w.charAt(0).toUpperCase() + w.slice(1); };
+    if (p[0] === 'gpt' && p.length > 1) return 'GPT-' + p[1] + (p.length > 2 ? ' ' + p.slice(2).map(cap).join(' ') : '');
+    return p.map(cap).join(' ');
+  };
+
   var c = read();
   if (c) { C.data = c.data; C.updated = c.at; }
 
@@ -84,10 +111,14 @@
       usage: { plan: 'enterprise', at: new Date(now).toISOString(), resetAt: new Date(App.addDays(App.dayStart(App.now()), 18)).toISOString(), used: 8783, entitlement: 1e7, percentRemaining: 99.9 },
       sources: { mac: new Date(now - 4 * 60e3).toISOString(), ha: new Date(now - 30 * 60e3).toISOString() },
       sessions: rows.map(function (r) {
-        var at = now - r[3] * H, hours = {};
-        hours[hr - Math.round(r[3])] = r[5];
+        var at = now - r[3] * H, hours = {}, h = hr - Math.round(r[3]), models = {};
+        hours[h] = r[5];
+        var main = r[1] === 'ha' ? 'gpt-6.1-sol' : 'claude-opus-5.5', mh = {}, sh = {};
+        mh[h] = Math.round(r[5] * 0.85); sh[h] = r[5] - mh[h];
+        models[main] = { name: '', credits: mh[h], tokens: 0, calls: r[4] * 6, hours: mh };
+        if (sh[h]) models['claude-haiku-5.5'] = { name: '', credits: sh[h], tokens: 0, calls: r[4] * 3, hours: sh };
         return { id: r[0], origin: r[1], kind: r[1] === 'ha' ? 'automation' : 'development', title: r[2], preview: r[2], cwd: r[1] === 'ha' ? '' : '~/code/photo-frame-dashboard',
-          model: 'claude-opus-5.5', status: r[6], startedAt: new Date(at - 40 * 60e3).toISOString(), updatedAt: new Date(at).toISOString(),
+          model: r[1] === 'ha' ? 'gpt-6.1-sol' : 'claude-opus-5.5', models: models, status: r[6], startedAt: new Date(at - 40 * 60e3).toISOString(), updatedAt: new Date(at).toISOString(),
           prompts: r[4], replies: r[4] * 3, tools: r[4] * 9, errors: 0, credits: r[5], tokens: r[5] * 9000, hours: hours, transcript: r[1] !== 'cloud' };
       })
     };

@@ -119,7 +119,6 @@
 
 /* ---------------------------------------------------------------- Agents */
 [data-orient="portrait"] .cp-usage { grid-template-columns: 1fr 1fr; grid-template-rows: 148px 150px; height: auto; }
-[data-orient="portrait"] .cp-week { grid-column: span 2; }
 [data-orient="portrait"] .cp-body { grid-template-columns: 1fr; }
 [data-orient="portrait"] .cp-detail { display: none; }
 [data-orient="portrait"] .cp-body.is-detail .cp-side { display: none; }

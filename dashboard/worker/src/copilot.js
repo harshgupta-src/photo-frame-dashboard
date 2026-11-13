@@ -21,20 +21,35 @@ const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
 const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0 ? v : 0);
 const iso = (v) => (typeof v === 'string' && !isNaN(Date.parse(v)) ? new Date(Date.parse(v)).toISOString() : null);
 
+function cleanHours(x) {
+  const hours = {};
+  if (x && typeof x === 'object') {
+    for (const [h, c] of Object.entries(x)) if (/^\d{6,7}$/.test(h) && num(c)) hours[h] = Math.round(c * 100) / 100;
+  }
+  return hours;
+}
+
+function cleanModels(x) {
+  const models = {};
+  if (!x || typeof x !== 'object') return models;
+  for (const [id, m] of Object.entries(x).slice(0, 20)) {
+    if (!m || typeof m !== 'object' || !/^[\w.:/-]{1,60}$/.test(id)) continue;
+    models[id] = { name: str(m.name, 60), credits: Math.round(num(m.credits) * 100) / 100, tokens: num(m.tokens), calls: num(m.calls), hours: cleanHours(m.hours) };
+  }
+  return models;
+}
+
 export function cleanSummary(x, source) {
   if (!x || typeof x !== 'object' || !ID.test(x.id || '')) return null;
   const origin = ORIGINS[source].includes(x.origin) ? x.origin : source;
-  const hours = {};
-  if (x.hours && typeof x.hours === 'object') {
-    for (const [h, c] of Object.entries(x.hours)) if (/^\d{6,7}$/.test(h) && num(c)) hours[h] = Math.round(c * 100) / 100;
-  }
+  const hours = cleanHours(x.hours);
   return {
     id: x.id, origin, kind: kindOf(origin),
     title: str(x.title, 160) || 'Untitled session', preview: str(x.preview, 200), cwd: str(x.cwd, 200),
     model: str(x.model, 60), status: str(x.status, 30),
     startedAt: iso(x.startedAt), updatedAt: iso(x.updatedAt) || iso(x.startedAt),
     prompts: num(x.prompts), replies: num(x.replies), tools: num(x.tools), errors: num(x.errors),
-    credits: Math.round(num(x.credits) * 100) / 100, tokens: num(x.tokens), hours,
+    credits: Math.round(num(x.credits) * 100) / 100, tokens: num(x.tokens), hours, models: cleanModels(x.models),
     transcript: x.transcript !== false && origin !== 'cloud',
   };
 }

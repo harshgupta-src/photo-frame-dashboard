@@ -58,11 +58,12 @@ function answers(response) {
 
 // events: parsed event objects in file order. meta: {id, title, updatedAt}.
 // Returns {summary, transcript}. Credits are AI credits (copilotUsage.totalNanoAiu / 1e9);
-// summary.hours maps a UTC hour (ms since epoch / 3600000) to the credits used in it.
+// summary.hours maps a UTC hour (ms since epoch / 3600000) to the credits used in it, and
+// summary.models maps each model that served a request to {name, credits, tokens, calls, hours}.
 export function compact(events, meta = {}) {
   const s = {
     id: meta.id, title: meta.title || '', preview: '', startedAt: null, updatedAt: null, model: null, cwd: null,
-    prompts: 0, replies: 0, tools: 0, errors: 0, credits: 0, tokens: 0, hours: {},
+    prompts: 0, replies: 0, tools: 0, errors: 0, credits: 0, tokens: 0, hours: {}, models: {},
   };
   const items = [], open = new Map();
   for (const e of events) {
@@ -122,10 +123,16 @@ export function compact(events, meta = {}) {
         const u = d.usage || {};
         const c = ((u.copilotUsage && u.copilotUsage.totalNanoAiu) || 0) / 1e9;
         s.credits += c;
-        s.tokens += (u.inputTokens || 0) + (u.outputTokens || 0);
+        const tk = (u.inputTokens || 0) + (u.outputTokens || 0);
+        s.tokens += tk;
+        const id = typeof u.model === 'string' && u.model ? u.model.slice(0, 60) : 'unknown';
+        const m = s.models[id] || (s.models[id] = { name: '', credits: 0, tokens: 0, calls: 0, hours: {} });
+        if (u.modelDisplayName && !m.name) m.name = String(u.modelDisplayName).slice(0, 60);
+        m.credits += c; m.tokens += tk; m.calls++;
         if (c && at) {
           const h = Math.floor(Date.parse(at) / 3600e3);
           s.hours[h] = (s.hours[h] || 0) + c;
+          m.hours[h] = (m.hours[h] || 0) + c;
         }
         break;
       }
@@ -142,6 +149,10 @@ export function compact(events, meta = {}) {
   if (!s.title) s.title = firstSentence(s.preview) || 'Untitled session';
   s.credits = Math.round(s.credits * 100) / 100;
   for (const h of Object.keys(s.hours)) s.hours[h] = Math.round(s.hours[h] * 100) / 100;
+  for (const m of Object.values(s.models)) {
+    m.credits = Math.round(m.credits * 100) / 100;
+    for (const h of Object.keys(m.hours)) m.hours[h] = Math.round(m.hours[h] * 100) / 100;
+  }
   return { summary: s, transcript: { v: 1, id: meta.id, items } };
 }
 

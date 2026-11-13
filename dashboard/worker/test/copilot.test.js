@@ -16,8 +16,8 @@ test('compact keeps the main conversation, answers to forms and clipped tool res
     ev('assistant.message', { content: 'sub-agent chatter', parentToolCallId: 't' }),
     ev('tool.execution_start', { toolCallId: 'b', toolName: 'view', parentToolCallId: 't', arguments: { path: '/x' } }),
     ev('human_response.recorded', { response: { message: 'Which?', content: { choice: 'A' } } }),
-    ev('session.usage_record', { usage: { inputTokens: 100, outputTokens: 20, copilotUsage: { totalNanoAiu: 2.5e9 } } }, '2026-11-12T16:10:00.000Z'),
-    ev('session.usage_record', { usage: { inputTokens: 1, outputTokens: 1, copilotUsage: { totalNanoAiu: 1e9 } }, parentToolCallId: 't' }, '2026-11-12T16:20:00.000Z'),
+    ev('session.usage_record', { usage: { model: 'claude-opus-5.5', modelDisplayName: 'Claude Opus 5.5', inputTokens: 100, outputTokens: 20, copilotUsage: { totalNanoAiu: 2.5e9 } } }, '2026-11-12T16:10:00.000Z'),
+    ev('session.usage_record', { usage: { model: 'claude-haiku-5.5', inputTokens: 1, outputTokens: 1, copilotUsage: { totalNanoAiu: 1e9 } }, parentToolCallId: 't' }, '2026-11-12T16:20:00.000Z'),
   ], { id: 's1' });
   assert.deepEqual(transcript.items.map((i) => i.k), ['u', 'a', 't', 'u']);
   assert.equal(summary.title, 'Add sessions to the frame.');
@@ -27,7 +27,12 @@ test('compact keeps the main conversation, answers to forms and clipped tool res
   assert.equal(summary.model, 'claude-opus-5.5');
   assert.equal(summary.startedAt, '2026-11-12T14:59:00.000Z');
   assert.equal(summary.credits, 3.5, 'sub-agent usage still counts');
-  assert.deepEqual(summary.hours, { [Math.floor(Date.parse('2026-11-12T16:00:00Z') / 3600e3)]: 3.5 });
+  const hr = Math.floor(Date.parse('2026-11-12T16:00:00Z') / 3600e3);
+  assert.deepEqual(summary.hours, { [hr]: 3.5 });
+  assert.deepEqual(summary.models, {
+    'claude-opus-5.5': { name: 'Claude Opus 5.5', credits: 2.5, tokens: 120, calls: 1, hours: { [hr]: 2.5 } },
+    'claude-haiku-5.5': { name: '', credits: 1, tokens: 2, calls: 1, hours: { [hr]: 1 } },
+  });
   const tool = transcript.items[2];
   assert.equal(tool.label, 'List files');
   assert.equal(tool.detail, 'ls');
@@ -61,7 +66,7 @@ test('push stores each source separately; HA sessions are automations, cloud one
   const usage = { copilot_plan: 'enterprise', quota_reset_date_utc: '2026-12-01T00:00:00.000Z', quota_snapshots: { premium_interactions: { timestamp_utc: '2026-11-12T22:00:00Z', credits_used: 8783, entitlement: 1e7, percent_remaining: 99.9 } } };
   let r = await post(env, {
     source: 'mac', usage,
-    sessions: [{ id: 'm1', origin: 'mac', title: 'Dev', updatedAt: '2026-11-12T10:00:00Z' }, { id: 'c1', origin: 'cloud', title: 'Elsewhere', updatedAt: '2026-11-12T09:00:00Z' }],
+    sessions: [{ id: 'm1', origin: 'mac', title: 'Dev', updatedAt: '2026-11-12T10:00:00Z', models: { 'gpt-6-sol': { credits: 1.234, calls: 2, hours: { 499000: 1.234, x: 1 } }, 'bad key!': { credits: 1 } } }, { id: 'c1', origin: 'cloud', title: 'Elsewhere', updatedAt: '2026-11-12T09:00:00Z' }],
     transcripts: { m1: { items: [{ k: 'u', text: 'hi' }] }, c1: { items: [] }, zz: { items: [] } },
   });
   assert.deepEqual(r.body, { ok: true, sessions: 2, transcripts: 1, skipped: ['c1', 'zz'] });
@@ -70,6 +75,7 @@ test('push stores each source separately; HA sessions are automations, cloud one
   assert.deepEqual(r.body.sessions.map((s) => [s.id, s.origin, s.kind, s.transcript]), [
     ['h1', 'ha', 'automation', true], ['m1', 'mac', 'development', true], ['c1', 'cloud', 'development', false],
   ]);
+  assert.deepEqual(r.body.sessions[1].models, { 'gpt-6-sol': { name: '', credits: 1.23, tokens: 0, calls: 2, hours: { 499000: 1.23 } } });
   assert.equal(r.body.usage.used, 8783, 'an older snapshot does not replace a newer one');
   assert.equal((await call(env, '/copilot/session?id=m1')).body.items[0].text, 'hi');
   assert.equal((await call(env, '/copilot/session?id=c1')).status, 404);

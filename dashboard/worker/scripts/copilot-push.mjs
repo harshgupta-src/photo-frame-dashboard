@@ -90,13 +90,19 @@ function cloudSessions(local, cache) {
     if (c.sessions.some((s) => known.has(s.id))) continue;
     const credits = Math.round(c.sessions.reduce((a, s) => a + s.credits, 0) * 100) / 100;
     const hour = Math.floor(Date.parse(t.updated_at) / 3600e3);
+    const models = {};
+    for (const s of c.sessions) {
+      const id = s.model || 'unknown', m = models[id] || (models[id] = { name: '', credits: 0, tokens: 0, calls: 0, hours: {} });
+      m.credits = Math.round((m.credits + s.credits) * 100) / 100;
+      if (m.credits) m.hours = { [hour]: m.credits };
+    }
     const repo = t.repository && (t.repository.full_name || t.repository.name);
     out.push({
       id: (c.sessions[0] && c.sessions[0].id) || t.id, origin: 'cloud', transcript: false,
       title: t.name || 'Untitled session', preview: (c.sessions[0] && c.sessions[0].prompt) || '', cwd: repo || '',
       model: (c.sessions.find((s) => s.model) || {}).model || '', status: t.state || '',
       startedAt: t.created_at, updatedAt: t.updated_at, prompts: 0, replies: 0, tools: 0, errors: 0,
-      credits, tokens: 0, hours: credits ? { [hour]: credits } : {},
+      credits, tokens: 0, hours: credits ? { [hour]: credits } : {}, models,
     });
   }
   return { sessions: out, cache: next };

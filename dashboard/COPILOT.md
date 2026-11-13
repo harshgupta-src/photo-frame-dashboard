@@ -1,7 +1,8 @@
 # Copilot on the Agents tab
 
 The **Agents** tab shows GitHub Copilot activity on the account: the plan quota, today's and this
-month's credits, a 7-day chart, and every session. Tap a session to read the whole chat. Sessions are
+month's credits, credits per model this month, a 7-day chart, and every session (with the models it
+used). Tap a session to read the whole chat. Sessions are
 tagged **Development** (the Mac's Copilot CLI and GitHub cloud sessions) or **Automation** (the Home
 Assistant Copilot Agent add-on), and the list filters by tag.
 
@@ -20,11 +21,14 @@ HA add-on: /data/agent/copilot/session-state ─┴─POST /copilot/push──�
 must stay in step) compacts each `events.jsonl` into:
 
 - a **summary**: id, title, preview, cwd, model, status, start/update times, counts of prompts,
-  replies, tool calls and errors, credits (`totalNanoAiu / 1e9`), tokens and credits per hour;
+  replies, tool calls and errors, credits (`totalNanoAiu / 1e9`), tokens and credits per hour, and
+  `models`: for each model that served a request (sub-agents included), its credits, tokens, calls
+  and credits per hour;
 - a **transcript**: your messages, Copilot's replies, tool calls (name, short argument, short
   result) and errors. Long text is clipped.
 
-Cloud-only sessions (from `gh api /agents/tasks`, no local events) have a summary but no transcript.
+Cloud-only sessions (from `gh api /agents/tasks`, no local events) have a summary but no transcript,
+and their models come from the task's sessions (credits only, no call counts).
 The plan quota comes from `gh api /copilot_internal/user`. Its "used" figure is GitHub's and doesn't
 always match the summed session credits, so the tab shows both.
 
