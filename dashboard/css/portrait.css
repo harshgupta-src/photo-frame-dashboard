@@ -88,12 +88,6 @@
 [data-orient="portrait"] .wk-free { grid-column: span 3; }
 [data-orient="portrait"] .wk-more { min-height: 52px; }
 
-/* ---------------------------------------------------------------- Chores */
-[data-orient="portrait"] .t-head { flex-wrap: wrap; row-gap: 14px; }
-[data-orient="portrait"] .t-head .seg { order: 10; width: 100%; }
-[data-orient="portrait"] .t-head .seg button { flex: 1; }
-[data-orient="portrait"] .ch-lanes { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)) !important; grid-auto-rows: minmax(0, 1fr); }
-
 /* ---------------------------------------------------------------- Shopping: list on top, add + usuals below */
 [data-orient="portrait"] .shop { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) 400px; gap: 16px; }
 [data-orient="portrait"] .s-head { flex-wrap: wrap; row-gap: 10px; }
@@ -124,8 +118,15 @@
 [data-orient="portrait"] .scene { gap: 6px; padding: 0 6px; font-size: 15px; letter-spacing: .03em; min-width: 0; }
 
 /* ---------------------------------------------------------------- Agents */
-[data-orient="portrait"] .ag-grid { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
-[data-orient="portrait"] .ag-plan { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+[data-orient="portrait"] .cp-usage { grid-template-columns: 1fr 1fr; grid-template-rows: 148px 150px; height: auto; }
+[data-orient="portrait"] .cp-week { grid-column: span 2; }
+[data-orient="portrait"] .cp-body { grid-template-columns: 1fr; }
+[data-orient="portrait"] .cp-detail { display: none; }
+[data-orient="portrait"] .cp-body.is-detail .cp-side { display: none; }
+[data-orient="portrait"] .cp-body.is-detail .cp-detail { display: flex; }
+[data-orient="portrait"] .cp-back { display: grid; }
+[data-orient="portrait"] .cp-seg { align-self: stretch; }
+[data-orient="portrait"] .cp-seg button { flex: 1; }
 
 /* ---------------------------------------------------------------- Takeovers */
 [data-orient="portrait"] .tk-cam::after { background: linear-gradient(0deg, rgba(0, 0, 0, .9) 0%, rgba(0, 0, 0, .4) 55%, rgba(0, 0, 0, 0) 100%); }

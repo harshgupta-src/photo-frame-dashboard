@@ -72,7 +72,8 @@ launcher, Android settings, and reloading. On frames without system navigation, 
 **Back** and **Dashboard** buttons help; see the [kiosk guide](dashboard/kiosk/README.md). The Today
 screen's dog walk tile is also a walk timer that logs walks to Lifelog and the family calendar, and
 the dog's own tab charts meals, walks, pee/poop and weight, plan vs what happened; see
-[WALKS.md](dashboard/WALKS.md).
+[WALKS.md](dashboard/WALKS.md). The Agents tab shows GitHub Copilot sessions and usage, pushed by
+the Mac and a Home Assistant add-on; see [COPILOT.md](dashboard/COPILOT.md).
 
 ## For agents: start here
 

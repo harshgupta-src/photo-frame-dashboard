@@ -13,6 +13,8 @@
 //   GET  /dog        the dog tab's meals, weigh-ins and walk distances from Lifelog (dogapi.js)
 //   /agent/calendars, /agent/events*  calendar read/write for household agents via the Home Brain
 //        gateway (agentcal.js; Bearer AGENT_CAL_KEY, calendars in secret AGENT_CALENDARS)
+//   /copilot, /copilot/session, POST /copilot/push  Copilot sessions and usage for the Agents tab,
+//        pushed by the Mac and the HA Copilot Agent add-on (copilot.js, ../../COPILOT.md; Bearer COPILOT_KEY)
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
 //        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
 // Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM, HA_REMINDERS_WEBHOOK_URL,
@@ -22,12 +24,14 @@
 // Optional: WALK_CALENDAR (calendar for walk events, or "none"; default: the CALENDARS entry with the
 // most people), WALK_PLAN_CALENDARS (planned walks: {"id+id": "Calendar name"}; default: the CALENDARS
 // entry with exactly those walkers), HA_WALK_WEBHOOK_URL (pinged on walk changes), WALK_KEY (default:
-// derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, DOG_BIRTHDAY (YYYY-MM-DD, for the food check in food.js), AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS.
+// derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, DOG_BIRTHDAY (YYYY-MM-DD, for the food check in food.js), AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS,
+// COPILOT_KEY (default: derived from PUSH_TOKEN).
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
 import { parseReminders, forwardToHA } from './reminders.js';
-import { walkAccess, walkRoute } from './walkapi.js';
+import { walkAccess, walkRoute, walkKey } from './walkapi.js';
+import { copilotRoute } from './copilot.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
 import { dogRoute, mapTile } from './dogapi.js';
 
@@ -180,6 +184,15 @@ export default {
     if (url.pathname === '/dog' || url.pathname.startsWith('/dog/food')) {
       const r = await dogRoute(req, url, env, await walkAccess(req, env, same));
       return json(r.body, r.status);
+    }
+    if (url.pathname === '/copilot' || url.pathname.startsWith('/copilot/')) {
+      const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+      try {
+        const r = await copilotRoute(req, url, env, { read: canRead(req, url, env), push: same(bearer, await walkKey(env, 'COPILOT_KEY')) });
+        return json(r.body, r.status);
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
     }
     if (url.pathname.startsWith('/agent/')) {
       const r = await agentCalRoute(req, url, env, ctx, await agentCalAccess(req, env, same));
