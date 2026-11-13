@@ -8,6 +8,11 @@
 # writes each planned walk to its walkers' calendar, moves or removes events when the plan changes,
 # and removes a walk's event once it is logged. The frame shows the next one. 15 min before each
 # planned walk, its walkers get a heads-up on their phones (sensor.maya_walk_plan caches the plan).
+#
+# Meals: the same agent call also places Maya's meals still to come that day (GET /meals: the meal events
+# on the calendars, with their usual times). It keeps each at its usual time unless nobody who could feed
+# her is free, and picks who feeds from availability; PUT /meals/plan/<date> moves the events and puts
+# them in the feeder's calendar. Once a meal is fed, maya_meal.yaml has the Worker move it to Life Log.
 
 rest_command:
   frame_walk_history:
@@ -30,6 +35,36 @@ rest_command:
     content_type: application/json
     payload: "{{ body | tojson }}"
     timeout: 30
+  # Maya's meals (worker/src/meals.js): the day's meal events, moving/reassigning them, and moving a fed
+  # meal to the Life Log calendar (and back on undo). maya_meal.yaml calls the last two.
+  frame_meals_get:
+    url: "https://frame-data.<your-subdomain>.workers.dev/meals?date={{ date }}"
+    method: GET
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 30
+  frame_meals_plan_put:
+    url: "https://frame-data.<your-subdomain>.workers.dev/meals/plan/{{ date }}"
+    method: PUT
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 60
+  frame_meal_log:
+    url: "https://frame-data.<your-subdomain>.workers.dev/meals/log"
+    method: POST
+    headers:
+      Authorization: !secret frame_walk_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 60
+  frame_meal_unlog:
+    url: "https://frame-data.<your-subdomain>.workers.dev/meals/log/{{ id }}"
+    method: DELETE
+    headers:
+      Authorization: !secret frame_walk_auth
+    timeout: 60
 
 template:
   # Today's plan, cached for the 15-min heads-up. Refreshed every 10 min, when a walk is logged and
@@ -71,7 +106,8 @@ template:
               {{ this.attributes.walks | default([]) }}
             {%- endif -%}
 
-  # Everyone's calendar events from now to the end of tomorrow (except the planner's own 🐕 walk events), for
+  # Everyone's calendar events from now to the end of tomorrow (except Maya's own: the planner's 🐕 walks and
+  # her meals, which the planner moves itself), for
   # maya_walk_plan_on_calendar_change. Polled every 5 min, so it sees events added anywhere (Apple Calendar,
   # HA, agents); refreshed sooner after HA itself writes a calendar. On an error it keeps the last list.
   - triggers:
@@ -105,7 +141,7 @@ template:
             {%- else -%}
               {%- set ns = namespace(out=[]) -%}
               {%- for ent, v in cal.items() -%}
-                {%- for e in v.events if not (e.summary | default('')).startswith('🐕') -%}
+                {%- for e in v.events if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
                   {%- set ns.out = ns.out + [{'c': ent.split('.')[1], 's': e.start, 'e': e.end, 't': (e.summary | default(''))[:80]}] -%}
                 {%- endfor -%}
               {%- endfor -%}
@@ -171,6 +207,14 @@ script:
       - action: shell_command.maya_walk_note
         response_variable: note
         continue_on_error: true
+      - action: rest_command.frame_meals_get
+        data:
+          date: "{{ day }}"
+        response_variable: mealres
+        continue_on_error: true
+      - action: rest_command.lifelog_maya_meals
+        response_variable: fedres
+        continue_on_error: true
       - variables:
           walks: >-
             {{ (hist.content.walks if hist is defined and hist.status == 200 and hist.content is mapping and hist.content.walks is defined else [])
@@ -191,6 +235,27 @@ script:
               {%- if x.status == 'planned' and as_timestamp(x.start) >= from_ts -%}
                 {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ (' (' ~ x.note ~ ')' if x.note else '')] -%}
               {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          # Maya's meals that day: fed ones (Lifelog) and the planned ones the agent may move or reassign
+          # (not fed, and at least 10 min away).
+          fed: >-
+            {{ (fedres.content if fedres is defined and fedres.status == 200 and fedres.content is list else [])
+               | selectattr('started_at') | list }}
+          fed_ids: "{{ fed | map(attribute='id') | list }}"
+          meals: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for m in (mealres.content.meals if mealres is defined and mealres.status == 200 and mealres.content is mapping and mealres.content.meals is defined else []) -%}
+              {%- if m.id not in fed_ids and as_timestamp(m.start) >= [start_ts, now().timestamp() + 600] | max -%}
+                {%- set ns.out = ns.out + [{'kind': m.kind, 'start': as_local(as_datetime(m.start)).strftime('%H:%M'), 'usual': m.usual,
+                     'people': m.people, 'cups': m.cups, 'title': m.title}] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          meals_fed: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for e in fed | sort(attribute='started_at') if (e.id | default('')).startswith('maya_meal-' ~ day) -%}
+              {%- set ns.out = ns.out + ['- ' ~ (e.data.meal | default('meal')) ~ ' fed ' ~ as_local(as_datetime(e.started_at)).strftime('%H:%M') ~ ' by ' ~ (e.person or '?')] -%}
             {%- endfor -%}
             {{ ns.out }}
           # Pee/poop are logged at walk start + 1 min / + 3 min; gaps over 10 h (overnight) don't count for the daytime stats.
@@ -227,7 +292,7 @@ script:
           prompt: |-
             {%- set lines = namespace(cal=[], wx=[]) -%}
             {%- for ent, label in calendars.items() -%}
-              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') -%}
+              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
                 {%- set lines.cal = lines.cal + ['- ' ~ label ~ ': ' ~ e.start ~ ' → ' ~ e.end ~ ' · ' ~ e.summary ~ (' @ ' ~ e.location if e.location else '')] -%}
               {%- endfor -%}
             {%- endfor -%}
@@ -235,7 +300,7 @@ script:
               {%- set lines.wx = lines.wx + ['- ' ~ as_local(as_datetime(f.datetime)).strftime('%H:%M') ~ ' ' ~ f.condition ~ ' ' ~ f.temperature ~ '°'
                   ~ (' feels ' ~ f.apparent_temperature ~ '°' if f.apparent_temperature is defined else '') ~ (' rain ' ~ f.precipitation_probability ~ '%' if f.precipitation_probability is defined else '')] -%}
             {%- endfor -%}
-            You plan the dog walks for {{ day }} ({{ strptime(day, '%Y-%m-%d').strftime('%A') }}) for Maya, Harsh and Ambuja's dog. Do not use any tools; everything you need is below.
+            You plan the dog walks{{ ' and meals' if meals else '' }} for {{ day }} ({{ strptime(day, '%Y-%m-%d').strftime('%A') }}) for Maya, Harsh and Ambuja's dog. Do not use any tools; everything you need is below.
             {% if rest %}
             It is now {{ now().strftime('%H:%M') }} and {{ reason if reason is defined and reason else 'a walk was just logged or edited' }}. Replan only the REST of the day: walks starting at or after {{ from_ts | timestamp_custom('%H:%M') }}. These planned walks are already done or under way and stay as they are:
             {%- for k in kept %}
@@ -253,9 +318,24 @@ script:
             - Keep her usual rhythm from the recent walks (times and lengths), avoid bad weather (heavy rain, extreme heat or cold) when a nearby slot works, and include a last walk before bed.
             - Prefer both walkers together when both are free and it suits the day; otherwise share the walks fairly.
             - Every walk lasts 5–180 minutes and starts on {{ day }} (local time, 24h){{ ' at or after ' ~ from_ts | timestamp_custom('%H:%M') if rest else '' }}.
+            {%- if meals %}
+
+            Maya's meals still to give {{ 'today' if day == now().date().isoformat() else 'that day' }} (kind · current time · usual time · who feeds now · amount):
+            {%- for m in meals %}
+            - {{ m.kind }} · {{ m.start }} · usual {{ m.usual }} · {{ m.people | join(' & ') }} · {{ m.cups ~ ' cup' if m.cups is not none else '?' }}{% endfor %}
+            {%- if meals_fed %}
+            Already fed today:
+            {{ meals_fed | join('\n') }}
+            {%- endif %}
+            Plan these meals too:
+            - Keep each meal at its usual time. Move one only when nobody who could feed her is free then, and then as little as possible (the nearest free slot, ideally within 30 min and never more than 90 min from the usual time), keeping at least ~3h between main meals (breakfast, lunch, dinner) and the order of the day.
+            - Decide who feeds each meal from availability (same rules as the walks: a calendar event or travel blocks that person). Keep the current feeder(s) when they're free; if they aren't, give it to whoever is free. Use both only when it's on the shared calendar now and both are free.
+            - The walk snack goes with the morning walk; fit walks to her meals (she often needs to poop some time after eating).
+            - List every meal above in "meals", unchanged ones too, with the reason in "note" when one moves or changes hands.
+            {%- endif %}
 
             Reply with ONLY this JSON, no prose or code fences{{ ' (only the walks still ahead; an empty list if none are needed)' if rest else '' }}:
-            {"walks": [{"start": "HH:MM", "durationMin": 30, "walkers": ["harsh"], "note": "short reason, e.g. pee due ~3h after the 13:05 walk"}], "notes": "one line: Maya's rhythm as you understand it (pee every ~Xh, holds up to ~Yh, poops ~Z after meals) and the day's plan"}
+            {"walks": [{"start": "HH:MM", "durationMin": 30, "walkers": ["harsh"], "note": "short reason, e.g. pee due ~3h after the 13:05 walk"}]{{ ', "meals": [{"kind": "lunch", "start": "HH:MM", "people": ["harsh"], "note": "only if moved or reassigned: why"}]' if meals else '' }}, "notes": "one line: Maya's rhythm as you understand it (pee every ~Xh, holds up to ~Yh, poops ~Z after meals) and the day's plan"}
 
             Maya now: last pee {{ potty.last_pee }}; last poop {{ potty.last_poop }}.
             Gaps between pees: {{ potty.pee_gap }}. Gaps between poops: {{ potty.poop_gap }}.
@@ -320,12 +400,36 @@ script:
                 source: "{{ 'ha-copilot-replan' if rest else 'ha-copilot' }}"
             response_variable: put
             continue_on_error: true
+          # Meals: only the ones offered to the agent (not fed, not about to happen).
+          - variables:
+              meal_kinds: "{{ meals | map(attribute='kind') | list }}"
+              meal_plan: >-
+                {%- set ns = namespace(out=[]) -%}
+                {%- for m in (plan.meals if plan.meals is defined and plan.meals is list else []) if m is mapping and (m.kind | default('') | lower | replace(' ', '-')) in meal_kinds -%}
+                  {%- set ns.out = ns.out + [{'kind': m.kind | lower | replace(' ', '-'), 'start': m.start | default('') | string,
+                       'people': ([m.people] if m.people is string else m.people | default([])), 'note': m.note | default(none)}] -%}
+                {%- endfor -%}
+                {{ ns.out }}
+          - if:
+              - condition: template
+                value_template: "{{ meal_plan | count > 0 }}"
+            then:
+              - action: rest_command.frame_meals_plan_put
+                data:
+                  date: "{{ day }}"
+                  body:
+                    meals: "{{ meal_plan }}"
+                    reason: "{{ reason if reason is defined and reason else ('replan' if rest else 'daily plan') }}"
+                response_variable: mput
+                continue_on_error: true
+              - event: maya_meal_refresh_plan
       - variables:
           error: >-
             {%- if done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
             {%- elif not ok -%}no plan JSON in the agent's reply
             {%- elif put is not defined -%}could not reach the frame Worker
             {%- elif put.status != 200 -%}Worker said {{ put.status }}: {{ put.content.error if put.content is mapping and put.content.error is defined else put.content }}
+            {%- elif mput is defined and mput.status != 200 -%}meals: Worker said {{ mput.status }}: {{ mput.content.error if mput.content is mapping and mput.content.error is defined else mput.content }}
             {%- endif -%}
       - if:
           - condition: template
@@ -348,7 +452,8 @@ script:
             data:
               name: Maya walk plan
               message: >-
-                {{ day }}{{ ' (replan)' if rest else '' }}: {% for w in fresh %}{{ w.start }} {{ w.durationMin }}m {{ w.walkers | join('+') }}{{ ', ' if not loop.last }}{% endfor %}{{ 'no more walks' if not fresh }} · {{ plan.notes | default('') }}
+                {{ day }}{{ ' (replan)' if rest else '' }}: {% for w in fresh %}{{ w.start }} {{ w.durationMin }}m {{ w.walkers | join('+') }}{{ ', ' if not loop.last }}{% endfor %}{{ 'no more walks' if not fresh }}
+                {%- if mput is defined and mput.content is mapping %} · meals: {% for c in mput.content.changed | default([]) %}{{ c.kind }} → {{ as_local(as_datetime(c.to)).strftime('%H:%M') }} {{ c.calendar }}{{ ', ' if not loop.last }}{% else %}unchanged{% endfor %}{% endif %} · {{ plan.notes | default('') }}
 
 automation:
   - id: maya_walk_plan_daily

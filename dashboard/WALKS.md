@@ -129,6 +129,10 @@ the home time zone (sent by the frame).
 | `GET /walks/plan?date=` | the day's plan (default today) with each walk's status |
 | `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], note?, id?}], notes?, source?}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
+| `GET /meals?date=` | the day's planned meal events (one per kind): `{kind, start, end, usual, calendar, people, cups, title, uid}` |
+| `PUT /meals/plan/:date` | move or reassign meals `{meals: [{kind, start: "HH:MM", people: ["<id>"], note?}], reason?}` → `{changed, unchanged, skipped}` |
+| `POST /meals/log` | a meal was given `{id, person, at, planned_at?, delta_min?, cups?, purina_pct?, fortiflora?, ate?, source?}`: writes it to the Life Log calendar and removes the planned event (re-POST merges, e.g. `{id, ate: "some"}`) |
+| `DELETE /meals/log/:id` | undo: delete the Life Log entry and restore the planned event |
 | `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]]}, the newest walk's path (≤ 300 points), and `food` (below) |
 | `GET /dog/food` | the food advice `{advice, history}` |
 | `POST /dog/food/facts` | `{plan: [{date, meals, cups, mixed}]}` → the facts the decision uses |
@@ -214,6 +218,26 @@ the dog's vault note. A replan keeps the walks already done or under way and rep
 agent's one-line reading of the rhythm is the plan's `notes`. 15 minutes before each planned walk that
 hasn't started, HA sends its walkers a time-sensitive "get ready" notification (`sensor.maya_walk_plan`
 caches today's plan; refreshed every 10 min, after a walk and after each plan).
+
+### Meals
+
+The same plan run also reassesses the dog's meals that aren't fed yet and are at least 10 minutes
+away. The agent keeps each meal at its usual time and moves it only when nobody who could feed it is
+free then: to the nearest free time (ideally within 30 minutes, never more than 90 from the usual
+time), keeping about 3 hours between main meals. It reassigns the meal to whoever is free, and keeps
+the current feeder when they are. HA sends the agent's `meals` to `PUT /meals/plan/<date>`. The Worker
+moves the event, and puts it in the new feeder's calendar (`WALK_PLAN_CALENDARS`). It records the
+usual time (`X-MAYA-USUAL`) and adds a "⏰ Moved from the usual 12:30: reason" line, which is dropped
+when the meal goes back to its usual time. A moved occurrence of a recurring meal series is split
+off: the series gets an `EXDATE` and the occurrence becomes a standalone event. The calendar watcher
+ignores events titled "Maya …" so the planner's own moves don't trigger replans. Edits people make to
+meal events are picked up by the next 04:30 plan.
+
+When a meal is logged (NFC tag or notification, `maya_meal.yaml`), HA POSTs `/meals/log`. The Worker
+writes **Maya lunch 🍽️ 1 cup — Ambuja** to the Life Log calendar, with who fed her, when, how late,
+the food, whether she ate it all and the calendar it was planned on. It then removes the planned
+event (or adds an `EXDATE` to the series). Undo (`DELETE /meals/log/<id>`) puts the planned event
+back. The meal sensor reads the Life Log too, so a second tap is still caught as a double feed.
 
 ## Home Assistant
 
