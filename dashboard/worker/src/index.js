@@ -34,6 +34,7 @@ import { walkAccess, walkRoute, walkKey } from './walkapi.js';
 import { copilotRoute } from './copilot.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
 import { dogRoute, mapTile } from './dogapi.js';
+import { mealRoute } from './meals.js';
 
 const DAY = 864e5;
 const EVENTS_TTL = 300;
@@ -177,6 +178,14 @@ export default {
         const r = await walkRoute(req, url, env, ctx, await walkAccess(req, env, same));
         if (r instanceof Response) { for (const [k, v] of Object.entries(CORS)) r.headers.set(k, v); return r; }
         return r.body === null ? new Response(null, { status: r.status, headers: CORS }) : json(r.body, r.status);
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+    if (url.pathname === '/meals' || url.pathname.startsWith('/meals/')) {
+      try {
+        const r = await mealRoute(req, url, env, ctx, await walkAccess(req, env, same));
+        return json(r.body, r.status);
       } catch (e) {
         return json({ error: e.message }, 500);
       }

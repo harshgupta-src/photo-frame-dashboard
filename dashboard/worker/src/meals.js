@@ -68,7 +68,7 @@ export function mealCalendars(env) {
   return [...out].map(([name, people]) => ({ name, people }));
 }
 
-const icsProp = (ics, name) => { const m = new RegExp('^' + name + '[;:](?:[^\\r\\n]*:)?([^\\r\\n]*)', 'mi').exec(ics); return m ? m[1].trim() : null; };
+const icsProp = (ics, name) => { const m = new RegExp('^' + name + '(?:;[^:\\r\\n]*)?:([^\\r\\n]*)', 'mi').exec(ics); return m ? m[1].trim() : null; };
 const uidOf = (ics) => icsProp(ics, 'UID');
 
 // A description with our planner line (MARK…) replaced by line (or dropped).
@@ -92,9 +92,6 @@ export function moveICS(ics, { start, end, usual, desc }, now) {
   v.updatePropertyWithValue('sequence', (parseInt(v.getFirstPropertyValue('sequence'), 10) || 0) + 1);
   return root.toString() + '\r\n';
 }
-
-const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
-const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
 
 // The Life Log event for a fed meal (the frame's dog tab reads "Maya lunch … 1 cup — Harsh" as fed).
 export function logICS(id, ev, now) {
@@ -132,17 +129,16 @@ export class MealStore {
         return { status: e instanceof WalkError ? e.status : 500, body: { error: String(e.message || e) } };
       }
     };
-    const json = async () => { try { return JSON.parse((await req.text()) || '{}'); } catch { return null; } };
+    const withBody = async (fn) => {
+      if (!access.write) return deny('write');
+      let b = null;
+      try { b = JSON.parse((await req.text()) || '{}'); } catch { /* not JSON */ }
+      return b && typeof b === 'object' ? run(() => fn(b)) : { status: 400, body: { error: 'body must be JSON' } };
+    };
     if (p === '/meals' && m === 'GET') return deny('read') || run(() => this.get(url.searchParams.get('date')));
     const plan = /^\/meals\/plan\/([0-9-]{10})$/.exec(p);
-    if (plan && m === 'PUT') {
-      const b = deny('write') ? null : await json();
-      return deny('write') || (b ? run(() => this.putPlan(plan[1], b)) : { status: 400, body: { error: 'body must be JSON' } });
-    }
-    if (p === '/meals/log' && m === 'POST') {
-      const b = deny('write') ? null : await json();
-      return deny('write') || (b ? run(() => this.log(b)) : { status: 400, body: { error: 'body must be JSON' } });
-    }
+    if (plan && m === 'PUT') return withBody((b) => this.putPlan(plan[1], b));
+    if (p === '/meals/log' && m === 'POST') return withBody((b) => this.log(b));
     const one = /^\/meals\/log\/([A-Za-z0-9_-]{6,80})$/.exec(p);
     if (one && m === 'DELETE') return deny('write') || run(() => this.unlog(one[1]));
     return { status: 404, body: { error: 'not found' } };
@@ -244,13 +240,15 @@ export class MealStore {
     return out;
   }
 
-  async log(b) {
-    const id = String(b.id || ''), m = ID.exec(id);
+  async log(body) {
+    const id = String(body.id || ''), m = ID.exec(id);
     if (!m) throw new WalkError('id must look like maya_meal-YYYY-MM-DD-<meal>');
     const [, date, slug] = m, kind = normKind(slug), now = Date.now();
     const { tz, dog } = await this.home();
-    const at = b.at == null ? now : when(b.at, date, tz, 'at');
     const key = 'meal-log:' + id, stash = (this.env.DATA && await this.env.DATA.get(key, 'json')) || {};
+    // Logging again (e.g. "left some") only needs what changed.
+    const b = { ...(stash.body || {}), ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null && v !== '')) };
+    const at = b.at == null ? now : when(b.at, date, tz, 'at');
     let planned = stash.planned || null, fresh = null;
     if (kind && !planned) {
       const x = (await this.day(date)).meals.find((y) => y.kind === kind && y.movable);
@@ -268,7 +266,7 @@ export class MealStore {
     const desc = [
       'Fed by: ' + who,
       'Fed at: ' + t12(at) + (plannedAt != null ? ' (planned ' + t12(plannedAt) + late + ')' : ' (not planned)'),
-      planned ? 'Planned on: ' + planned.calendar + ' (' + planned.people.map(cap).join(' & ') + ')' + (planned.usual && plannedAt != null && planned.usual !== new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' }).format(new Date(plannedAt)) ? ', usual time ' + planned.usual : '') : null,
+      planned ? 'Planned on: ' + planned.calendar + ' (' + planned.people.map(cap).join(' & ') + ')' + (plannedAt != null && planned.usual && planned.usual !== localHM(plannedAt, tz) ? ', usual time ' + planned.usual : '') : null,
       food ? 'Food: ' + food : null,
       cups != null ? 'cups: ' + cups : null,
       'Ate: ' + (b.ate === 'some' ? 'some (left some)' : 'all'),
@@ -282,7 +280,7 @@ export class MealStore {
       title: dog + ' ' + label + ' 🍽️' + (fmtCups(cups) ? ' ' + fmtCups(cups) : '') + ' — ' + who,
     }, now);
     const logHref = await this.put(logName, id + '.ics', ics);
-    if (this.env.DATA) await this.env.DATA.put(key, JSON.stringify({ planned, log: { href: logHref, calendar: logName }, at: now }), { expirationTtl: 60 * 86400 });
+    if (this.env.DATA) await this.env.DATA.put(key, JSON.stringify({ planned, log: { href: logHref, calendar: logName }, body: { ...b, at }, at: now }), { expirationTtl: 60 * 86400 });
     if (fresh) await deleteEvent(this.env, fresh.href);
     await this.bust();
     return { ok: true, id, log: { calendar: logName, start: new Date(at).toISOString() }, removedFrom: fresh ? fresh.calendar : null };

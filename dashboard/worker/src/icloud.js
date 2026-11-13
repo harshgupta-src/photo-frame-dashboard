@@ -78,7 +78,7 @@ export async function calendarObjects(env, url, from, to) {
 export async function calendarEntries(env, url, from, to) {
   const rows = await dav(env, 'REPORT', url,
     `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${stamp(from)}" end="${stamp(to)}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 1);
-  return rows.map((r) => ({ href: new URL(r.href, url).href, ics: text(r.prop['calendar-data']) }))
+  return rows.map((r) => ({ href: new URL(r.href, url).href, ics: String(text(r.prop['calendar-data']) ?? '').replace(/\r?\n/g, '\r\n') }))
     .filter((r) => typeof r.ics === 'string' && r.ics.includes('BEGIN:VEVENT'));
 }
 
