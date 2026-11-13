@@ -54,6 +54,7 @@
   // calendar's meals for that day already add up to the new total.
   function foodNote() {
     var a = App.dog.food(), d0 = new Date(now()), today = d0.getFullYear() + '-' + ('0' + (d0.getMonth() + 1)).slice(-2) + '-' + ('0' + d0.getDate()).slice(-2);
+    if (a && a.decision === 'hold' && a.fromCups) return foodHold(a);
     if (!a || a.decision !== 'bump' || a.doneAt || !a.date) return '';
     var day = new Date(a.date + 'T12:00:00'), planned = App.dog.plannedOnDay(day), total = 0;
     planned.forEach(function (m) { total += m.cups || 0; });
@@ -65,6 +66,17 @@
       '<span>' + cups(a.fromCups).replace(/ cups?$/, '') + ' → ' + cups(a.toCups) + ' a day' + (a.meal ? ' · +¼ cup at ' + esc(a.meal.toLowerCase()) : '') +
       (a.reason ? ' · ' + esc(a.reason) : '') + '</span></div>' +
       (due ? '<button class="dg-food-ok" data-food="done">Done</button>' : '') + '</div>';
+  }
+
+  // A hold: a quiet line so the advisor's verdict is always visible.
+  function foodHold(a) {
+    var m = /^Bump on (\d{4}-\d{2}-\d{2}) held/.exec(a.reason || ''), why;
+    if (m) {
+      var d = new Date(m[1] + 'T12:00:00');
+      why = 'next +¼ cup likely ' + dayLabel(+d) + ' ' + App.fmt.monthShort(d) + ' ' + d.getDate() + ', once the meal plan reaches it';
+    } else why = a.reason || 'no change for now';
+    return '<div class="dg-food is-hold"><span class="dg-food-ic">' + App.icon('utensils', 18) + '</span>' +
+      '<div class="dg-food-t"><b>Food · ' + cups(a.fromCups) + ' a day · holding</b><span>' + esc(why) + '</span></div></div>';
   }
 
   // ---------------------------------------------------------------- the four "now" tiles

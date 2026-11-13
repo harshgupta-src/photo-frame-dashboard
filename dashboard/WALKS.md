@@ -65,7 +65,7 @@ hollow, ranges as a bar). The header has age and the next other "Maya …" event
 demo data. Set `VITE_DOG_BIRTHDAY` (YYYY-MM-DD) for the age.
 
 **Food bumps.** A banner under the header says when the daily food should go up by ¼ cup ("Bump
-Maya's food · Today, 3½ → 3¾ cups a day", with a **Done** button), or the day a bump is coming. It
+Maya's food · Today, 3½ → 3¾ cups a day", with a **Done** button), or the day a bump is coming; on a hold, a quiet line shows today's cups and the likely next bump. It
 hides once the planned meals on that day already add up to the new amount. Home Assistant decides
 (`ha/maya-food.yaml`): every morning it asks the Worker for the facts (age, the adult weight
 projected from recent weigh-ins on a large-breed growth curve, growth pace, the food label's cups

@@ -81,7 +81,7 @@ export class Lifelog {
 
 // Home time zone, dog name and people's names (learned from the frame's walks; a Shortcut sends
 // only ids), from recent walks, newest first.
-function household(walks) {
+export function household(walks) {
   const names = {};
   for (const w of [...walks].reverse()) if (w.source === 'frame') for (const x of w.walkers) names[x.id] = x.name;
   const tz = (walks.find((w) => w.tz) || {}).tz || 'UTC';

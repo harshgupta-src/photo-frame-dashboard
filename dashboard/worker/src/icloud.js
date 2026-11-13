@@ -74,6 +74,14 @@ export async function calendarObjects(env, url, from, to) {
   return rows.map((r) => text(r.prop['calendar-data'])).filter((t) => typeof t === 'string' && t.includes('BEGIN:VEVENT'));
 }
 
+// Like calendarObjects, with each object's absolute href: [{href, ics}].
+export async function calendarEntries(env, url, from, to) {
+  const rows = await dav(env, 'REPORT', url,
+    `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${stamp(from)}" end="${stamp(to)}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 1);
+  return rows.map((r) => ({ href: new URL(r.href, url).href, ics: text(r.prop['calendar-data']) }))
+    .filter((r) => typeof r.ics === 'string' && r.ics.includes('BEGIN:VEVENT'));
+}
+
 const basic = (env) => 'Basic ' + btoa(env.ICLOUD_APPLE_ID + ':' + env.ICLOUD_APP_PASSWORD);
 
 // Writes one event (the whole VCALENDAR text) to href, creating or replacing it. Needs write access

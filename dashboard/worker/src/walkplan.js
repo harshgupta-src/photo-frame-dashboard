@@ -18,7 +18,7 @@ function tzOffset(ms, tz) {
 }
 
 // "16:00" or "2026-11-09T16:00" in tz, or ISO with an offset, or epoch ms → epoch ms.
-function when(v, date, tz, name) {
+export function when(v, date, tz, name) {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   let s = String(v ?? '').trim();
   if (/^\d{1,2}:\d{2}$/.test(s)) s = date + 'T' + s.padStart(5, '0');
@@ -99,7 +99,7 @@ export function planRev(item, dog) {
   return JSON.stringify([item.start, item.end, item.walkers.map((x) => x.name), item.note, dog]);
 }
 
-const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+export const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
 function fold(line) {
   const enc = new TextEncoder();

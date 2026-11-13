@@ -99,6 +99,7 @@ function parts(ms, tz) {
   return o;
 }
 export const localDate = (ms, tz) => { const p = parts(ms, tz); return p.year + '-' + p.month + '-' + p.day; };
+export const localHM = (ms, tz) => { const p = parts(ms, tz); return p.hour + ':' + p.minute; };
 export function clock(ms, tz) {
   const p = parts(ms, tz), h = +p.hour;
   return (h % 12 || 12) + ':' + p.minute + (h < 12 ? 'am' : 'pm');
