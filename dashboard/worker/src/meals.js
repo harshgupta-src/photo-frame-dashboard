@@ -9,7 +9,9 @@
 //                                    removes the planned one (posting again just rewrites the Life Log event)
 //   DELETE /meals/log/:id            undo: removes the Life Log event, puts the planned one back
 // Meal ids match Home Assistant's: maya_meal-YYYY-MM-DD-<breakfast|walk-snack|lunch|dinner|night-snack>.
-// A moved event keeps its regular time in X-MAYA-USUAL, so the planner can bring it back there.
+// A moved event keeps its regular time in X-MAYA-USUAL, so the planner can bring it back there. An
+// occurrence of a recurring series is taken out of it (EXDATE) and becomes its own event when it moves,
+// or when it is fed.
 import ICAL from 'ical.js';
 import { calendarEntries, putEvent, deleteEvent } from './icloud.js';
 import { expandICS } from './ics.js';
@@ -93,6 +95,42 @@ export function moveICS(ics, { start, end, usual, desc }, now) {
   return root.toString() + '\r\n';
 }
 
+// A recurring series without one occurrence (occ: its recurrence time as ical.js prints it): an EXDATE,
+// and any override of that occurrence dropped.
+export function exdateICS(ics, occ, now) {
+  const root = new ICAL.Component(ICAL.parse(ics));
+  const all = root.getAllSubcomponents('vevent'), master = all.find((v) => !v.hasProperty('recurrence-id'));
+  if (!master) throw new WalkError('recurring event without a master', 409);
+  for (const v of all) if (v !== master && String(v.getFirstPropertyValue('recurrence-id')) === occ) root.removeSubcomponent(v);
+  const p = new ICAL.Property('exdate', master), tzid = master.getFirstProperty('dtstart').getParameter('tzid');
+  p.setValue(ICAL.Time.fromString(occ));
+  if (tzid && !/Z$/.test(occ)) p.setParameter('tzid', tzid);
+  master.addProperty(p);
+  const utc = ICAL.Time.fromJSDate(new Date(now), true);
+  master.updatePropertyWithValue('dtstamp', utc);
+  master.updatePropertyWithValue('last-modified', utc);
+  master.updatePropertyWithValue('sequence', (parseInt(master.getFirstPropertyValue('sequence'), 10) || 0) + 1);
+  return root.toString() + '\r\n';
+}
+
+// A standalone planned meal (an occurrence taken out of a recurring series so it can move on its own).
+export function mealICS(uid, ev, now) {
+  const root = new ICAL.Component(['vcalendar', [], []]);
+  root.updatePropertyWithValue('version', '2.0');
+  root.updatePropertyWithValue('prodid', '-//photo-frame-dashboard//meal-plan//EN');
+  const v = new ICAL.Component('vevent');
+  const utc = (ms) => ICAL.Time.fromJSDate(new Date(ms), true);
+  v.addPropertyWithValue('uid', uid);
+  v.addPropertyWithValue('dtstamp', utc(now));
+  v.addPropertyWithValue('dtstart', utc(ev.start));
+  v.addPropertyWithValue('dtend', utc(ev.end));
+  v.addPropertyWithValue('summary', ev.title);
+  if (ev.desc) v.addPropertyWithValue('description', ev.desc);
+  if (ev.usual) v.addPropertyWithValue('x-maya-usual', ev.usual);
+  root.addSubcomponent(v);
+  return root.toString() + '\r\n';
+}
+
 // The Life Log event for a fed meal (the frame's dog tab reads "Maya lunch … 1 cup — Harsh" as fed).
 export function logICS(id, ev, now) {
   const root = new ICAL.Component(['vcalendar', [], []]);
@@ -165,7 +203,7 @@ export class MealStore {
     return url + file;
   }
 
-  // The day's meal events, one per kind (the most recently changed, movable first), plus extras.
+  // The day's meal events, one per kind (single events before series occurrences, then the most recently changed), plus extras.
   async day(date) {
     if (!validDate(date)) throw new WalkError('date must be YYYY-MM-DD');
     const { tz, dog } = await this.home();
@@ -185,7 +223,8 @@ export class MealStore {
           all.push({
             id: 'maya_meal-' + date + '-' + kind, kind, meal: KINDS[kind], title: o.title, start: o.start, end: o.end,
             usual: icsProp(r.ics, 'X-MAYA-USUAL') || localHM(at, tz), moved: false, calendar: cal.name, people: cal.people,
-            cups: cupsOf(o.title, o.notes), notes: o.notes || null, uid: uidOf(r.ics), movable: !recurring,
+            cups: cupsOf(o.title, o.notes), notes: o.notes || null, uid: uidOf(r.ics), recurring,
+            occ: recurring ? o.id.slice(o.id.lastIndexOf('@') + 1) : null,
             modified: icsProp(r.ics, 'LAST-MODIFIED') || icsProp(r.ics, 'DTSTAMP') || '', href: r.href, ics: r.ics,
           });
         }
@@ -195,7 +234,7 @@ export class MealStore {
     for (const x of all) (byKind.get(x.kind) || byKind.set(x.kind, []).get(x.kind)).push(x);
     const meals = [], dupes = [];
     for (const list of byKind.values()) {
-      list.sort((a, b) => (b.movable - a.movable) || (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
+      list.sort((a, b) => (a.recurring - b.recurring) || (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
       meals.push(list[0]);
       dupes.push(...list.slice(1));
     }
@@ -206,7 +245,7 @@ export class MealStore {
 
   async get(date) {
     const d = await this.day(date);
-    const pub = ({ href, ics, modified, ...x }) => x;
+    const pub = ({ href, ics, modified, occ, ...x }) => x;
     return { date: d.date, tz: d.tz, meals: d.meals.map(pub), duplicates: d.dupes.map(pub) };
   }
 
@@ -219,7 +258,6 @@ export class MealStore {
       const kind = normKind(it && (it.kind || it.meal));
       const m = kind && byKind.get(kind);
       if (!m) { out.skipped.push({ kind: (it && (it.kind || it.meal)) || null, why: 'no meal event that day' }); continue; }
-      if (!m.movable) { out.skipped.push({ kind, why: 'recurring event' }); continue; }
       const start = when(it.start, date, d.tz, kind + ' start');
       if (localDate(start, d.tz) !== date) { out.skipped.push({ kind, why: 'start is not on ' + date }); continue; }
       const oldStart = Date.parse(m.start), end = start + Math.max(5 * 60e3, Date.parse(m.end) - oldStart);
@@ -229,10 +267,16 @@ export class MealStore {
       const line = hm !== m.usual ? 'Moved from the usual ' + m.usual + (note ? ': ' + note : '') : null;
       const desc = withLine(m.notes, line);
       if (start === oldStart && calendar === m.calendar && desc === String(m.notes || '').trim()) { out.unchanged.push(kind); continue; }
-      const ics = moveICS(m.ics, { start, end, usual: m.usual, desc }, now);
-      const file = m.href.slice(m.href.lastIndexOf('/') + 1);
-      if (calendar === m.calendar) await putEvent(this.env, m.href, ics);
-      else { await this.put(calendar, file, ics); await deleteEvent(this.env, m.href); }
+      if (m.recurring) {
+        // Its own event from now on (created before the series loses it).
+        await this.put(calendar, 'maya-meal-plan-' + date + '-' + kind + '.ics', mealICS('maya-meal-plan-' + date + '-' + kind + '@frame-data', { start, end, title: m.title, desc, usual: m.usual }, now));
+        await putEvent(this.env, m.href, exdateICS(m.ics, m.occ, now));
+      } else {
+        const ics = moveICS(m.ics, { start, end, usual: m.usual, desc }, now);
+        const file = m.href.slice(m.href.lastIndexOf('/') + 1);
+        if (calendar === m.calendar) await putEvent(this.env, m.href, ics);
+        else { await this.put(calendar, file, ics); await deleteEvent(this.env, m.href); }
+      }
       // The same event (same UID) left behind on another calendar, e.g. by an agent re-writing it.
       for (const x of d.dupes) if (x.kind === kind && x.uid && x.uid === m.uid && x.href !== m.href) await deleteEvent(this.env, x.href);
       out.changed.push({ kind, from: m.start, to: new Date(start).toISOString(), usual: m.usual, fromCalendar: m.calendar, calendar });
@@ -251,8 +295,8 @@ export class MealStore {
     const at = b.at == null ? now : when(b.at, date, tz, 'at');
     let planned = stash.planned || null, fresh = null;
     if (kind && !planned) {
-      const x = (await this.day(date)).meals.find((y) => y.kind === kind && y.movable);
-      if (x) fresh = planned = { href: x.href, ics: x.ics, calendar: x.calendar, people: x.people, start: x.start, end: x.end, title: x.title, usual: x.usual, notes: x.notes };
+      const x = (await this.day(date)).meals.find((y) => y.kind === kind);
+      if (x) fresh = planned = { href: x.href, ics: x.ics, occ: x.occ, calendar: x.calendar, people: x.people, start: x.start, end: x.end, title: x.title, usual: x.usual, notes: x.notes };
     }
     const person = clean(b.person, 32).toLowerCase() || 'someone', who = cap(person);
     const plannedAt = b.planned_at ? when(b.planned_at, date, tz, 'planned_at') : planned ? Date.parse(planned.start) : null;
@@ -281,7 +325,9 @@ export class MealStore {
     }, now);
     const logHref = await this.put(logName, id + '.ics', ics);
     if (this.env.DATA) await this.env.DATA.put(key, JSON.stringify({ planned, log: { href: logHref, calendar: logName }, body: { ...b, at }, at: now }), { expirationTtl: 60 * 86400 });
-    if (fresh) await deleteEvent(this.env, fresh.href);
+    // The planned event goes (a recurring series just loses that day; undo puts the whole object back).
+    if (fresh && fresh.occ) await putEvent(this.env, fresh.href, exdateICS(fresh.ics, fresh.occ, now));
+    else if (fresh) await deleteEvent(this.env, fresh.href);
     await this.bust();
     return { ok: true, id, log: { calendar: logName, start: new Date(at).toISOString() }, removedFrom: fresh ? fresh.calendar : null };
   }
