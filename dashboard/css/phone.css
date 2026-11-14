@@ -108,7 +108,7 @@ html[data-phone] .sheet::before {
 /* settings drawer: a full-height sheet from the right is fine, but inside the insets */
 html[data-phone] .demo-panel { padding-top: calc(var(--safe-t, 0px) + 8px); padding-bottom: calc(var(--safe-b, 0px) + 16px); }
 
-/* ---------------------------------------------------------------- dev simulator (/?sim=iphone) */
+/* ---------------------------------------------------------------- dev simulator (/?sim=iphone, /?sim=ipad) */
 .sim-status {
   position: fixed; z-index: 9999; left: 0; right: 0; top: 0; height: 54px; pointer-events: none;
   display: flex; align-items: center; justify-content: space-between; padding: 6px 34px 0 44px;
@@ -116,6 +116,8 @@ html[data-phone] .demo-panel { padding-top: calc(var(--safe-t, 0px) + 8px); padd
 }
 .sim-status i { position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: #000; }
 .sim-home { position: fixed; z-index: 9999; left: 50%; bottom: 8px; width: 140px; height: 5px; margin-left: -70px; border-radius: 3px; background: var(--ink); pointer-events: none; }
+.sim-status.is-ipad { height: 24px; padding: 0 20px; font-size: 13px; }
+.sim-status.is-ipad i { display: none; }
 html[data-phone] .stage:has(#view-home.is-active) .phone-gear { display: grid; }
 .phone-gear { display: none; }
 

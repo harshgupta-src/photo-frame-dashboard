@@ -8,10 +8,19 @@ import { assetKey, decide, markApplied } from './update.js';
   // The dashboard installed on a phone (IPHONE.md) rather than shown on the frame: no kiosk, a small
   // touch screen. Phones skip the wall-display behaviour (idle → ambient → sleep).
   // Dev only: /?sim=iphone fakes an iPhone home-screen app (insets, status bar) in a desktop browser.
-  var SIM = import.meta.env.DEV && /[?&]sim=iphone/.test(location.search);
-  App.phone = SIM || !window.HomeHQ && (navigator.standalone === true ||
-    (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches ||
-      (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600))));
+  // /?sim=ipad fakes an iPad home-screen app the same way.
+  var SIM = import.meta.env.DEV && (location.search.match(/[?&]sim=(iphone|ipad)/) || [])[1];
+  var mm = function (q) { return !!(window.matchMedia && matchMedia(q).matches); };
+  // A tablet (iPad, in Safari or from the home screen): touch, but too big for the phone layout.
+  // It gets the frame's layouts, filled to its screen, without the wall-display behaviour.
+  var ipad = /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  App.tablet = SIM ? SIM === 'ipad' : !window.HomeHQ && Math.min(screen.width, screen.height) >= 600 &&
+    (ipad || mm('(pointer: coarse)'));
+  App.phone = SIM ? SIM === 'iphone' : !window.HomeHQ && !App.tablet && (navigator.standalone === true ||
+    mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)') ||
+    (mm('(pointer: coarse)') && Math.min(screen.width, screen.height) < 600));
+  // Held in the hand rather than hung on the wall: no idle → ambient → sleep, update on resume.
+  App.handheld = App.phone || App.tablet;
   var $ = App.$ = function (s, r) { return (r || document).querySelector(s); };
   App.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
@@ -396,8 +405,8 @@ import { assetKey, decide, markApplied } from './update.js';
   var idleSec = 0;
   function onIdleTick() {
     idleSec++;
-    if (App.phone) return; // phones update on resume (resumeUpdate) and never idle into ambient/sleep
-    if (App.current && App.views[App.current].stay) return; // e.g. a recipe open on an iPad's browser
+    if (App.handheld) return; // phones and tablets update on resume (resumeUpdate) and never idle into ambient/sleep
+    if (App.current && App.views[App.current].stay) return; // e.g. a recipe open in a desktop browser
     var blocked = $('#takeover').classList.contains('is-open');
     if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
     var asleep = App.isSleep();
@@ -520,7 +529,7 @@ import { assetKey, decide, markApplied } from './update.js';
   // edge, and --safe-b (in stage px) pads the tab bar up above the home indicator. All 0 on the frame.
   var insetProbe = null;
   function insets() {
-    if (SIM) return { t: 62, r: 0, b: 34, l: 0 };
+    if (SIM) return SIM === 'ipad' ? { t: 24, r: 0, b: 20, l: 0 } : { t: 62, r: 0, b: 34, l: 0 };
     if (!insetProbe) {
       insetProbe = document.createElement('div');
       insetProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' +
@@ -559,6 +568,10 @@ import { assetKey, decide, markApplied } from './update.js';
     }
     if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * ah / aw)); }
     else { h = SHORT; w = Math.max(LONG, Math.round(SHORT * aw / ah)); }
+    // Tablets are squarer than 16:10 (an iPad is about 4:3): grow the short side to fill the screen
+    // rather than letterboxing (a wider portrait stage, a taller landscape one).
+    if (App.tablet && portrait && ah / aw < LONG / SHORT) { h = LONG; w = Math.round(LONG * aw / ah); }
+    if (App.tablet && !portrait && aw / ah < LONG / SHORT) { w = LONG; h = Math.round(LONG * ah / aw); }
     App.stageW = w; App.stageH = h;
     stage.style.setProperty('--stage-w', w + 'px');
     stage.style.setProperty('--stage-h', h + 'px');
@@ -615,7 +628,7 @@ import { assetKey, decide, markApplied } from './update.js';
     fit();
     window.addEventListener('resize', fit);
     // iOS reports the safe-area insets late on a cold start, without a resize event.
-    if (App.phone) {
+    if (App.handheld) {
       [300, 1000, 2500].forEach(function (ms) { setTimeout(fit, ms); });
       document.addEventListener('visibilitychange', function () { if (!document.hidden) fit(); });
     }
@@ -638,11 +651,17 @@ import { assetKey, decide, markApplied } from './update.js';
     tickLoop();
     document.addEventListener('visibilitychange', function () { if (!document.hidden) tickLoop(); });
     setInterval(pollUpdate, POLL_MS);
-    if (App.phone) document.addEventListener('visibilitychange', resumeUpdate);
-    if (SIM) document.body.insertAdjacentHTML('beforeend', '<div class="sim-status"><span>9:41</span><i></i><span>5G ▮</span></div><div class="sim-home"></div>');
+    if (App.handheld) document.addEventListener('visibilitychange', resumeUpdate);
+    if (SIM) document.body.insertAdjacentHTML('beforeend', '<div class="sim-status' + (SIM === 'ipad' ? ' is-ipad' : '') + '"><span>9:41</span><i></i><span>5G ▮</span></div><div class="sim-home"></div>');
     App.emit('ready');
     refreshStale(1500);
-    if (!App.phone) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
+    if (!App.handheld) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
+    // Tablets have no gear: settings are behind the rail clock, as on the frame. Say so once.
+    if (App.tablet) {
+      var TIP = 'tablet-settings-tip', seen = '1';
+      try { seen = localStorage.getItem(TIP); localStorage.setItem(TIP, '1'); } catch (e) { /* storage disabled */ }
+      if (!seen) setTimeout(function () { App.toast('Press and hold the <b>clock</b> for settings', { ms: 6000, icon: 'gear' }); }, 1200);
+    }
   };
   document.addEventListener('DOMContentLoaded', function () { App.start(); });
 })();

@@ -136,13 +136,13 @@
       (w.signedIn
         ? '<div class="demo-grid demo-grid--3"><button data-ha-out>Sign out</button></div><p class="demo-note">Signed in on this device: lights, and ticks on the shopping and pinned lists, go to Home Assistant.</p>'
         : '<div class="demo-grid demo-grid--3"><button data-ha-in class="is-on">Sign in</button><button data-ha-token>Use a token</button></div>' +
-          '<p class="demo-note">Sign in with your own Home Assistant account to turn lights on and off and tick off list items from this phone.</p>') +
+          '<p class="demo-note">Sign in with your own Home Assistant account to turn lights on and off and tick off list items from this ' + (App.tablet ? 'iPad' : 'phone') + '.</p>') +
       '</div>';
   }
   function demoHTML() {
     var t = App.now();
     return '<div class="demo-panel">' +
-      '<div class="demo-head"><div><div class="label label--light">' + (App.phone ? 'Settings' : 'Prototype') + '</div><h2 class="serif">' + (App.phone ? 'Home HQ' : 'Demo controls') + '</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
+      '<div class="demo-head"><div><div class="label label--light">' + (App.handheld ? 'Settings' : 'Prototype') + '</div><h2 class="serif">' + (App.handheld ? 'Home HQ' : 'Demo controls') + '</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
       haHTML() + appearanceHTML(t) +
       '<div class="demo-sec"><div class="label label--light">Time of day · now ' + App.fmt.time(t) + '</div><div class="demo-grid">' +
       '<button data-time="7:10">7:10 AM</button><button data-time="15:18">3:18 PM</button><button data-time="19:45">7:45 PM</button><button data-time="23:40">11:40 PM</button><button data-time="real">Real time</button></div></div>' +
@@ -206,14 +206,14 @@
       $('.phone-gear').addEventListener('click', App.openDemo);
       $('#view-home').addEventListener('scroll', function () { $('.phone-gear').classList.toggle('is-away', this.scrollTop > 40); }, { passive: true });
     }
-    // A phone that isn't signed in to HA yet: offer it once a week.
+    // A phone or tablet that isn't signed in to HA yet: offer it once a week.
     var w = App.ha.web, NAG = 'ha-signin-nag';
-    if (App.phone && w && !w.signedIn) {
+    if (App.handheld && w && !w.signedIn) {
       var last = 0;
       try { last = +localStorage.getItem(NAG) || 0; } catch (e) { /* storage disabled */ }
       if (Date.now() - last > 7 * 864e5) {
         App.banner({
-          icon: 'bulb', title: 'Connect Home Assistant', sub: 'Sign in to control lights and tick off lists from this phone',
+          icon: 'bulb', title: 'Connect Home Assistant', sub: 'Sign in to control lights and tick off lists from this ' + (App.tablet ? 'iPad' : 'phone'),
           action: 'Sign in', dismiss: 'Not now', onAction: w.signIn,
         });
         try { localStorage.setItem(NAG, String(Date.now())); } catch (e) { /* storage disabled */ }

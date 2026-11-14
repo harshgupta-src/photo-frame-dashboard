@@ -11,6 +11,18 @@ The phone look is all in `css/phone.css`, scoped to `html[data-phone]`, which `f
 `js/app.js` sets only on iPhones. The frame never matches it, so frame changes still reach the phone
 and phone tweaks never touch the frame.
 
+## iPad
+
+An iPad (in Safari or installed the same way) isn't a phone and isn't the frame: `App.tablet` in
+`js/app.js` (iPadOS reports a Mac user agent, so it's a Mac UA with touch points, or any coarse
+pointer whose screen's short side is 600 pt or more). It gets the frame's own layouts: the sidebar in
+landscape, the bottom tab bar in portrait (`css/portrait.css`), and follows rotation. An iPad is
+squarer than the frame's 16:10, so `fit()` grows the stage's short side to fill the screen instead
+of letterboxing: 1280 × 863 in landscape and 908 × 1280 in portrait on an 11-inch iPad. Like a phone,
+it never idles into ambient or sleep and picks up new builds when it comes back to the foreground.
+Settings open with a long press on the clock, as on the frame; a one-time toast says so. In dev,
+`/?sim=ipad` fakes one (with a 24 pt status bar and a home indicator).
+
 Why not a native app: building one needs Xcode, and installing it on more than one person's phone
 needs the paid Apple Developer Program (or a rebuild every 7 days). A home-screen app needs neither.
 
@@ -19,7 +31,7 @@ needs the paid Apple Developer Program (or a rebuild every 7 days). A home-scree
 1. In Safari, open `https://frame-data.<your-subdomain>.workers.dev/?key=<READ_KEY>` (the same URL
    the kiosk opens).
 2. Share → **Add to Home Screen** → Add. Open Home HQ from the home screen. It runs full screen, in
-   portrait.
+   portrait on a phone and either way round on an iPad.
 
 The Worker gives the installed app a start URL that carries the key, because a home-screen app keeps
 cookies apart from Safari's. Anyone with that URL can see the dashboard, so share it like a password.
