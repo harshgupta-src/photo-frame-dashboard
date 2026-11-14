@@ -610,6 +610,7 @@ import { assetKey, decide, markApplied } from './update.js';
     if (App.phone) document.addEventListener('visibilitychange', resumeUpdate);
     App.emit('ready');
     refreshStale(1500);
+    if (App.phone) { var dbg = function (tag) { var i = insets(); return tag + ' iw' + innerWidth + 'x' + innerHeight + ' ch' + document.documentElement.clientHeight + ' sc' + screen.width + 'x' + screen.height + ' vv' + (window.visualViewport ? Math.round(visualViewport.height) : '-') + ' in' + [i.t, i.r, i.b, i.l].join('/') + ' st' + navigator.standalone + ' r' + Math.round($('#stage').getBoundingClientRect().top) + '-' + Math.round($('#stage').getBoundingClientRect().bottom); }; var d0 = dbg('t0'); setTimeout(function () { App.toast(d0 + '<br>' + dbg('t2'), { ms: 60000 }); }, 2000); }
     if (!App.phone) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
   document.addEventListener('DOMContentLoaded', function () { App.start(); });
