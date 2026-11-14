@@ -7,7 +7,9 @@ import { assetKey, decide, markApplied } from './update.js';
   var App = window.App = { state: D, views: {}, current: null, mode: 'day', calMode: 'normal' };
   // The dashboard installed on a phone (IPHONE.md) rather than shown on the frame: no kiosk, a small
   // touch screen. Phones skip the wall-display behaviour (idle → ambient → sleep).
-  App.phone = !window.HomeHQ && (navigator.standalone === true ||
+  // Dev only: /?sim=iphone fakes an iPhone home-screen app (insets, status bar) in a desktop browser.
+  var SIM = import.meta.env.DEV && /[?&]sim=iphone/.test(location.search);
+  App.phone = SIM || !window.HomeHQ && (navigator.standalone === true ||
     (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches ||
       (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600))));
   var $ = App.$ = function (s, r) { return (r || document).querySelector(s); };
@@ -517,6 +519,7 @@ import { assetKey, decide, markApplied } from './update.js';
   // edge, and --safe-b (in stage px) pads the tab bar up above the home indicator. All 0 on the frame.
   var insetProbe = null;
   function insets() {
+    if (SIM) return { t: 62, r: 0, b: 34, l: 0 };
     if (!insetProbe) {
       insetProbe = document.createElement('div');
       insetProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' +
@@ -537,6 +540,22 @@ import { assetKey, decide, markApplied } from './update.js';
     stage.style.top = full && vh / 2 + 'px';
     var ins = insets(), aw = vw - ins.l - ins.r, ah = vh - ins.t;
     var portrait = ah > aw, w, h;
+    // Phones get their own layout (css/phone.css) at the phone's real size rather than the frame's
+    // scaled down: the stage is the whole screen and the views pad themselves inside the insets.
+    if (App.phone) {
+      App.stageW = vw; App.stageH = vh;
+      stage.style.setProperty('--stage-w', vw + 'px');
+      stage.style.setProperty('--stage-h', vh + 'px');
+      stage.style.setProperty('--safe-t', ins.t + 'px');
+      stage.style.setProperty('--safe-b', ins.b + 'px');
+      stage.style.transform = '';
+      document.documentElement.dataset.phone = '';
+      portrait = true;
+      if (App.portrait && document.documentElement.dataset.orient) return;
+      App.portrait = true;
+      document.documentElement.dataset.orient = 'portrait';
+      return;
+    }
     if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * ah / aw)); }
     else { h = SHORT; w = Math.max(LONG, Math.round(SHORT * aw / ah)); }
     App.stageW = w; App.stageH = h;
@@ -619,9 +638,9 @@ import { assetKey, decide, markApplied } from './update.js';
     document.addEventListener('visibilitychange', function () { if (!document.hidden) tickLoop(); });
     setInterval(pollUpdate, POLL_MS);
     if (App.phone) document.addEventListener('visibilitychange', resumeUpdate);
+    if (SIM) document.body.insertAdjacentHTML('beforeend', '<div class="sim-status"><span>9:41</span><i></i><span>5G ▮</span></div><div class="sim-home"></div>');
     App.emit('ready');
     refreshStale(1500);
-    if (App.phone) { var dbg = function (tag) { var i = insets(); return tag + ' iw' + innerWidth + 'x' + innerHeight + ' ch' + document.documentElement.clientHeight + ' sc' + screen.width + 'x' + screen.height + ' vv' + (window.visualViewport ? Math.round(visualViewport.height) : '-') + ' in' + [i.t, i.r, i.b, i.l].join('/') + ' st' + navigator.standalone + ' r' + Math.round($('#stage').getBoundingClientRect().top) + '-' + Math.round($('#stage').getBoundingClientRect().bottom); }; var d0 = dbg('t0'); setTimeout(function () { App.toast(d0 + '<br>' + dbg('t2'), { ms: 60000 }); }, 2000); }
     if (!App.phone) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
   document.addEventListener('DOMContentLoaded', function () { App.start(); });

@@ -286,7 +286,7 @@
   function fitHero(el) {
     var t = el && el.querySelector('.h-hero:not(.h-hero--empty) .h-hero-title');
     if (!t || !t.clientWidth) return;
-    var sizes = [72, 64, 56, 50, 46, 42], lineH;
+    var sizes = App.phone ? [34, 31, 28, 26, 24, 22] : [72, 64, 56, 50, 46, 42], lineH;
     function lines() { return Math.round(t.scrollHeight / lineH); }
     t.style.maxWidth = '';
     for (var i = 0; i < sizes.length; i++) {
@@ -294,7 +294,7 @@
       lineH = sizes[i] * 0.98;
       var n = lines();
       if (n <= 1) return;
-      if (sizes[i] <= 50 && n <= 2) break;
+      if (i >= 3 && n <= 2) break;
     }
     // Two lines: narrow the box until just before a third line appears, so the lines come out
     // even instead of leaving one word alone (text-wrap: balance needs Chromium 114).
@@ -370,6 +370,8 @@
       more.style.display = n ? '' : 'none';
     }
     label();
+    // The phone's Today scrolls, so the tile grows with its list; keep it to a glance.
+    if (App.phone) { while (ul.children.length > 8) ul.removeChild(ul.lastChild); label(); return; }
     while (ul.children.length > 1 && tile.scrollHeight > tile.clientHeight + 1) { ul.removeChild(ul.lastChild); label(); }
   }
   function pinnedSheet() {

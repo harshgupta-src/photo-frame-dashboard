@@ -2,8 +2,14 @@
 
 The phone app is the frame's dashboard itself, installed from Safari as a home-screen web app. It is
 the same build from the same Worker, so every deploy reaches the frame and every phone. A phone
-picks a new build up when the app comes back to the foreground. It shows the portrait layout scaled
-to the phone's width, with every tab and operation the frame has.
+picks a new build up when the app comes back to the foreground. Every tab and operation the frame
+has is there, in a phone layout: an iOS tab bar at the bottom, scrolling single-column screens laid
+out around the notch and home indicator, and bottom sheets. Settings (theme, HA sign-in) open from
+the gear at the top right of Today, where the frame uses a long press on the sidebar clock.
+
+The phone look is all in `css/phone.css`, scoped to `html[data-phone]`, which `fit()` in
+`js/app.js` sets only on iPhones. The frame never matches it, so frame changes still reach the phone
+and phone tweaks never touch the frame.
 
 Why not a native app: building one needs Xcode, and installing it on more than one person's phone
 needs the paid Apple Developer Program (or a rebuild every 7 days). A home-screen app needs neither.
@@ -51,3 +57,11 @@ should answer with `access-control-allow-origin`. To undo, restore the backup th
 
 Nothing else is registered in HA. The app's URL is its OAuth client id, and the sign-in returns to the
 same host.
+
+## Developing the phone layout without a phone
+
+Run `npm run dev` and open `http://localhost:5173/?sim=iphone` in a browser sized to 402×874 (for
+example, Safari's Responsive Design Mode or Chrome's device toolbar). In dev builds `?sim=iphone`
+turns the phone layout on, fakes the iPhone safe areas (62 px top, 34 px bottom) and draws a
+status bar and home indicator so you can see what sits under them. Production builds ignore it.
+Playwright's WebKit at that viewport is a close match for screenshots.

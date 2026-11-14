@@ -1,0 +1,432 @@
+/* iPhone (IPHONE.md). fit() in js/app.js sets data-phone on <html> for the dashboard installed on a
+   phone, and sizes the stage to the phone's own screen instead of scaling the frame's 800 px layout.
+   These rules turn the portrait layout (css/portrait.css) into an iOS-style app: native text sizes,
+   tabs that scroll vertically, a translucent tab bar above the home indicator, bottom sheets.
+   --safe-t / --safe-b are the status bar and home indicator insets in px. The frame never gets
+   data-phone, so nothing here touches it. */
+
+/* ---------------------------------------------------------------- scale */
+html[data-phone] {
+  --fs-clock: 64px;
+  --fs-hero: 34px;
+  --fs-xl: 28px;
+  --fs-l: 22px;
+  --fs-m: 17px;
+  --fs-body: 16px;
+  --fs-label: 12px;
+  --fs-min: 12px;
+  --r: 16px;
+  --r-s: 10px;
+  --gap: 12px;
+  --pad: 16px;
+  --tap: 44px;
+  --tabbar: 50px;
+}
+html[data-phone], html[data-phone] body { background: var(--paper); }
+
+/* ---------------------------------------------------------------- stage + tab bar */
+html[data-phone] .stage { grid-template-rows: 1fr; grid-template-columns: 1fr; }
+html[data-phone] .views { grid-row: 1; grid-column: 1; }
+html[data-phone] .view {
+  overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;
+  padding: calc(var(--safe-t, 0px) + 8px) 16px calc(var(--tabbar) + var(--safe-b, 0px) + 20px);
+}
+html[data-phone] .view--bleed { padding: 0; overflow: hidden; }
+
+html[data-phone] .rail {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 40;
+  grid-row: auto; height: calc(var(--tabbar) + var(--safe-b, 0px));
+  flex-direction: row; align-items: flex-start; padding: 0 2px var(--safe-b, 0px);
+  border: 0; box-shadow: 0 -.5px 0 rgb(var(--ink-rgb) / .2);
+  background: rgba(242, 238, 230, .82);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+}
+html[data-phone][data-theme="dark"] .rail { background: rgba(22, 21, 19, .82); }
+html[data-phone] .rail-item {
+  flex: 1; min-width: 0; height: var(--tabbar); padding-top: 6px; justify-content: flex-start; gap: 3px;
+  font-size: 10px; font-weight: 600; font-stretch: 100%; letter-spacing: 0; text-transform: none;
+  color: var(--mute);
+}
+html[data-phone] .rail-item .i { width: 25px; height: 25px; stroke-width: 1.8; }
+html[data-phone] .rail-item.is-active { background: none; color: var(--ink); }
+html[data-phone] .rail-item.is-active .i { stroke-width: 2.4; }
+html[data-phone] .rail-item:active, html[data-phone] .rail-item.is-active:active { background: none; opacity: .6; }
+/* Content scrolls under a frosted status bar, as in iOS apps. */
+html[data-phone] .stage::before {
+  content: ''; position: absolute; z-index: 35; left: 0; right: 0; top: 0; height: var(--safe-t, 0px); pointer-events: none;
+  background: rgba(242, 238, 230, .82); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+}
+html[data-phone][data-theme="dark"] .stage::before { background: rgba(22, 21, 19, .82); }
+html[data-phone] .stage:has(#view-photos.is-active)::before { display: none; }
+/* The status bar shows the time; settings live behind the gear on Today (js/system.js). */
+html[data-phone] .rail-clock { display: none; }
+html[data-phone] .phone-gear {
+  position: absolute; z-index: 30; right: 12px; top: calc(var(--safe-t, 0px) + 4px);
+  width: 40px; height: 40px; display: none; place-items: center; border-radius: 50%;
+  background: rgb(var(--ink-rgb) / .07); color: var(--ink);
+}
+html[data-phone] .phone-gear:active { opacity: .5; }
+html[data-phone] .phone-gear.is-away { opacity: 0; pointer-events: none; }
+
+/* ---------------------------------------------------------------- shared components */
+html[data-phone] .card { padding: 14px 16px; }
+html[data-phone] .btn { min-height: 44px; padding: 0 18px; font-size: 15px; letter-spacing: .03em; border-width: 1.5px; }
+html[data-phone] .icon-btn { width: 40px; height: 40px; border-width: 1.5px; }
+html[data-phone] .icon-btn .i { width: 20px; height: 20px; }
+html[data-phone] .fab { width: 44px; height: 44px; }
+html[data-phone] .fab .i { width: 22px; height: 22px; }
+html[data-phone] .seg { padding: 2px; }
+html[data-phone] .seg button { min-height: 32px; padding: 0 12px; font-size: 13px; letter-spacing: .02em; text-transform: none; font-weight: 700; font-stretch: 100%; }
+html[data-phone] .seg button .num { font-size: 13px; }
+html[data-phone] .chip { min-height: 36px; padding: 0 14px; font-size: 15px; gap: 6px; }
+html[data-phone] .pill { height: 28px; padding: 0 10px; font-size: 12px; gap: 5px; }
+html[data-phone] .dots i { width: 9px; height: 9px; }
+html[data-phone] .label { letter-spacing: .06em; }
+
+/* toasts and banners sit above the tab bar / below the status bar */
+html[data-phone] .toasts { left: 12px; right: 12px; bottom: calc(var(--tabbar) + var(--safe-b, 0px) + 10px); }
+html[data-phone] .toast { min-height: 48px; max-width: 100%; padding: 0 6px 0 16px; font-size: 15px; border-radius: 14px; gap: 8px; }
+html[data-phone] .toast-msg { padding: 12px 6px 12px 0; }
+html[data-phone] .toast-undo { min-height: 36px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
+html[data-phone] .toast:not(:has(.toast-undo)) { padding-right: 16px; }
+
+/* sheets: iOS bottom sheets, full width, grabber on top */
+html[data-phone] .sheet,
+html[data-phone][data-orient="portrait"] .sheet,
+html[data-phone][data-orient="portrait"] .sheet--wide,
+html[data-phone][data-orient="portrait"] .sheet--cam {
+  top: auto; bottom: 0; left: 0; width: 100%; max-width: 100%;
+  max-height: calc(100% - var(--safe-t, 0px) - 12px);
+  border-radius: 14px 14px 0 0; padding-bottom: var(--safe-b, 0px);
+  transform: translateY(100%); opacity: 1;
+}
+html[data-phone] .sheet-layer.is-open .sheet { transform: none; }
+html[data-phone] .sheet::before {
+  content: ''; display: block; width: 36px; height: 5px; margin: 6px auto -11px; border-radius: 3px;
+  background: rgb(var(--ink-rgb) / .25); position: relative; z-index: 2;
+}
+
+/* settings drawer: a full-height sheet from the right is fine, but inside the insets */
+html[data-phone] .demo-panel { padding-top: calc(var(--safe-t, 0px) + 8px); padding-bottom: calc(var(--safe-b, 0px) + 16px); }
+
+/* ---------------------------------------------------------------- dev simulator (/?sim=iphone) */
+.sim-status {
+  position: fixed; z-index: 9999; left: 0; right: 0; top: 0; height: 54px; pointer-events: none;
+  display: flex; align-items: center; justify-content: space-between; padding: 6px 34px 0 44px;
+  font: 600 17px -apple-system, system-ui, sans-serif; color: var(--ink);
+}
+.sim-status i { position: absolute; left: 50%; top: 11px; width: 124px; height: 36px; margin-left: -62px; border-radius: 20px; background: #000; }
+.sim-home { position: fixed; z-index: 9999; left: 50%; bottom: 8px; width: 140px; height: 5px; margin-left: -70px; border-radius: 3px; background: var(--ink); pointer-events: none; }
+html[data-phone] .stage:has(#view-home.is-active) .phone-gear { display: grid; }
+.phone-gear { display: none; }
+
+/* ---------------------------------------------------------------- Today: one scrolling column
+   clock + date / weather / walk / next up / lanes / photo / pinned list / shopping + home */
+html[data-phone] .home { height: auto; display: flex; flex-direction: column; gap: 14px; }
+html[data-phone] .h-main, html[data-phone] .h-side { display: contents; }
+html[data-phone] .h-clock { order: 1; flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 52px 8px 0; border-bottom-width: 2px; }
+html[data-phone] .h-time { font-size: 60px; }
+html[data-phone] .h-ampm { font-size: 15px; margin: 2px 0 0 4px; }
+html[data-phone] .h-date { font-size: 20px; margin: 0; text-align: right; line-height: 1.05; }
+html[data-phone] .h-date b { display: block; font-size: 13px; margin: 0 0 2px; }
+html[data-phone] .h-weather { order: 2; padding: 0 0 10px; border-bottom-width: 2px; }
+html[data-phone] .h-wx-top { gap: 8px; }
+html[data-phone] .h-wx-icon .i { width: 34px; height: 34px; }
+html[data-phone] .h-wx-temp { font-size: 44px; }
+html[data-phone] .h-wx-meta { font-size: 14px; }
+html[data-phone] .h-wx-meta b { font-size: 13px; }
+html[data-phone] .h-wx-say { font-size: 18px; margin: 6px 0 8px; }
+html[data-phone] .h-hr { font-size: 14px; }
+html[data-phone] .h-hr-l { font-size: 11px; }
+html[data-phone] .h-hr-i { height: 22px; }
+html[data-phone] .h-hr-i .i { width: 18px; height: 18px; }
+
+html[data-phone] .h-walk { order: 3; flex-direction: column; align-items: stretch; gap: 4px; padding: 12px 14px; }
+html[data-phone] .h-walk .label { width: auto; white-space: nowrap; }
+html[data-phone] .h-walk-head { display: flex; }
+html[data-phone] .h-walk-title { font-size: 26px; white-space: normal; }
+html[data-phone] .h-walk-sub { font-size: 17px; white-space: normal; }
+html[data-phone] .h-walk-go { order: 0; margin: 0; height: 28px; font-size: 13px; }
+html[data-phone] .h-walk-last { order: 0; margin: 0; font-size: 14px; }
+html[data-phone] .h-walk-plan { gap: 8px; }
+html[data-phone] .h-walk-when { font-size: 17px; }
+html[data-phone] .h-walk-p { width: 36px; height: 36px; }
+html[data-phone] .h-walk-p .avatar { width: 26px !important; height: 26px !important; font-size: 12px !important; }
+html[data-phone] .h-walk-timer { font-size: 48px; }
+html[data-phone] .h-walk-stale { max-width: none; }
+html[data-phone] .h-walk-back { order: 0; margin: 4px 0 0; align-self: flex-start; height: 38px; font-size: 16px; }
+html[data-phone] .h-walk-x { order: 0; margin: -8px -8px -8px 0; }
+
+html[data-phone] .h-hero-slot { order: 4; }
+html[data-phone] .h-hero { padding: 16px 18px; gap: 12px; min-height: 140px; }
+html[data-phone] .h-hero-title { margin: 6px 0; }
+html[data-phone] .h-hero-meta { font-size: 15px; }
+html[data-phone] .h-hero-count { font-size: 56px; }
+html[data-phone] .h-hero-count small { font-size: 13px; margin-top: 6px; }
+html[data-phone] .h-hero-foot { gap: 8px; margin-top: 8px; }
+html[data-phone] .h-hero--empty .h-hero-title { font-size: 28px; }
+
+html[data-phone] .h-lanes { order: 5; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+html[data-phone] .h-lane { border-top-width: 4px; padding-top: 8px; gap: 6px; }
+html[data-phone] .h-lane-head b { font-size: 15px; }
+html[data-phone] .h-lane-head .avatar { width: 24px !important; height: 24px !important; font-size: 11px !important; }
+html[data-phone] .h-ev { min-height: 0; padding: 7px 10px; border-radius: 10px; }
+html[data-phone] .h-ev-t { font-size: 12px; }
+html[data-phone] .h-ev-n { font-size: 15px; }
+html[data-phone] .h-free { font-size: 17px; }
+html[data-phone] .h-more { min-height: 32px; font-size: 13px; padding: 0 10px; }
+
+html[data-phone] .h-photo { order: 6; height: auto; aspect-ratio: 4 / 3; }
+html[data-phone] .h-photo-cap { padding: 30px 14px 10px; }
+html[data-phone] .h-photo-cap span { font-size: 17px; }
+html[data-phone] .h-chores { order: 7; overflow: visible; }
+html[data-phone] .h-pinned li { font-size: 16px; }
+html[data-phone] .h-pinned-tile .h-more { font-size: 13px; }
+html[data-phone] .h-duo { order: 8; gap: 12px; }
+html[data-phone] .h-stat .num { font-size: 40px; }
+html[data-phone] .h-stat small { font-size: 14px; }
+html[data-phone] .h-recent li { font-size: 15px; }
+html[data-phone] .h-st-row { font-size: 15px; min-height: 28px; }
+html[data-phone] .h-st-row b { font-size: 20px; }
+html[data-phone] .h-st-row .i { width: 20px; height: 20px; }
+html[data-phone] .h-st-btn { min-height: 44px; font-size: 15px; }
+html[data-phone] .h-st-btn b { font-size: 13px; }
+
+/* ---------------------------------------------------------------- Calendar: its time grid scrolls itself */
+html[data-phone] #view-calendar { overflow: hidden; padding-top: calc(var(--safe-t, 0px) + 6px); padding-bottom: calc(var(--tabbar) + var(--safe-b, 0px)); }
+html[data-phone] .cal-head { gap: 6px; height: auto; margin-bottom: 8px; row-gap: 8px; }
+html[data-phone] .cal-head .icon-btn, html[data-phone] .cal-head .fab { width: 36px; height: 36px; }
+html[data-phone] .cal-head .btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+html[data-phone] .cal-head .seg button { min-height: 30px; padding: 0 8px; font-size: 13px; }
+html[data-phone] .cal-title { min-width: 0; gap: 6px; padding: 0 2px; flex-direction: column; align-items: flex-start; }
+html[data-phone] .cal-title .serif { font-size: 26px; }
+html[data-phone] .cal-title .label { font-size: 11px; }
+html[data-phone] .lanes-head, html[data-phone] .allday, html[data-phone] .cal-3 .lanes-head { grid-template-columns: 44px repeat(4, 1fr); }
+html[data-phone] .cal-3 .lanes-head { grid-template-columns: 44px repeat(3, 1fr); }
+html[data-phone] .allday { grid-template-columns: 44px 1fr; padding: 6px 0; }
+html[data-phone] .allday .gutter { font-size: 10px; }
+html[data-phone] .ad { min-height: 30px; padding: 0 8px; font-size: 13px; border-radius: 8px; }
+html[data-phone] .lane-head { gap: 4px; padding: 0 4px 6px; margin: 0 2px; border-bottom-width: 3px; }
+html[data-phone] .lane-head b { font-size: 13px; }
+html[data-phone] .lane-head .avatar { width: 22px !important; height: 22px !important; font-size: 10px !important; }
+html[data-phone] .day-head { padding: 4px 6px; margin: 0 2px; gap: 4px; border-bottom-width: 3px; }
+html[data-phone] .day-head .num { font-size: 20px; }
+html[data-phone] .day-head b { font-size: 12px; }
+html[data-phone] .day-head small { display: none; }
+html[data-phone] .hr, html[data-phone] .lanes, html[data-phone] .now-line, html[data-phone] .cal-empty { left: 44px; }
+html[data-phone] .hr span { left: -44px; width: 38px; font-size: 11px; top: -8px; }
+html[data-phone] .ev { padding: 4px 7px; border-radius: 8px; }
+html[data-phone] .ev-title { font-size: 14px; padding-right: 0; }
+html[data-phone] .ev.is-short .ev-title { font-size: 13px; }
+html[data-phone] .ev-meta { font-size: 11px; }
+html[data-phone] .ev-with { display: none; }
+html[data-phone] .now-line span { font-size: 12px; padding: 1px 4px; right: calc(100% + 4px); top: -11px; }
+html[data-phone] .now-line--0 { right: calc((100% - 44px) * 2 / 3); }
+html[data-phone] .now-line--1 { left: calc(44px + (100% - 44px) / 3); right: calc((100% - 44px) / 3); }
+html[data-phone] .now-line--2 { left: calc(44px + (100% - 44px) * 2 / 3); }
+html[data-phone] .cal-empty { font-size: 26px; }
+html[data-phone] .ev--more { font-size: 15px; }
+/* week: a scrolling list of days */
+html[data-phone] .cal-body { overflow-y: auto; }
+html[data-phone] .week { height: auto; grid-template-rows: none; grid-auto-rows: auto; gap: 6px; }
+html[data-phone] .wk-col { grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr); grid-auto-rows: auto; gap: 4px; padding-bottom: 6px; }
+html[data-phone] .wk-head { padding: 4px 6px; border-right-width: 3px; }
+html[data-phone] .wk-head b { font-size: 12px; }
+html[data-phone] .wk-head .num { font-size: 22px; }
+html[data-phone] .wk-ad, html[data-phone] .wk-free { grid-column: span 2; }
+html[data-phone] .wk-ad { min-height: 26px; padding: 0 8px; font-size: 12px; }
+html[data-phone] .wk-ev, html[data-phone] .wk-more { min-height: 40px; padding: 4px 8px; }
+html[data-phone] .wk-t { font-size: 11px; }
+html[data-phone] .wk-t::before { width: 7px; height: 7px; }
+html[data-phone] .wk-n { font-size: 13px; }
+html[data-phone] .wk-more { font-size: 12px; }
+html[data-phone] .wk-free { font-size: 15px; padding: 4px 8px; }
+/* month */
+html[data-phone] .mo-grid, html[data-phone] .mo-dow { gap: 3px; }
+html[data-phone] .mo-dow .label { padding-left: 4px; font-size: 10px; }
+html[data-phone] .mo-cell { padding: 4px 5px; border-radius: 8px; }
+html[data-phone] .mo-cell .num { font-size: 17px; }
+html[data-phone] .mo-dots { gap: 2px; }
+html[data-phone] .mo-dots i { width: 6px; height: 6px; }
+html[data-phone] .mo-dots em { font-size: 10px; }
+/* event + add sheets */
+html[data-phone] .sheet--event { width: 100%; }
+html[data-phone] .evs-band { padding: 26px 20px 18px; }
+html[data-phone] .evs-band h2 { font-size: 34px; padding-right: 40px; }
+html[data-phone] .evs-time { font-size: 20px; }
+html[data-phone] .evs-body { padding: 8px 20px 20px; }
+html[data-phone] .evs-row { min-height: 52px; gap: 12px; }
+html[data-phone] .evs-row b { font-size: 16px; }
+html[data-phone] .evs-row span { font-size: 13px; }
+html[data-phone] .evs-notes { font-size: 18px; padding-top: 12px; }
+html[data-phone] .big-input { height: 52px; font-size: 28px; border-bottom-width: 2px; }
+html[data-phone] .add .label { margin: 14px 0 8px; }
+html[data-phone] .add-who { gap: 6px; flex-wrap: wrap; }
+html[data-phone] .who-btn, html[data-phone] .add-who--big .who-btn { min-width: 64px; padding: 6px 8px; font-size: 13px; border-radius: 14px; }
+html[data-phone] .add-row { gap: 0 16px; }
+html[data-phone] .more-row { min-height: 52px; padding: 0 14px; gap: 10px; }
+html[data-phone] .more-row b { font-size: 16px; }
+html[data-phone] .more-row span { font-size: 13px; }
+
+/* ---------------------------------------------------------------- Shopping: list, then add + usuals; the view scrolls */
+html[data-phone] .shop { height: auto; display: flex; flex-direction: column; gap: 14px; }
+html[data-phone] .s-head { gap: 10px; align-items: baseline; }
+html[data-phone] .s-head h1 { font-size: 40px; }
+html[data-phone] .s-count { font-size: 15px; padding-top: 0; }
+html[data-phone] .s-count .num { font-size: 22px; }
+html[data-phone] .s-list { overflow: visible; padding-bottom: 0; }
+html[data-phone] .s-row { min-height: 52px; }
+html[data-phone] .s-hit { gap: 12px; }
+html[data-phone] .s-box { width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--line); }
+html[data-phone] .s-box .i { width: 16px; height: 16px; }
+html[data-phone] .s-name b { font-size: 17px; font-weight: 600; }
+html[data-phone] .s-name small { font-size: 13px; }
+html[data-phone] .s-store { font-size: 10px; padding: 3px 6px; }
+html[data-phone] .s-qty button { width: 36px; height: 36px; }
+html[data-phone] .s-qty button .i { width: 18px; height: 18px; }
+html[data-phone] .s-qty .num { min-width: 18px; font-size: 18px; }
+html[data-phone] .s-empty { font-size: 26px; padding: 40px 0; }
+html[data-phone] .s-drawer-h { min-height: 48px; padding: 0 14px; font-size: 16px; }
+html[data-phone] .s-drawer-h .num { font-size: 18px; }
+html[data-phone] .s-got { min-height: 44px; font-size: 16px; }
+html[data-phone] .s-side { gap: 12px; }
+html[data-phone] .s-add { padding: 8px; border-radius: 14px; gap: 8px; }
+html[data-phone] .s-input-wrap { height: 48px; padding: 0 12px; gap: 8px; border-radius: 10px; }
+html[data-phone] .s-input { font-size: 17px; }
+html[data-phone] .s-usuals { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; gap: 6px; }
+html[data-phone] .s-tile { min-height: 56px; padding: 8px 10px; border-radius: 12px; gap: 4px; }
+html[data-phone] .s-tile b { font-size: 14px; }
+html[data-phone] .s-tile span { font-size: 10px; }
+html[data-phone] .s-ac-row { min-height: 48px; padding: 0 12px 0 14px; }
+html[data-phone] .s-ac-row b { font-size: 16px; }
+
+/* ---------------------------------------------------------------- Maya */
+html[data-phone] .dg {
+  height: auto; display: flex; flex-direction: column; gap: 12px;
+}
+html[data-phone] .dg-topbox { gap: 10px; }
+html[data-phone] .dg-top { gap: 12px; }
+html[data-phone] .dg-id h1 { font-size: 44px; }
+html[data-phone] .dg-meta { font-size: 14px; margin-top: 4px; }
+html[data-phone] .dg-walk { height: 44px; padding: 0 16px 0 12px; gap: 8px; border-radius: 22px; font-size: 16px; }
+html[data-phone] .dg-walk .i { width: 20px; height: 20px; }
+html[data-phone] .dg-food { gap: 10px; padding: 10px 12px; border-width: 1px; }
+html[data-phone] .dg-food-ic { width: 32px; height: 32px; }
+html[data-phone] .dg-food-t b { font-size: 15px; }
+html[data-phone] .dg-food-t span { font-size: 13px; }
+html[data-phone] .dg-food-ok { font-size: 14px; padding: 8px 14px; }
+html[data-phone] .dg-now { grid-template-columns: 1fr 1fr; gap: 10px; }
+html[data-phone] .dg-tile { padding: 10px 12px; border-width: 1px; border-left-width: 5px; gap: 2px; }
+html[data-phone] .dg-tile-k { font-size: 11px; gap: 6px; }
+html[data-phone] .dg-ic { width: 22px; height: 22px; }
+html[data-phone] .dg-ic .i { width: 13px; height: 13px; }
+html[data-phone] .dg-tile-v { font-size: 22px; }
+html[data-phone] .dg-tile-s { font-size: 13px; }
+html[data-phone] .dg-card { padding: 14px; border-width: 1px; }
+html[data-phone] .dg-head .label { font-size: 12px; }
+html[data-phone] .dg-sum { font-size: 14px; }
+html[data-phone] .dg-empty { font-size: 15px; }
+html[data-phone] .dg-m { gap: 10px; padding: 6px 0; }
+html[data-phone] .dg-m-ic { width: 28px; height: 28px; }
+html[data-phone] .dg-m-n b { font-size: 16px; }
+html[data-phone] .dg-m-n small, html[data-phone] .dg-m-r small { font-size: 13px; }
+html[data-phone] .dg-m-r b { font-size: 15px; }
+html[data-phone] .dg-mix { font-size: 13px; }
+html[data-phone] .dg-wk { font-size: 15px; padding: 8px 10px; gap: 8px; }
+html[data-phone] .dg-walks { overflow: visible; }
+html[data-phone] .dg-rstats { font-size: 14px; gap: 12px; }
+html[data-phone] .dg-rstats b { font-size: 22px; }
+html[data-phone] .dg-rp { font-size: 16px; }
+html[data-phone] .dg-map { flex: none; height: 240px; }
+html[data-phone] .dg-week .dg-bars { flex: none; height: 170px; gap: 4px; }
+html[data-phone] .dg-col-v { font-size: 10px; min-height: 13px; }
+html[data-phone] .dg-col-d { font-size: 11px; }
+html[data-phone] .dg-col-p { font-size: 9px; letter-spacing: -1px; }
+html[data-phone] .dg-col-bar i { border-radius: 5px 5px 0 0; }
+html[data-phone] .dg-wt b { font-size: 30px; }
+html[data-phone] .dg-wt { font-size: 15px; }
+html[data-phone] .dg-wt-r { font-size: 14px; }
+html[data-phone] .dg-wchart { flex: none; height: 180px; }
+
+/* ---------------------------------------------------------------- Home control */
+html[data-phone] .hc { height: auto; display: flex; flex-direction: column; gap: 14px; }
+html[data-phone] .hc-left, html[data-phone] .hc-right { display: flex; flex-direction: column; gap: 12px; }
+html[data-phone] .hc-sum { grid-template-columns: 1fr 1fr; gap: 10px; }
+html[data-phone] .sum { min-height: 0; padding: 12px 14px; gap: 2px; }
+html[data-phone] .sum b { font-size: 32px; }
+html[data-phone] .sum small { font-size: 12px; margin-top: 4px; }
+html[data-phone] .hc-scenes, html[data-phone][data-orient="portrait"] .hc-scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; }
+html[data-phone] .scene, html[data-phone][data-orient="portrait"] .scene { min-height: 44px; font-size: 13px; border-width: 1.5px; border-radius: 12px; gap: 6px; padding: 0 8px; }
+html[data-phone] .scene .i { width: 20px; height: 20px; }
+html[data-phone] .hc-rooms { overflow: visible; padding-bottom: 0; }
+html[data-phone] .room { margin-bottom: 14px; }
+html[data-phone] .room-h .serif, html[data-phone] .room-h h2, html[data-phone] .room-h h3 { font-size: 24px; }
+html[data-phone] .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+html[data-phone][data-orient="portrait"] .tiles--sheet { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+html[data-phone] .tile { min-height: 92px; padding: 10px 12px; border-radius: 14px; }
+html[data-phone] .tile-icon .i { width: 22px; height: 22px; }
+html[data-phone] .tile-name { font-size: 14px; margin-top: 4px; }
+html[data-phone] .tile-state { font-size: 13px; }
+html[data-phone] .tile-state.num { font-size: 20px; }
+html[data-phone] .tile--lock .tile-state, html[data-phone] .tile--garage .tile-state { font-size: 15px; }
+html[data-phone][data-orient="portrait"] .hc-right { display: flex; }
+html[data-phone] .hc-climate { padding: 14px 16px 16px; gap: 10px; }
+html[data-phone] .th-btn { width: 52px; height: 52px; }
+html[data-phone] .th-set .num { font-size: 72px; }
+html[data-phone] .th-now { font-size: 14px; }
+html[data-phone] .th-now b { font-size: 18px; }
+html[data-phone] .th-verb { font-size: 11px; padding: 4px 8px; }
+html[data-phone] .hc-climate .seg button { min-height: 34px; }
+html[data-phone] .hc-media { margin-top: 0; }
+html[data-phone] .np-art { width: 52px; height: 52px; }
+html[data-phone] .np-text b { font-size: 16px; }
+html[data-phone] .np-text > span:last-child { font-size: 13px; }
+html[data-phone] .slide-confirm { height: 60px; }
+
+/* ---------------------------------------------------------------- Agents: usage cards 2-up, then the session list */
+html[data-phone] .agents { height: auto; gap: 12px; }
+html[data-phone] .ag-top { flex-wrap: wrap; align-items: flex-end; gap: 6px; }
+html[data-phone] .ag-top h1 { font-size: 40px; }
+html[data-phone] .ag-top .label { white-space: normal; }
+html[data-phone] .ag-sync { gap: 8px; font-size: 11px; }
+html[data-phone] .ag-card { padding: 12px 14px; }
+html[data-phone] .ag-label { font-size: 12px; }
+html[data-phone] .cp-usage, html[data-phone][data-orient="portrait"] .cp-usage { grid-template-columns: 1fr 1fr; grid-template-rows: none; grid-auto-rows: auto; gap: 10px; height: auto; }
+html[data-phone] .ag-pct { font-size: 32px; }
+html[data-phone] .ag-pct small { font-size: 15px; }
+html[data-phone] .ag-bar { height: 10px; }
+html[data-phone] .ag-meter-foot { font-size: 12px; flex-wrap: wrap; }
+html[data-phone] .ag-meter-foot b { font-size: 15px; }
+html[data-phone] .cp-stat .num { font-size: 26px; }
+html[data-phone] .cp-stat small { font-size: 10px; }
+html[data-phone] .cp-today { gap: 8px 10px; }
+html[data-phone] .cp-mtop { font-size: 13px; }
+html[data-phone] .cp-week { grid-column: 1 / -1; min-height: 150px; }
+html[data-phone] .cp-models { grid-column: 1 / -1; }
+html[data-phone] .cp-body { display: flex; flex-direction: column; }
+html[data-phone] .cp-list { overflow: visible; }
+html[data-phone] .cp-seg { overflow-x: auto; max-width: 100%; }
+html[data-phone] .cp-seg button { min-height: 32px; padding: 0 12px; font-size: 13px; flex: none; }
+html[data-phone] .cp-row { padding: 10px 12px; gap: 4px; }
+html[data-phone] .cp-row-top b { font-size: 16px; font-weight: 700; }
+html[data-phone] .cp-row-meta span:not(.cp-tag) { max-width: 140px; }
+html[data-phone] .cp-tag { font-size: 10px; padding: 2px 6px; }
+html[data-phone] .cp-body.is-detail .cp-detail { min-height: calc(100vh - 220px); }
+html[data-phone] .cp-dtitle b { font-size: 17px; }
+html[data-phone] .cp-chat { overflow: visible; padding: 12px; }
+html[data-phone] .cp-bubble, html[data-phone] .cp-md { font-size: 15px; }
+
+/* ---------------------------------------------------------------- Photos: full bleed under the bars */
+html[data-phone] .ph-top, html[data-phone][data-orient="portrait"] .ph-top { top: calc(var(--safe-t, 0px) + 6px); left: 12px; right: 12px; }
+html[data-phone] .ph-top .seg button { min-height: 30px; padding: 0 10px; }
+html[data-phone] .ph-bottom, html[data-phone][data-orient="portrait"] .ph-bottom { left: 12px; right: 12px; bottom: calc(var(--tabbar) + var(--safe-b, 0px) + 12px); }
+html[data-phone] .ph-btn { height: 40px; min-width: 40px; padding: 0 14px; font-size: 13px; gap: 6px; }
+html[data-phone] .ph-btn .i { width: 20px; height: 20px; }
+html[data-phone] .ph-zone { top: calc(var(--safe-t, 0px) + 50px); bottom: calc(var(--tabbar) + var(--safe-b, 0px) + 60px); }
+html[data-phone] .cap, html[data-phone][data-orient="portrait"] .cap { left: 20px; bottom: calc(var(--tabbar) + var(--safe-b, 0px) + 70px); max-width: calc(100% - 40px); }
+html[data-phone] .cap-kicker { font-size: 12px; }
+html[data-phone] .cap-date, html[data-phone][data-orient="portrait"] .cap-date { font-size: 44px; }
+html[data-phone][data-orient="portrait"] .cap--m .cap-date { font-size: 34px; }
+html[data-phone] .stage:has(#view-photos.is-active) .rail { background: rgba(0, 0, 0, .45); box-shadow: none; }
+html[data-phone] .stage:has(#view-photos.is-active) .rail-item { color: rgba(255, 255, 255, .6); }
+html[data-phone] .stage:has(#view-photos.is-active) .rail-item.is-active { color: #fff; }

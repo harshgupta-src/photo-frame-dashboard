@@ -200,6 +200,12 @@
 
   App.on('ready', function () {
     $('#demo').addEventListener('click', demoClick);
+    // Phones have no rail clock to hold: a gear on Today opens the same panel.
+    if (App.phone) {
+      $('#stage').insertAdjacentHTML('beforeend', '<button class="phone-gear" aria-label="Settings">' + App.icon('gear', 22) + '</button>');
+      $('.phone-gear').addEventListener('click', App.openDemo);
+      $('#view-home').addEventListener('scroll', function () { $('.phone-gear').classList.toggle('is-away', this.scrollTop > 40); }, { passive: true });
+    }
     // A phone that isn't signed in to HA yet: offer it once a week.
     var w = App.ha.web, NAG = 'ha-signin-nag';
     if (App.phone && w && !w.signedIn) {
