@@ -51,12 +51,11 @@ html[data-phone] .rail-item .i { width: 25px; height: 25px; stroke-width: 1.8; }
 html[data-phone] .rail-item.is-active { background: none; color: var(--ink); }
 html[data-phone] .rail-item.is-active .i { stroke-width: 2.4; }
 html[data-phone] .rail-item:active, html[data-phone] .rail-item.is-active:active { background: none; opacity: .6; }
-/* Content scrolls under a frosted status bar, as in iOS apps. */
+/* Solid strip behind the status bar: content scrolling under it is hidden, not shown blurred. */
 html[data-phone] .stage::before {
   content: ''; position: absolute; z-index: 35; left: 0; right: 0; top: 0; height: var(--safe-t, 0px); pointer-events: none;
-  background: rgba(242, 238, 230, .82); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  background: var(--paper);
 }
-html[data-phone][data-theme="dark"] .stage::before { background: rgba(22, 21, 19, .82); }
 html[data-phone] .stage:has(#view-photos.is-active)::before { display: none; }
 /* The status bar shows the time; settings live behind the gear on Today (js/system.js). */
 html[data-phone] .rail-clock { display: none; }
