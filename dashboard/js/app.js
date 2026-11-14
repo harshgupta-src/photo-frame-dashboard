@@ -529,6 +529,12 @@ import { assetKey, decide, markApplied } from './update.js';
   function fit() {
     var stage = $('#stage'), vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
+    // An iOS home-screen app draws edge to edge but reports a viewport short by the status bar
+    // (e.g. 812 of 874 pt), leaving a blank band at the bottom. Use the whole screen there.
+    if (navigator.standalone && vh > vw && screen.width === vw && screen.height > vh) vh = screen.height;
+    var full = vh !== window.innerHeight ? vh + 'px' : '';
+    document.documentElement.style.height = document.body.style.height = full;
+    stage.style.top = full && vh / 2 + 'px';
     var ins = insets(), aw = vw - ins.l - ins.r, ah = vh - ins.t;
     var portrait = ah > aw, w, h;
     if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * ah / aw)); }
@@ -588,6 +594,11 @@ import { assetKey, decide, markApplied } from './update.js';
     if (App.startCalendar) App.startCalendar();
     fit();
     window.addEventListener('resize', fit);
+    // iOS reports the safe-area insets late on a cold start, without a resize event.
+    if (App.phone) {
+      [300, 1000, 2500].forEach(function (ms) { setTimeout(fit, ms); });
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) fit(); });
+    }
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
     // (detail === 0) still work.
     $('#rail').addEventListener('pointerdown', function (e) {
