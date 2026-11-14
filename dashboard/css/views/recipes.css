@@ -1,0 +1,109 @@
+/* Recipes — the vault's recipe notes (js/views/recipes.js). Never on the frame; this is for an iPad's
+   browser (the landscape layout below), portrait, and phones/home-screen apps (html[data-phone]). */
+.recipes { height: 100%; display: flex; flex-direction: column; gap: 14px; }
+.rc-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex: none; }
+.rc-top h1 { font-size: 64px; line-height: .95; }
+.rc-sync { display: flex; align-items: center; gap: 14px; }
+.rc-sync .icon-btn .i { transform: scaleX(-1); }
+.rc-sync .icon-btn.is-busy { opacity: .4; pointer-events: none; }
+
+.rc-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 380px 1fr; gap: 14px; }
+.rc-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.rc-search input {
+  width: 100%; height: 52px; padding: 0 16px; border: 0; border-radius: var(--r-s);
+  background: var(--card); color: var(--ink); font: inherit; font-size: 18px; outline: none;
+  -webkit-appearance: none; appearance: none;
+}
+.rc-search input::placeholder { color: var(--mute); }
+.rc-search input:focus { box-shadow: 0 0 0 2px var(--ink); }
+.rc-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; overscroll-behavior: contain; }
+.rc-row { text-align: left; padding: 12px 14px; border-radius: var(--r-s); background: var(--card); display: flex; flex-direction: column; gap: 4px; flex: none; }
+.rc-row b { font-size: 19px; font-weight: 800; line-height: 1.15; }
+.rc-sum { font-size: 14px; line-height: 1.3; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rc-when { font-size: 12px; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.rc-row.is-sel { background: var(--ink); color: var(--paper); }
+.rc-row.is-sel .rc-sum, .rc-row.is-sel .rc-when { color: var(--paper); opacity: .75; }
+.rc-empty { color: var(--mute); font-size: 16px; padding: 18px 4px; }
+
+.rc-detail { background: var(--card); border-radius: var(--r); min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 28px 40px; }
+.rc-dhead { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.rc-dhead > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rc-dhead h1 { font-size: 46px; line-height: 1; }
+.rc-dsum { font-size: 18px; line-height: 1.4; color: var(--ink-2); }
+.rc-back { display: none; flex: none; }
+.rc-pick { padding: 40px 0; text-align: center; }
+
+.rc-doc { font-size: 18px; line-height: 1.45; overflow-wrap: anywhere; }
+.rc-sec { padding: 14px 0 6px; border-top: 1px solid var(--line); }
+.rc-sec h2 { font-size: 14px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; }
+.rc-sec h3 { font-size: 21px; font-weight: 800; margin: 16px 0 6px; }
+.rc-sec h4 { font-size: 18px; font-weight: 800; margin: 12px 0 4px; }
+.rc-sec p { margin: 6px 0; }
+.rc-sec blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--ink-2); }
+.rc-sec ul, .rc-sec ol { display: flex; flex-direction: column; gap: 2px; list-style: none; padding: 0; margin: 0; }
+.rc-sec code { font-family: ui-monospace, Menlo, monospace; font-size: .86em; background: var(--paper-2); padding: 1px 5px; border-radius: 4px; }
+.rc-sec a, .rc-link { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; font: inherit; padding: 0; }
+.rc-sec--facts { font-size: 16px; color: var(--ink-2); }
+.rc-sec--facts ul > li { padding-left: 16px; position: relative; }
+.rc-sec--facts ul > li::before { content: ''; position: absolute; left: 3px; top: .62em; width: 5px; height: 5px; border-radius: 50%; background: var(--mute); }
+
+/* ingredients: tap to tick off */
+.rc-sec:not(.rc-sec--facts) ul > li { position: relative; padding: 6px 0 6px 34px; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rc-sec:not(.rc-sec--facts) ul > li::before {
+  content: ''; position: absolute; left: 4px; top: 9px; width: 20px; height: 20px; border-radius: 6px;
+  border: 2px solid var(--line); box-sizing: border-box;
+}
+.rc-sec ul > li.is-done { color: var(--mute); text-decoration: line-through; text-decoration-color: rgb(var(--ink-rgb) / .35); }
+.rc-sec ul > li.is-done::before { background: var(--ok); border-color: var(--ok); }
+.rc-sec ul > li.is-done::after { content: ''; position: absolute; left: 11px; top: 12px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+
+/* method: numbered steps, tap one to mark where you are */
+.rc-sec ol { counter-reset: step; gap: 8px; margin: 6px 0; }
+.rc-sec ol > li { counter-increment: step; position: relative; padding: 10px 12px 10px 48px; border-radius: 12px; background: rgb(var(--ink-rgb) / .04); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rc-sec ol > li::before {
+  content: counter(step); position: absolute; left: 10px; top: 10px; width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--ink); color: var(--paper); font-size: 15px; font-weight: 800;
+}
+.rc-sec ol > li.is-step { background: rgb(var(--warm-rgb) / .35); box-shadow: inset 0 0 0 2px var(--amber); }
+.rc-sec ol > li.is-step::before { background: var(--amber); color: #111; }
+
+.rc-hist { color: var(--mute); font-size: 15px; }
+.rc-hist summary { font-size: 14px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 6px 0; list-style: none; cursor: pointer; }
+.rc-hist summary::-webkit-details-marker { display: none; }
+.rc-hist summary::before { content: '▸ '; }
+.rc-hist[open] summary::before { content: '▾ '; }
+.rc-hist ul > li { padding-left: 0; cursor: auto; }
+.rc-hist ul > li::before { display: none; }
+
+/* ---------------------------------------------------------------- portrait (list, then a recipe) */
+[data-orient="portrait"] .rc-body { grid-template-columns: 1fr; }
+[data-orient="portrait"] .rc-detail { display: none; }
+[data-orient="portrait"] .recipes.is-detail .rc-side { display: none; }
+[data-orient="portrait"] .recipes.is-detail .rc-detail { display: block; }
+[data-orient="portrait"] .recipes.is-detail .rc-top { display: none; }
+[data-orient="portrait"] .rc-back { display: inline-grid; }
+
+/* ---------------------------------------------------------------- phones and home-screen apps */
+html[data-phone] .recipes { height: auto; gap: 12px; max-width: 760px; margin: 0 auto; }
+html[data-phone] .rc-top { flex-wrap: wrap; gap: 6px; padding-right: 0; }
+html[data-phone] .rc-top h1 { font-size: 40px; }
+html[data-phone] .rc-sync { gap: 8px; }
+html[data-phone] .rc-sync .label { font-size: 11px; }
+html[data-phone] .rc-body { display: block; }
+html[data-phone] .rc-side { gap: 10px; }
+html[data-phone] .rc-search input { height: 40px; font-size: 16px; padding: 0 14px; border-radius: 10px; background: rgb(var(--ink-rgb) / .07); }
+html[data-phone] .rc-list { overflow: visible; }
+html[data-phone] .rc-row { padding: 12px 14px; }
+html[data-phone] .rc-row b { font-size: 17px; }
+html[data-phone] .rc-detail { overflow: visible; padding: 14px 16px 24px; }
+html[data-phone] .rc-dhead { margin: 0 -4px 10px; }
+html[data-phone] .rc-dhead h1 { font-size: 32px; }
+html[data-phone] .rc-dsum { font-size: 15px; }
+html[data-phone] .rc-doc { font-size: 16px; line-height: 1.45; }
+html[data-phone] .rc-sec h2 { font-size: 12px; }
+html[data-phone] .rc-sec h3 { font-size: 18px; margin-top: 14px; }
+html[data-phone] .rc-sec--facts { font-size: 14px; }
+html[data-phone] .rc-sec ol > li { padding: 10px 12px 10px 44px; }
+html[data-phone] .rc-sec ol > li::before { width: 24px; height: 24px; font-size: 13px; left: 10px; top: 10px; }
+html[data-phone] .rc-sec:not(.rc-sec--facts) ul > li::before { top: 8px; }
+html[data-phone] .rc-sec ul > li.is-done::after { top: 11px; }

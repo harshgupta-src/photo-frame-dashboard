@@ -6,6 +6,8 @@
 //   GET  /photos     ?key=READ_KEY  photos in the iCloud Shared Album(s) in secret PHOTO_ALBUM
 //   GET  /photo      ?key=READ_KEY&id=GUID&s=l|s  the image itself (proxied; iCloud's URLs expire)
 //   GET  /tile       ?key=READ_KEY&z=&x=&y=  an OpenStreetMap tile for the dog tab's route map (cached a week)
+//   GET  /recipes    ?key=READ_KEY  the vault's recipe notes for the phones' Recipes tab, read through the Home
+//        Brain gateway (recipes.js, ../../RECIPES.md; secrets VAULT_MCP_URL, VAULT_MCP_TOKEN)
 //   POST /reminders  Authorization: Bearer PUSH_TOKEN; stored, then forwarded to Home Assistant's
 //        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md)
 //   /walk, /walks*  the dog walk log (walkapi.js, ../../WALKS.md): an adapter over the walks kept in
@@ -27,7 +29,7 @@
 // most people), WALK_PLAN_CALENDARS (planned walks: {"id+id": "Calendar name"}; default: the CALENDARS
 // entry with exactly those walkers), HA_WALK_WEBHOOK_URL (pinged on walk changes), WALK_KEY (default:
 // derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, DOG_BIRTHDAY (YYYY-MM-DD, for the food check in food.js), AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS,
-// COPILOT_KEY (default: derived from PUSH_TOKEN).
+// COPILOT_KEY (default: derived from PUSH_TOKEN), VAULT_MCP_URL + VAULT_MCP_TOKEN (recipes), RECIPES_PATH.
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
@@ -37,6 +39,7 @@ import { copilotRoute } from './copilot.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
 import { dogRoute, mapTile } from './dogapi.js';
 import { mealRoute } from './meals.js';
+import { recipesRoute } from './recipes.js';
 
 const DAY = 864e5;
 const EVENTS_TTL = 300;
@@ -222,13 +225,14 @@ export default {
       if (r) return json(r.body, r.status);
     }
     if (req.method !== 'GET') return json({ error: 'not found' }, 404);
-    if (!['/events', '/calendars', '/reminders', '/photos', '/photo', '/tile'].includes(url.pathname)) return dashboard(req, url, env);
+    if (!['/events', '/calendars', '/reminders', '/photos', '/photo', '/tile', '/recipes'].includes(url.pathname)) return dashboard(req, url, env);
     if (!canRead(req, url, env)) return json({ error: 'unauthorized' }, 401);
     try {
       if (url.pathname === '/events') return await events(env, ctx);
       if (url.pathname === '/photos') return await photoList(env);
       if (url.pathname === '/photo') return await photoImage(url, env);
       if (url.pathname === '/tile') return await mapTile(url, ctx);
+      if (url.pathname === '/recipes') { const r = await recipesRoute(url, env, ctx); return json(r.body, r.status); }
       if (url.pathname === '/calendars') return json((await listCalendars(env)).map((c) => ({ name: c.name, shared: c.shared })));
       return json((await env.DATA.get('reminders', 'json')) || { updated: null, lists: {} });
     } catch (e) {

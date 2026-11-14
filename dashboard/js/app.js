@@ -397,6 +397,7 @@ import { assetKey, decide, markApplied } from './update.js';
   function onIdleTick() {
     idleSec++;
     if (App.phone) return; // phones update on resume (resumeUpdate) and never idle into ambient/sleep
+    if (App.current && App.views[App.current].stay) return; // e.g. a recipe open on an iPad's browser
     var blocked = $('#takeover').classList.contains('is-open');
     if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
     var asleep = App.isSleep();

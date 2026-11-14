@@ -3,7 +3,7 @@
 The phone app is the frame's dashboard itself, installed from Safari as a home-screen web app. It is
 the same build from the same Worker, so every deploy reaches the frame and every phone. A phone
 picks a new build up when the app comes back to the foreground. Every tab and operation the frame
-has is there, in a phone layout: an iOS tab bar at the bottom, scrolling single-column screens laid
+has is there, plus a Recipes tab the frame doesn't show ([RECIPES.md](RECIPES.md)), in a phone layout: an iOS tab bar at the bottom, scrolling single-column screens laid
 out around the notch and home indicator, and bottom sheets. Settings (theme, HA sign-in) open from
 the gear at the top right of Today, where the frame uses a long press on the sidebar clock.
 
