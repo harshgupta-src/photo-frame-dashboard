@@ -1,37 +1,82 @@
-// Home Assistant, through the kiosk app's window.HomeHQ bridge (kiosk MainActivity.HaBridge): the
-// token stays on the frame, so it is never part of the hosted dashboard. Without the bridge (a
-// desktop browser, or HA not set up on the frame) App.ha.ready is false and the Home card keeps its
-// demo data.
+// Home Assistant. On the frame it goes through the kiosk app's window.HomeHQ bridge (kiosk
+// MainActivity.HaBridge): the token stays on the frame, so it is never part of the hosted dashboard.
+// Elsewhere (the dashboard installed on a phone, IPHONE.md) the page talks to HA itself once the
+// person has signed in with their HA account (js/haweb.js, VITE_HA_URL). Without either (a desktop
+// browser, or HA not set up) App.ha.ready is false and the Home card keeps its demo data.
 //   App.ha.states     entity_id → state object, refreshed every POLL_MS while the page is visible
 //   App.ha.lights()   [{ id, name, ids, on, total }] for the Home card's buttons
 //   App.ha.toggle(id) turn a button's lights off if any are on, otherwise on
-//   App.ha.call(method, path, body)  raw bridge call (the kiosk allows only a few paths)
+//   App.ha.call(method, path, body)  raw call (only the kiosk's allowed paths, on both transports)
+//   App.ha.web        phone sign-in: { signedIn, signIn(), useToken(t), signOut() }, or null on the frame
 // VITE_HA_ROOM in .env.local adds a room button, "Name:pattern" with * as a wildcard, e.g.
 // "Living room:light.living_room_*". An "All lights" button is always there.
+import { createWebHA, authorizeUrl, STATE_KEY } from './haweb.js';
+
 (function () {
   'use strict';
   var bridge = window.HomeHQ;
   var POLL_MS = 15000, TIMEOUT_MS = 15000;
   var calls = {}, seq = 0, timer = null;
-  var ha = App.ha = { ready: false, states: {}, unit: '°C', updated: null };
+  var ha = App.ha = { ready: false, states: {}, unit: '°C', updated: null, web: null };
+  var call;
 
-  if (!bridge || !bridge.haReady || !bridge.haReady()) return;
+  if (bridge && bridge.haReady && bridge.haReady()) {
+    window.haReply = function (id, status, text) {
+      var c = calls[id];
+      if (!c) return;
+      delete calls[id];
+      clearTimeout(c.timer);
+      if (status >= 200 && status < 300) c.ok(text ? JSON.parse(text) : null);
+      else c.fail(new Error(status ? 'HA ' + status : text));
+    };
+    call = function (method, path, body) {
+      return new Promise(function (ok, fail) {
+        var id = 'h' + (++seq);
+        calls[id] = { ok: ok, fail: fail, timer: setTimeout(function () { delete calls[id]; fail(new Error('HA timed out')); }, TIMEOUT_MS) };
+        bridge.call(id, method, path, body ? JSON.stringify(body) : '');
+      });
+    };
+  } else if (!bridge && import.meta.env.VITE_HA_URL && webSetup()) {
+    call = ha.web.call;
+  } else return;
   ha.ready = true;
 
-  window.haReply = function (id, status, text) {
-    var c = calls[id];
-    if (!c) return;
-    delete calls[id];
-    clearTimeout(c.timer);
-    if (status >= 200 && status < 300) c.ok(text ? JSON.parse(text) : null);
-    else c.fail(new Error(status ? 'HA ' + status : text));
-  };
-  function call(method, path, body) {
-    return new Promise(function (ok, fail) {
-      var id = 'h' + (++seq);
-      calls[id] = { ok: ok, fail: fail, timer: setTimeout(function () { delete calls[id]; fail(new Error('HA timed out')); }, TIMEOUT_MS) };
-      bridge.call(id, method, path, body ? JSON.stringify(body) : '');
-    });
+  // Phone sign-in. HA's login page sends the browser back to /?ha_auth=1&code=…&state=…; the code is
+  // swapped for tokens and the page reloads clean, so every view is built knowing HA is there.
+  function webSetup() {
+    var store;
+    try { store = window.localStorage; } catch (e) { return false; }
+    var haUrl = import.meta.env.VITE_HA_URL.replace(/\/+$/, ''), origin = location.origin;
+    var api = createWebHA({ haUrl: haUrl, clientId: origin + '/', storage: store, fetch: window.fetch.bind(window) });
+    var web = ha.web = {
+      signedIn: api.signedIn(),
+      signIn: function () {
+        var state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        store.setItem(STATE_KEY, state);
+        location.href = authorizeUrl(haUrl, origin + '/', origin + '/?ha_auth=1', state);
+      },
+      useToken: function (t) { return api.useToken(t).then(function () { location.reload(); }); },
+      signOut: function () { return api.signOut().then(function () { location.reload(); }); },
+      call: function (method, path, body) {
+        return api.call(method, path, body).catch(function (e) {
+          if (e.message === 'signed out' && web.signedIn) {
+            web.signedIn = false;
+            App.toast('Signed out of Home Assistant · press and hold the clock to sign in again', { tone: 'error', icon: 'bolt', ms: 8000 });
+          }
+          throw e;
+        });
+      },
+    };
+    var q = new URLSearchParams(location.search);
+    if (q.get('ha_auth')) {
+      var code = q.get('code'), ok = code && q.get('state') && q.get('state') === store.getItem(STATE_KEY);
+      store.removeItem(STATE_KEY);
+      var back = function () { location.replace(origin + '/' + location.hash); };
+      if (ok) api.exchange(code).then(back, function (e) { alert('Home Assistant sign-in failed: ' + e.message); back(); });
+      else back();
+      return false;
+    }
+    return web.signedIn;
   }
 
   function glob(p) { return new RegExp('^' + p.trim().replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'); }

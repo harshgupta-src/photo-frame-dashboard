@@ -73,7 +73,8 @@ launcher, Android settings, and reloading. On frames without system navigation, 
 screen's dog walk tile is also a walk timer that logs walks to Lifelog and the family calendar, and
 the dog's own tab charts meals, walks, pee/poop and weight, plan vs what happened; see
 [WALKS.md](dashboard/WALKS.md). The Agents tab shows GitHub Copilot sessions and usage, pushed by
-the Mac and a Home Assistant add-on; see [COPILOT.md](dashboard/COPILOT.md).
+the Mac and a Home Assistant add-on; see [COPILOT.md](dashboard/COPILOT.md). The same dashboard installs on an
+iPhone as a home-screen app, and each deploy updates the phones too; see [IPHONE.md](dashboard/IPHONE.md).
 
 ## For agents: start here
 

@@ -3,17 +3,20 @@
    single-column layout. No nesting: Android WebView 106. */
 
 /* ---------------------------------------------------------------- stage + tab bar */
-[data-orient="portrait"] .stage { grid-template-columns: 1fr; grid-template-rows: 1fr 84px; }
+/* --safe-b: a phone's home-indicator inset in stage px (fit() in js/app.js; 0 on the frame). The
+   tab bar grows by it and keeps its buttons above the indicator. */
+[data-orient="portrait"] .stage { grid-template-columns: 1fr; grid-template-rows: 1fr calc(84px + var(--safe-b, 0px)); }
 [data-orient="portrait"] .views { grid-row: 1; grid-column: 1; }
 [data-orient="portrait"] .rail {
   grid-row: 2; grid-column: 1;
   flex-direction: row; padding: 0 4px;
   border-right: 0; border-top: 2px solid var(--ink);
+  padding-bottom: var(--safe-b, 0px);
 }
 [data-orient="portrait"] .rail-item { flex: 1; height: auto; min-width: 0; font-size: 11px; letter-spacing: .05em; }
 [data-orient="portrait"] .rail-clock { margin: 0 0 0 auto; flex: 1; padding: 0; display: flex; flex-direction: column; justify-content: center; }
 
-[data-orient="portrait"] .toasts { left: 0; bottom: 108px; }
+[data-orient="portrait"] .toasts { left: 0; bottom: calc(108px + var(--safe-b, 0px)); }
 [data-orient="portrait"] .toast { max-width: 720px; }
 [data-orient="portrait"] .sheet { max-width: calc(100% - 48px); max-height: 1080px; }
 [data-orient="portrait"] .sheet--wide, [data-orient="portrait"] .sheet--cam { width: calc(100% - 48px); }

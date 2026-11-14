@@ -15,8 +15,10 @@
 //        gateway (agentcal.js; Bearer AGENT_CAL_KEY, calendars in secret AGENT_CALENDARS)
 //   /copilot, /copilot/session, POST /copilot/push  Copilot sessions and usage for the Agents tab,
 //        pushed by the Mac and the HA Copilot Agent add-on (copilot.js, ../../COPILOT.md; Bearer COPILOT_KEY)
-//   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame only.
-//        The kiosk opens /?key=READ_KEY once; that sets a cookie that covers the page's own files.
+//   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame and the
+//        household's phones (../IPHONE.md). The kiosk opens /?key=READ_KEY once; that sets a cookie
+//        that covers the page's own files. /manifest.webmanifest gets start_url /?key=READ_KEY so a
+//        home-screen app (own cookie jar) signs itself in; the home-screen icons need no key.
 // Secrets: ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD, READ_KEY, PUSH_TOKEN, PHOTO_ALBUM, HA_REMINDERS_WEBHOOK_URL,
 // LIFELOG_URL, LIFELOG_TOKEN.
 // Secret CALENDARS: {"Calendar name": ["person id", ...]} as JSON; only these calendars are read.
@@ -150,8 +152,12 @@ async function photoImage(url, env) {
   return json({ error: 'image unavailable' }, 502);
 }
 
-// The built dashboard bakes in READ_KEY, so it is only served to the frame.
+// Home-screen icons hold nothing private, and iOS fetches them without the page's cookie.
+const PUBLIC_ASSETS = ['/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'];
+
+// The built dashboard bakes in READ_KEY, so it is only served to the frame and the household's phones.
 async function dashboard(req, url, env) {
+  if (PUBLIC_ASSETS.includes(url.pathname)) return env.ASSETS.fetch(new Request(new URL(url.pathname, url), req));
   const viaQuery = same(url.searchParams.get('key') || '', env.READ_KEY);
   if (!viaQuery && !same(cookieKey(req), env.READ_KEY)) {
     return new Response('Not authorised', { status: 401, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
@@ -159,6 +165,14 @@ async function dashboard(req, url, env) {
   const assetUrl = new URL(url);
   assetUrl.search = '';
   const res = await env.ASSETS.fetch(new Request(assetUrl, req));
+  // An app installed on a phone home screen (../../IPHONE.md) keeps its own cookies, apart from the
+  // browser's, so it starts from /?key=… and sets the cookie itself on every launch.
+  if (url.pathname === '/manifest.webmanifest' && res.ok) {
+    const m = await res.json();
+    m.id = '/';
+    m.start_url = '/?key=' + encodeURIComponent(env.READ_KEY);
+    return new Response(JSON.stringify(m), { headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' } });
+  }
   if (!viaQuery) return res;
   const out = new Response(res.body, res);
   out.headers.set('Cache-Control', 'no-store');

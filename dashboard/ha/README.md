@@ -3,7 +3,8 @@
 With this set up, Home Assistant holds the household's calendars and shared Reminders lists, so
 automations can use them, and the frame reads them from HA over the LAN (through the kiosk's
 `window.HomeHQ` bridge, see `../kiosk/README.md`). The frame-data Worker stays as the fallback
-when HA can't be reached, and still hosts the dashboard and the photos.
+when HA can't be reached, and still hosts the dashboard and the photos. Phones running the
+dashboard (`../IPHONE.md`) reach HA over its public URL instead, each signed in as its owner.
 
 ```
 iCloud calendars ──CalDAV──▶ HA calendar.*  ──▶ frame (Worker /events as fallback)

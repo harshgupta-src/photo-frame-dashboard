@@ -5,6 +5,11 @@ import { assetKey, decide, markApplied } from './update.js';
   'use strict';
   var D = window.DATA;
   var App = window.App = { state: D, views: {}, current: null, mode: 'day', calMode: 'normal' };
+  // The dashboard installed on a phone (IPHONE.md) rather than shown on the frame: no kiosk, a small
+  // touch screen. Phones skip the wall-display behaviour (idle → ambient → sleep).
+  App.phone = !window.HomeHQ && (navigator.standalone === true ||
+    (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches ||
+      (matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600))));
   var $ = App.$ = function (s, r) { return (r || document).querySelector(s); };
   App.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
@@ -389,6 +394,7 @@ import { assetKey, decide, markApplied } from './update.js';
   var idleSec = 0;
   function onIdleTick() {
     idleSec++;
+    if (App.phone) return; // phones update on resume (resumeUpdate) and never idle into ambient/sleep
     var blocked = $('#takeover').classList.contains('is-open');
     if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
     var asleep = App.isSleep();
@@ -464,6 +470,15 @@ import { assetKey, decide, markApplied } from './update.js';
       });
     })();
   };
+  // Phones: a phone app is opened and put away rather than left idle, so look for a new build each
+  // time it comes back to the front and apply it straight away, before it's being used.
+  function resumeUpdate() {
+    if (document.hidden) {
+      if (updatePending && updateSafe()) applyUpdate();
+      return;
+    }
+    checkUpdate(1).then(function (v) { if (v === 'apply' && updateSafe()) applyUpdate(); });
+  }
   function updateSafe() {
     if ($('#sheetLayer').classList.contains('is-open') || $('#demo').classList.contains('is-open')) return false;
     return !(App.walk && App.walk.active);
@@ -497,17 +512,33 @@ import { assetKey, decide, markApplied } from './update.js';
   App.stageH = SHORT;
   // Screen px per stage px (the stage is scaled on desktop browsers).
   App.stageScale = function () { return $('#stage').getBoundingClientRect().width / App.stageW || 1; };
+  // Phone notches and home indicators (env(safe-area-inset-*), with viewport-fit=cover): the stage
+  // starts below the top inset and is fitted beside the side insets. It still runs to the bottom
+  // edge, and --safe-b (in stage px) pads the tab bar up above the home indicator. All 0 on the frame.
+  var insetProbe = null;
+  function insets() {
+    if (!insetProbe) {
+      insetProbe = document.createElement('div');
+      insetProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;' +
+        'padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+      document.body.appendChild(insetProbe);
+    }
+    var cs = getComputedStyle(insetProbe);
+    return { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+  }
   function fit() {
     var stage = $('#stage'), vw = window.innerWidth, vh = window.innerHeight;
     if (!vw || !vh) return;
-    var portrait = vh > vw, w, h;
-    if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * vh / vw)); }
-    else { h = SHORT; w = Math.max(LONG, Math.round(SHORT * vw / vh)); }
+    var ins = insets(), aw = vw - ins.l - ins.r, ah = vh - ins.t;
+    var portrait = ah > aw, w, h;
+    if (portrait) { w = SHORT; h = Math.max(LONG, Math.round(SHORT * ah / aw)); }
+    else { h = SHORT; w = Math.max(LONG, Math.round(SHORT * aw / ah)); }
     App.stageW = w; App.stageH = h;
     stage.style.setProperty('--stage-w', w + 'px');
     stage.style.setProperty('--stage-h', h + 'px');
-    var s = Math.min(vw / w, vh / h);
-    stage.style.transform = Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s + ')';
+    var s = Math.min(aw / w, ah / h), dx = (ins.l - ins.r) / 2, dy = ins.t / 2;
+    stage.style.setProperty('--safe-b', (ins.b / s).toFixed(1) + 'px');
+    stage.style.transform = (dx || dy ? 'translate(' + dx + 'px,' + dy + 'px) ' : '') + (Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s + ')');
     if (portrait === App.portrait && document.documentElement.dataset.orient) return;
     var flipped = !!document.documentElement.dataset.orient;
     App.portrait = portrait;
@@ -576,9 +607,10 @@ import { assetKey, decide, markApplied } from './update.js';
     tickLoop();
     document.addEventListener('visibilitychange', function () { if (!document.hidden) tickLoop(); });
     setInterval(pollUpdate, POLL_MS);
+    if (App.phone) document.addEventListener('visibilitychange', resumeUpdate);
     App.emit('ready');
     refreshStale(1500);
-    setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
+    if (!App.phone) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
   document.addEventListener('DOMContentLoaded', function () { App.start(); });
 })();

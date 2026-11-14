@@ -128,11 +128,22 @@
       opts.map(function (o) { return '<button data-theme-pref="' + o[0] + '" class="' + (App.themePref() === o[0] ? 'is-on' : '') + '">' + o[1] + '</button>'; }).join('') +
       '</div><p class="demo-note">' + note + '</p></div>';
   }
+  // Phones sign in to Home Assistant here (js/ha.js, IPHONE.md). The frame uses the kiosk's token.
+  function haHTML() {
+    var w = App.ha.web;
+    if (!w) return '';
+    return '<div class="demo-sec"><div class="label label--light">Home Assistant</div>' +
+      (w.signedIn
+        ? '<div class="demo-grid demo-grid--3"><button data-ha-out>Sign out</button></div><p class="demo-note">Signed in on this device: lights, and ticks on the shopping and pinned lists, go to Home Assistant.</p>'
+        : '<div class="demo-grid demo-grid--3"><button data-ha-in class="is-on">Sign in</button><button data-ha-token>Use a token</button></div>' +
+          '<p class="demo-note">Sign in with your own Home Assistant account to turn lights on and off and tick off list items from this phone.</p>') +
+      '</div>';
+  }
   function demoHTML() {
     var t = App.now();
     return '<div class="demo-panel">' +
-      '<div class="demo-head"><div><div class="label label--light">Prototype</div><h2 class="serif">Demo controls</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
-      appearanceHTML(t) +
+      '<div class="demo-head"><div><div class="label label--light">' + (App.phone ? 'Settings' : 'Prototype') + '</div><h2 class="serif">' + (App.phone ? 'Home HQ' : 'Demo controls') + '</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
+      haHTML() + appearanceHTML(t) +
       '<div class="demo-sec"><div class="label label--light">Time of day · now ' + App.fmt.time(t) + '</div><div class="demo-grid">' +
       '<button data-time="7:10">7:10 AM</button><button data-time="15:18">3:18 PM</button><button data-time="19:45">7:45 PM</button><button data-time="23:40">11:40 PM</button><button data-time="real">Real time</button></div></div>' +
       '<div class="demo-sec"><div class="label label--light">Modes</div><div class="demo-grid">' +
@@ -157,6 +168,13 @@
     var b = e.target.closest('button');
     if (!b) { if (e.target === $('#demo')) closeDemo(); return; }
     if (b.hasAttribute('data-demo-close')) return closeDemo();
+    if (b.hasAttribute('data-ha-in')) return App.ha.web.signIn();
+    if (b.hasAttribute('data-ha-out')) return App.ha.web.signOut();
+    if (b.hasAttribute('data-ha-token')) {
+      var tok = window.prompt('Home Assistant long-lived access token (your HA profile → Security)');
+      if (tok) App.ha.web.useToken(tok).catch(function (err) { App.toast(App.esc(err.message), { tone: 'error', icon: 'bolt' }); });
+      return;
+    }
     if (b.dataset.time) {
       if (b.dataset.time === 'real') App.setTime(null);
       else { var p = b.dataset.time.split(':'); App.setTime(+p[0], +p[1]); }
@@ -182,6 +200,19 @@
 
   App.on('ready', function () {
     $('#demo').addEventListener('click', demoClick);
+    // A phone that isn't signed in to HA yet: offer it once a week.
+    var w = App.ha.web, NAG = 'ha-signin-nag';
+    if (App.phone && w && !w.signedIn) {
+      var last = 0;
+      try { last = +localStorage.getItem(NAG) || 0; } catch (e) { /* storage disabled */ }
+      if (Date.now() - last > 7 * 864e5) {
+        App.banner({
+          icon: 'bulb', title: 'Connect Home Assistant', sub: 'Sign in to control lights and tick off lists from this phone',
+          action: 'Sign in', dismiss: 'Not now', onAction: w.signIn,
+        });
+        try { localStorage.setItem(NAG, String(Date.now())); } catch (e) { /* storage disabled */ }
+      }
+    }
     App.hold($('#railClock'), 700, { done: App.openDemo });
     document.addEventListener('keydown', function (e) {
       if (e.target.tagName === 'INPUT') return;
