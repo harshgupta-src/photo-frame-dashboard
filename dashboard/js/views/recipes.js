@@ -21,16 +21,21 @@
   function refresh(force) {
     if (!R.on) return Promise.resolve();
     R.busy = true;
+    var changed = false;
     return fetch(API + '/recipes' + (force ? '?refresh=1' : ''), { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; }); })
       .then(function (j) {
-        var before = JSON.stringify(R.data && R.data.recipes);
+        changed = JSON.stringify(j.recipes) !== JSON.stringify(R.data && R.data.recipes);
         R.data = j; R.error = j.stale ? j.error || 'Showing the last copy' : null; R.updated = Date.now();
         write({ at: R.updated, data: j });
-        if (JSON.stringify(j.recipes) !== before && App.current === 'recipes') render();
       })
       .catch(function (e) { R.error = e.message; console.warn('Recipes sync failed', e); })
-      .then(function () { R.busy = false; if (App.current === 'recipes') syncLine(); });
+      .then(function () {
+        R.busy = false;
+        // Redraw even when hidden: the view is pre-built at startup, and the router only resumes it
+        // (no rebuild) when the tab is opened, so a stale "Loading…" would otherwise stick.
+        if (changed || !R.data) render(); else syncLine();
+      });
   }
 
   function recipes() { return (R.data && R.data.recipes) || []; }
