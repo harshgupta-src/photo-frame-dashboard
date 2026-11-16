@@ -36,7 +36,9 @@ On the VM, `frame-data-release` (`release.sh`) handles each deploy:
 
 It keeps the last 5 releases. Deploys log in as `framedeploy`, which may only run that release and restart or
 read the logs of `frame-data`. Two keys may log in: `~/.ssh/ha_azure_vm` on the Mac, and the CI key in the
-repo secret `FRAME_DATA_SSH_KEY`.
+repo secret `FRAME_DATA_SSH_KEY`. The Azure firewall allows SSH only from home, so CI joins the tailnet as
+an ephemeral `tag:ci` node (Tailscale OIDC trust credential, no stored secret: `TS_OAUTH_CLIENT_ID`/`TS_AUDIENCE`) and deploys to the VM's
+Tailscale IP, `100.115.4.49`.
 
 **Secrets:**
 - The VM keeps the full set in `/etc/frame-data/secrets.env` (root:frame-data 640).

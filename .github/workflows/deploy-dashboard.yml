@@ -6,7 +6,10 @@
 # Runs only where the repository variable DEPLOY_DASHBOARD is "true", so forks don't try to deploy.
 # Secrets:
 #   FRAME_DATA_SSH_KEY     private key of the VM's framedeploy user (may only release and restart frame-data)
-#   FRAME_DATA_KNOWN_HOSTS the VM's SSH host key line (ssh-keyscan -t ed25519 <host>, checked against the VM)
+#   FRAME_DATA_KNOWN_HOSTS the VM's SSH host key line for its Tailscale IP (ssh-keyscan -t ed25519 <ip>, checked against the VM)
+#   TS_OAUTH_CLIENT_ID     Tailscale OIDC trust credential (workload identity federation; Auth Keys write,
+#   TS_AUDIENCE            tag:ci; subject repo:<this repo>:ref:refs/heads/main). The runner joins the tailnet
+#                          as an ephemeral node, because the VM's firewall only allows SSH from home.
 #   DASHBOARD_ENV          the contents of dashboard/.env.local (see dashboard/.env.example)
 # Worker secrets (iCloud login, READ_KEY, CALENDARS, ...) stay on the VM (/etc/frame-data/secrets.env)
 # and are kept by deploys; non-VITE_ entries of DASHBOARD_ENV add to or override them.
@@ -24,6 +27,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write  # GitHub OIDC token for Tailscale workload identity federation
 
 jobs:
   deploy:
@@ -46,6 +50,13 @@ jobs:
         env:
           DASHBOARD_ENV: ${{ secrets.DASHBOARD_ENV }}
         run: printf '%s\n' "$DASHBOARD_ENV" > .env.local
+      - name: Join the tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:ci
+          ping: 100.115.4.49
       - name: SSH key for the VM
         env:
           FRAME_DATA_SSH_KEY: ${{ secrets.FRAME_DATA_SSH_KEY }}
@@ -56,3 +67,5 @@ jobs:
           printf '%s\n' "$FRAME_DATA_KNOWN_HOSTS" >> ~/.ssh/known_hosts
       - name: Build and deploy
         run: FRAME_DATA_SSH_KEY="$HOME/.ssh/frame_deploy" npm run deploy
+        env:
+          FRAME_DATA_VM: framedeploy@100.115.4.49  # the VM's Tailscale IP (ha-proxy)
