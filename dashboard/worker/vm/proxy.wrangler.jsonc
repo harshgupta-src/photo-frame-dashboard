@@ -1,0 +1,13 @@
+// The Cloudflare side of the VM setup: same Worker name, so it replaces the full Worker at the same URL.
+// Deploy with `npm run deploy:proxy`; put the full Worker back with `npm run deploy:cloudflare`.
+// The full Worker's secrets and KV binding stay on Cloudflare (deploys keep secrets), ready for that.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "frame-data",
+  "main": "proxy.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "vars": {
+    "ORIGIN": "https://harsh-ha.eastus.cloudapp.azure.com/frame-data"
+  }
+}

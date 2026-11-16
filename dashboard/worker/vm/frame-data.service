@@ -1,0 +1,33 @@
+[Unit]
+Description=frame-data Worker (photo frame dashboard API) under Miniflare/workerd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frame-data
+Group=frame-data
+WorkingDirectory=/var/lib/frame-data
+Environment=NODE_ENV=production
+Environment=FRAME_DATA_APP=/opt/frame-data/current
+Environment=FRAME_DATA_STATE=/var/lib/frame-data
+ExecStart=/usr/bin/node /opt/frame-data/current/server.mjs
+Restart=always
+RestartSec=3
+MemoryMax=500M
+TasksMax=128
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/frame-data
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+SyslogIdentifier=frame-data
+
+[Install]
+WantedBy=multi-user.target

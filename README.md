@@ -66,7 +66,8 @@ Settings → About before you follow any guide:
 ## The dashboard
 
 [`dashboard/`](dashboard) is the family dashboard we run on the BIUFRAME (it uses mock data): a Vite
-web app deployed to Cloudflare Workers. `dashboard/kiosk/` is a small full-screen WebView Android app,
+web app served by the `frame-data` Worker, which runs under workerd on an Azure VM behind a thin
+Cloudflare Workers proxy ([why and how](dashboard/worker/vm/README.md)). `dashboard/kiosk/` is a small full-screen WebView Android app,
 built without Gradle, that shows it. Hold two fingers still for 1.5 s to open a menu for the
 launcher, Android settings, and reloading. On frames without system navigation, optional floating
 **Back** and **Dashboard** buttons help; see the [kiosk guide](dashboard/kiosk/README.md). The Today

@@ -1,6 +1,6 @@
 # Home Assistant package: a dashboard deploy → every frame, over MQTT. Copy to
 # /config/packages/dashboard_update.yaml.
-# `npm run deploy` (worker/scripts/deploy.mjs) POSTs {"build": "<asset key>"} to this webhook when
+# `npm run deploy` (worker/scripts/deploy-vm.mjs) POSTs {"build": "<asset key>"} to this webhook when
 # HA_DEPLOY_WEBHOOK_URL is in .env.local. The kiosk subscribes to homehq/dashboard/update and calls
 # the page's window.frameUpdate(build), which checks the Worker and applies the new build once the
 # frame is idle, behind an "Updating…" screen (js/app.js). Retained, so a frame that was offline

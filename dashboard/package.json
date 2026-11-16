@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "vite build && node worker/scripts/deploy.mjs",
+    "deploy": "vite build && node worker/scripts/deploy-vm.mjs",
+    "deploy:cloudflare": "vite build && node worker/scripts/deploy-cloudflare.mjs",
+    "deploy:proxy": "wrangler deploy --config worker/vm/proxy.wrangler.jsonc",
     "test": "node --test worker/test/*.test.js test/*.test.js"
   },
   "devDependencies": {

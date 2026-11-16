@@ -1,0 +1,8 @@
+{
+  "name": "frame-data-vm",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "miniflare": "4.20260730.0"
+  }
+}
