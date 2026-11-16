@@ -8,7 +8,7 @@
 #   FRAME_DATA_SSH_KEY     private key of the VM's framedeploy user (may only release and restart frame-data)
 #   FRAME_DATA_KNOWN_HOSTS the VM's SSH host key line for its Tailscale IP (ssh-keyscan -t ed25519 <ip>, checked against the VM)
 #   TS_OAUTH_CLIENT_ID     Tailscale OIDC trust credential (workload identity federation; Auth Keys write,
-#   TS_AUDIENCE            tag:ci; subject repo:<this repo>:ref:refs/heads/main). The runner joins the tailnet
+#   TS_AUDIENCE            tag:ci; subject repo:<owner>@<id>/<repo>@<id>:ref:refs/heads/main, i.e. GitHub's immutable form). The runner joins the tailnet
 #                          as an ephemeral node, because the VM's firewall only allows SSH from home.
 #   DASHBOARD_ENV          the contents of dashboard/.env.local (see dashboard/.env.example)
 # Worker secrets (iCloud login, READ_KEY, CALENDARS, ...) stay on the VM (/etc/frame-data/secrets.env)
