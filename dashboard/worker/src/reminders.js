@@ -56,7 +56,19 @@ export function cleanOps(body, now = new Date()) {
 // For the Shortcut: the pending ops, and the ack to send with the next push once they're made.
 export function opsForPhone(stored) {
   const s = stored && Array.isArray(stored.ops) ? stored : { updated: null, seq: 0, ops: [] };
-  return { updated: s.updated, ack: s.ops.length ? s.ops[s.ops.length - 1].seq : s.seq || 0, count: s.ops.length, ops: s.ops };
+  return { updated: s.updated, ack: s.ops.length ? s.ops[s.ops.length - 1].seq : s.seq || 0, count: s.ops.length, ops: s.ops.map(phoneOp) };
+}
+
+// Shortcuts' If can't reliably compare against text set outside the editor, so each op also carries
+// flag keys the Shortcut tests with "has any value": is_<op>, and in_grocery / in_loml for the list.
+// apple_notes is the Reminders notes text, with the frame's assignee as an "Assigned: Name" last line.
+export function phoneOp(o) {
+  const out = { ...o, [`is_${o.op}`]: 'yes' };
+  const list = String(o.list || '').toLowerCase();
+  if (list.startsWith('grocery')) out.in_grocery = 'yes';
+  else if (list === 'loml') out.in_loml = 'yes';
+  out.apple_notes = [o.notes, o.assignee ? `Assigned: ${o.assignee}` : ''].filter(Boolean).join('\n');
+  return out;
 }
 
 // 'ok' (HA answered 2xx; HA answers 200 even for an unknown webhook id), 'failed', or 'off' (no secret).

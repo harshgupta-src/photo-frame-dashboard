@@ -4,8 +4,10 @@
 // pencil opens it to rename, add notes or delete. Ticked items wait, collapsed, under "Got it"
 // until the phone drops them or they're cleared. Quick-add tiles are what's bought most often
 // (remembered on this device), topped up with the usuals. Changes to the list update only the
-// categories that changed. Without Home Assistant the list is read-only.
-import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
+// categories that changed. After a tick or untick the rows hold still for 1.5 s (or until a tap
+// outside the list), so a quick second tap can't land on an item that slid into place. Without Home
+// Assistant the list is read-only, with a "Can't reach Home Assistant" hint when HA is down.
+import { createTodos, applyLocal, bumpHistory, topHistory, createHold } from '../todo.js';
 
 (function () {
   'use strict';
@@ -37,6 +39,12 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
   }
 
   function can() { return T.can(L); }
+  V.hold = createHold(function () { if (V.el && V.el.firstChild && App.onScreen('shopping')) paintList(); }, 1500);
+  document.addEventListener('pointerdown', function (e) {
+    if (!V.hold.held()) return;
+    var l = V.el && V.el.querySelector('.s-list');
+    if (!l || !l.contains(e.target)) V.hold.release();
+  }, true);
   function open() { return D.groceries.filter(function (g) { return !g.done && (V.store === 'all' || g.store === V.store); }); }
   function done() { return D.groceries.filter(function (g) { return g.done && (V.store === 'all' || g.store === V.store); }); }
   function byId(id) { return D.groceries.filter(function (g) { return g.id === id; })[0]; }
@@ -140,7 +148,8 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
   }
 
   // ---- painting: only what changed
-  function paintList() {
+  function paintList(force) {
+    if (V.hold.held() && !force) return paintHead();
     var l = V.el.querySelector('.s-list'), gs = groups(), have = {}, prev = null;
     gs.forEach(function (gr) { have[gr.cat] = 1; });
     App.$$('.s-cat', l).forEach(function (c) { if (!have[c.dataset.cat]) l.removeChild(c); });
@@ -185,9 +194,9 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     paintSync();
   }
   function paintSync() {
-    var t = syncText(), ro = !can(), el = V.el.querySelector('.s-sync');
-    el.textContent = t;
-    el.className = 's-sync' + (ro ? ' is-warn' : '');
+    var t = syncText(), ro = !can(), el = V.el.querySelector('.s-sync'), down = T.status() === 'offline';
+    if (el._t !== t) { el._t = t; el.innerHTML = t ? (down ? App.icon('bolt', 20) : '') + App.esc(t) : ''; }
+    el.className = 's-sync' + (ro ? ' is-warn' : '') + (down ? ' is-down' : '');
     V.el.querySelector('.shop').classList.toggle('is-ro', ro);
     var input = V.el.querySelector('.s-input');
     input.disabled = ro;
@@ -211,7 +220,7 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
       e.preventDefault();
       if (input.value.trim()) add(input.value);
     });
-    paintList(); paintSuggest();
+    paintList(true); paintSuggest();
   }
   function flash(id) {
     var r = V.el && V.el.querySelector('.s-list [data-id="' + id + '"]');
@@ -247,6 +256,7 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
   function check(g) {
     if (!can()) return;
     var id = g.id;
+    V.hold.touch();
     V.checking[id] = setTimeout(function () {
       delete V.checking[id];
       T.toggle(L, id, true);
@@ -262,13 +272,47 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     });
   }
   function uncheck(id) {
+    V.hold.touch();
     clearTimeout(V.checking[id]);
     delete V.checking[id];
     var r = V.el.querySelector('.s-list [data-id="' + id + '"]');
     if (r) r.classList.remove('is-checking');
   }
 
-  // Shared with the pinned list's sheet (home.js): rename, notes, delete with undo.
+  // "Assigned to" for the pinned list (home.js too): None or one of CONFIG.people, stored as the
+  // "Assigned: Name" line of the item's description. An assignee that isn't one of them (set
+  // elsewhere) gets its own button, so it isn't lost. Read the choice with App.assigneeOf(el).
+  App.assigneeSeg = function (cur) {
+    cur = String(cur || '');
+    var first = cur.toLowerCase().split(' ')[0], hit = !cur;
+    var btns = D.people.map(function (p) {
+      var on = !!cur && p.name.toLowerCase() === first;
+      if (on) hit = true;
+      return [on ? cur : p.name, p.name, on, p];
+    });
+    if (!hit) btns.push([cur, cur, true, null]);
+    btns.unshift(['', 'None', !cur, null]);
+    return '<div class="seg te-who-seg" role="radiogroup" aria-label="Assigned to">' + btns.map(function (b) {
+      return '<button type="button" role="radio" aria-checked="' + b[2] + '" class="' + (b[2] ? 'is-on' : '') + '" data-who="' + App.esc(b[0]) + '"' + (b[3] ? ' style="' + App.pstyle(b[3]) + '"' : '') + '>' +
+        (b[3] ? App.avatar(b[3], 26) : '') + App.esc(b[1]) + '</button>';
+    }).join('') + '</div>';
+  };
+  App.assigneeOf = function (el) {
+    var on = el && el.querySelector('.te-who-seg .is-on');
+    return on ? on.dataset.who : undefined;
+  };
+  // One listener per sheet: a tap on a button selects it.
+  function whoPick(el) {
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('.te-who-seg [data-who]');
+      if (!b) return;
+      App.$$('button', b.parentNode).forEach(function (x) { x.classList.toggle('is-on', x === b); x.setAttribute('aria-checked', x === b); });
+    });
+  }
+  App.assigneePick = whoPick;
+
+  // Shared with the pinned list's sheet (home.js): rename, notes, "Assigned to" (pinned list only),
+  // delete with undo.
   App.todoEditSheet = function (list, id, opts) {
     opts = opts || {};
     var it = T.find(list, id);
@@ -277,19 +321,21 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     App.sheet('<form class="sheet-pad te" action="#"><div class="label">' + App.esc(name) + '</div>' +
       '<input class="te-title" value="' + App.esc(it.title) + '" maxlength="120" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" aria-label="Title">' +
       '<textarea class="te-notes" rows="3" maxlength="500" placeholder="Notes" aria-label="Notes">' + App.esc(it.notes || '') + '</textarea>' +
-      (it.assignee ? '<p class="te-who">Assigned to <b>' + App.esc(it.assignee) + '</b> in Reminders</p>' : '') +
+      (list !== L ? '<div class="label te-who-l">Assigned to</div>' + App.assigneeSeg(it.assignee)
+        : it.assignee ? '<p class="te-who">Assigned to <b>' + App.esc(it.assignee) + '</b></p>' : '') +
       '<div class="sheet-actions te-actions"><button type="button" class="btn btn--ghost te-del">' + App.icon('trash', 22) + 'Delete</button>' +
       '<button type="submit" class="btn btn--solid te-save">Save</button></div></form>', {
       cls: 'sheet--edit' + (App.phone ? '' : ' sheet--top'),
       onClose: opts.onClose,
       onMount: function (el, close) {
         var form = el.querySelector('.te');
+        whoPick(el);
         form.addEventListener('submit', function (e) {
           e.preventDefault();
           var title = el.querySelector('.te-title').value.trim();
           if (!title) { el.querySelector('.te-title').focus(); return; }
           if (list === L && title.toLowerCase() !== it.title.toLowerCase()) deleted[it.title.toLowerCase()] = 1;
-          T.edit(list, id, { title: title, notes: el.querySelector('.te-notes').value }).then(function (r) {
+          T.edit(list, id, { title: title, notes: el.querySelector('.te-notes').value, assignee: App.assigneeOf(el) }).then(function (r) {
             if (r && r.dup) App.toast('<b>' + App.esc(title) + '</b> is already on the list', { tone: 'error', icon: 'bolt' });
           });
           close();
@@ -310,10 +356,14 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     var t;
     if ((t = e.target.closest('[data-check]'))) {
       var g = byId(t.dataset.check);
-      if (!g || g.pending) return;
+      if (!g) return;
+      // Ticked a moment ago and still in place (the hold): this tap unticks it.
+      if (g.done) { if (can()) { uncheck(g.id); T.toggle(L, g.id, false); } return; }
+      if (g.pending) return;
       if (V.checking[g.id]) uncheck(g.id); else check(g);
       return;
     }
+    if (!e.target.closest('[data-revive]')) V.hold.release();
     if ((t = e.target.closest('[data-edit]'))) return App.todoEditSheet(L, t.dataset.edit);
     if ((t = e.target.closest('[data-add]'))) {
       var on = find(t.dataset.add, false);
@@ -324,8 +374,10 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     if ((t = e.target.closest('[data-drawer]'))) { V.drawer = !V.drawer; return paintList(); }
     if ((t = e.target.closest('[data-revive]'))) {
       var r = byId(t.dataset.revive);
-      if (!r || r.pending || !can()) return;
+      if (!r || !r.done || r.pending || !can()) return;
+      V.hold.touch();
       T.toggle(L, r.id, false);
+      t.classList.add('is-pending');
       return App.toast('Added back <b>' + App.esc(r.name) + '</b>', { icon: 'cart', ms: 2500 });
     }
     if ((t = e.target.closest('[data-clear]'))) {

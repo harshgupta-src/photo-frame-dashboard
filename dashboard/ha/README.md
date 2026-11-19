@@ -83,9 +83,28 @@ What you get:
   with `"ack": N` drops ops up to N first; after that the phone wins again (e.g. an item ticked on
   the frame that the phone still lists open is reopened: it was re-added there). Lists missing from
   a push are left alone. Items done on the phone simply drop out of the push and are removed.
+  A pushed item without notes or without an assignee keeps the ones HA has; only a value in the
+  push replaces them (see "Assignees" below).
 - **Automation `frame_reminders_ops_publish`** ("Reminders ops to the Worker") — sends the ledger
   to the Worker's `/reminders/ops` on every change, so the Shortcut can read it with the token it
   already has. Until the Worker has that route, HA logs a warning per change and nothing else breaks.
+
+### Assignees
+
+Apple Shortcuts can't read or set Reminders' own "assigned to" on a shared list, so HA and the frame
+keep the assignee themselves, as an `Assigned: Name` last line of the item's description (notes
+above it). On the frame, an item on the pinned list (LOML) is assigned in its edit sheet, or when it's
+added, with the **Assigned to** choice (None or one of `VITE_PEOPLE`); the tile and the list show
+the person's initial or name in their colour. The grocery list has no assignee choice.
+
+- An assignment made on the frame is an `edit` op (`{seq, op: "edit", list, title, old_title,
+  notes, assignee}`: `notes` without the line, `assignee` the name, `""` once unassigned). The
+  Worker's `/reminders/ops` adds `apple_notes`, the two joined (`notes` + `Assigned: Name`), for
+  the Shortcut's **Set Notes**, so the assignee shows in the reminder's notes on the phones too.
+- Pushes keep it: the Shortcut pushes bare titles, and a pushed item with no notes or no assignee
+  leaves HA's as they are. Only a value in the push replaces them: `"assignee": "Name"`, or notes
+  whose last line is `Assigned: Name`. A side effect: notes or an assignee removed on the phone
+  aren't removed in HA by a push (remove them on the frame).
 
 Without the Shortcut changes below, the frame's edits still stick in HA (the ledger keeps them from
 being undone for 14 days), but they don't reach Apple Reminders.
@@ -103,10 +122,11 @@ reminders, so the push that follows already reflects the frame's edits:
 2. **Get Dictionary Value** `ack` from `Ops` → set variable `Ack`.
 3. **Get Dictionary Value** `ops` from `Ops` → **Repeat with Each** item. Inside, read `op`, `list`,
    `title`, `old_title` and `notes` from **Repeat Item**, then **If** `op` is:
-   - `add` → **Add New Reminder** `title` to the list named `list` (notes = `notes` if any).
+   - `add` → **Add New Reminder** `title` to the list named `list` (notes = `apple_notes` if any).
    - `rename` → **Find Reminders** where List is `list`, Title is `old_title`, Is Not Completed,
      limit 1 → **Set** Title of the reminder to `title`.
-   - `edit` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Set** Notes to `notes`.
+   - `edit` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Set** Notes to
+     `apple_notes` (`notes` plus an `Assigned: Name` line when the item is assigned; see "Assignees").
    - `complete` → **Find Reminders** (List `list`, Title `title`, Is Not Completed, limit 1) →
      **Set** Is Completed to on.
    - `reopen` → **Find Reminders** (List `list`, Title `title`, Is Completed, limit 1) → **Set** Is

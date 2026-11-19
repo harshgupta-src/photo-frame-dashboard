@@ -56,6 +56,16 @@ test('cleans HA\'s ledger and gives the phone the ack for what it lists', () => 
   assert.equal(cleanOps({ ops: 'nope' }), null);
 });
 
+test('gives the phone flag keys and Reminders notes for each op', () => {
+  const [g, l] = opsForPhone({ seq: 2, ops: [
+    { seq: 1, op: 'complete', list: 'Grocery list', title: 'Milk', notes: '', assignee: '' },
+    { seq: 2, op: 'edit', list: 'LOML', title: 'Call', notes: 'Soon', assignee: 'Ambuja' },
+  ] }).ops;
+  assert.equal(g.is_complete, 'yes'); assert.equal(g.in_grocery, 'yes'); assert.equal(g.apple_notes, '');
+  assert.equal(l.is_edit, 'yes'); assert.equal(l.in_loml, 'yes'); assert.equal('in_grocery' in l, false);
+  assert.equal(l.apple_notes, 'Soon\nAssigned: Ambuja');
+});
+
 function kv() {
   const m = new Map();
   return { get: async (k, t) => (m.has(k) ? (t === 'json' ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => { m.set(k, v); } };

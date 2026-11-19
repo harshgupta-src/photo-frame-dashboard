@@ -43,7 +43,7 @@ export function createTodos(opts) {
       var live = op.state !== 'ok';
       if (op.kind === 'add') {
         var hit = out.filter(function (it) { return same(it.title, op.title); });
-        if (!hit.length) out.push({ id: op.tmp, uid: null, title: op.title, notes: op.notes || '', assignee: '', done: false, pending: true });
+        if (!hit.length) out.push({ id: op.tmp, uid: null, title: op.title, notes: op.notes || '', assignee: op.assignee || '', done: false, pending: true });
         hit.forEach(function (it) { if (it.done) { it.done = false; it.pending = live; } });
       } else if (op.kind === 'set') {
         out.forEach(function (it) {
@@ -130,12 +130,12 @@ export function createTodos(opts) {
     return new Promise(function (ok) { o.done = ok; });
   }
 
-  store.add = function (list, title, notes) {
+  store.add = function (list, title, notes, assignee) {
     title = String(title || '').trim().slice(0, 120);
     if (!title || !store.online) return Promise.resolve(false);
     var dup = items(list).filter(function (it) { return !it.done && same(it.title, title); })[0];
     if (dup) return Promise.resolve({ dup: dup });
-    var o = op({ list: list, kind: 'add', tmp: 't' + (n + 1), title: title, notes: String(notes || '').trim() });
+    var o = op({ list: list, kind: 'add', tmp: 't' + (n + 1), title: title, notes: String(notes || '').trim(), assignee: String(assignee || '').trim() });
     var p = wait(o);
     send(o);
     return p;
@@ -148,7 +148,7 @@ export function createTodos(opts) {
     send(o);
     return p;
   };
-  // fields: { title, notes } (an assignee, if any, is kept).
+  // fields: { title, notes, assignee } ('' unassigns); a field left out keeps its value.
   store.edit = function (list, id, fields) {
     var it = byId(list, id);
     if (!it || !it.uid || !store.online) return Promise.resolve(false);
@@ -157,9 +157,11 @@ export function createTodos(opts) {
     if (t && t !== it.title) patch.title = t;
     var nn = String(fields.notes == null ? it.notes : fields.notes).trim();
     if (nn !== it.notes) patch.notes = nn;
+    var who = String(fields.assignee == null ? it.assignee : fields.assignee).trim().slice(0, 40);
+    if (who !== it.assignee) patch.assignee = who;
     if (!Object.keys(patch).length) return Promise.resolve(true);
     if (patch.title && items(list).some(function (x) { return x.id !== id && same(x.title, patch.title); })) return Promise.resolve({ dup: true });
-    var o = op({ list: list, kind: 'set', uid: it.uid, title: it.title, patch: patch, assignee: it.assignee, notes: nn });
+    var o = op({ list: list, kind: 'set', uid: it.uid, title: it.title, patch: patch, notes: nn, assignee: who });
     var p = wait(o);
     send(o);
     return p;
@@ -192,16 +194,30 @@ export function createTodos(opts) {
 // What script.frame_todo gets for an op (entity: the list's to-do entity).
 export function scriptData(op, entity) {
   var d = { entity_id: entity };
-  if (op.kind === 'add') { d.op = 'add'; d.title = op.title; if (op.notes) d.description = op.notes; }
+  if (op.kind === 'add') { d.op = 'add'; d.title = op.title; var desc = joinDesc(op.notes, op.assignee); if (desc) d.description = desc; }
   else if (op.kind === 'remove') { d.op = 'delete'; d.uid = op.uid; }
   else if (op.kind === 'clear') { d.op = 'clear_completed'; }
   else if ('done' in op.patch) { d.op = op.patch.done ? 'complete' : 'reopen'; d.uid = op.uid; }
   else {
     d.op = 'edit'; d.uid = op.uid;
     if (op.patch.title) d.rename = op.patch.title;
-    if ('notes' in op.patch) d.description = joinDesc(op.patch.notes, op.assignee);
+    if ('notes' in op.patch || 'assignee' in op.patch) d.description = joinDesc(op.notes, op.assignee);
   }
   return d;
+}
+
+// Keeps a list's rows where they are for ms after the last tick or untick (touch()), so a quick second
+// tap lands on the row under the finger instead of one that slid into its place. While held() the
+// view skips repainting the rows; paint() runs when the hold ends, or at once on release() (a tap
+// elsewhere).
+export function createHold(paint, ms) {
+  var timer = null;
+  function end() { clearTimeout(timer); timer = null; paint(); }
+  return {
+    touch: function () { clearTimeout(timer); timer = setTimeout(end, ms); },
+    held: function () { return timer !== null; },
+    release: function () { if (timer !== null) end(); }
+  };
 }
 
 // Quick-add history for the grocery list: { "lower title": { t, n (times bought), last (ms) } }.
@@ -233,7 +249,7 @@ export function applyLocal(items, op) {
   if (op.kind === 'add') {
     var hit = items.filter(function (it) { return same(it.title, op.title); })[0];
     if (hit) hit.done = false;
-    else items.push({ uid: 'l' + (++lid), title: op.title, notes: op.notes || '', assignee: '', done: false });
+    else items.push({ uid: 'l' + (++lid), title: op.title, notes: op.notes || '', assignee: op.assignee || '', done: false });
   } else if (op.kind === 'set') {
     for (i = 0; i < items.length; i++) if (items[i].uid === op.uid) for (var k in op.patch) items[i][k] = op.patch[k];
   } else if (op.kind === 'remove') {

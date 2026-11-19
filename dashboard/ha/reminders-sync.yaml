@@ -29,7 +29,12 @@
 # Payload (from the Worker, or straight from a Shortcut):
 #   {"lists": {"Grocery list": [{"title", "notes", "assignee", "done"}], "LOML": "a\nb"}, "ack": 12}
 #   or the lists flat at the top level. notes and assignee go in the item's description, the assignee
-#   as an "Assigned: Name" last line.
+#   as an "Assigned: Name" last line (an "Assigned:" last line of pushed notes counts as the assignee).
+#   A pushed item without notes or without an assignee keeps the HA item's (the Shortcut pushes bare
+#   titles, and Reminders' own assignment can't be read): only a value in the push replaces one, so
+#   an assignment made on the frame survives the next push.
+# - Ledger ops carry notes (without the "Assigned:" line) and assignee separately; an assignment made
+#   on the frame is an edit op. The Worker gives the Shortcut both joined as apple_notes.
 
 rest_command:
   frame_reminders_ops:
@@ -375,11 +380,14 @@ automation:
                     {% set t = (o.get('title') or o.get('name') or '') | string | trim %}
                     {% set done = o.get('done') in [true, 'true', 'Yes', 'yes'] or o.get('completed') == true %}
                     {% if t and not done and (t | lower) not in ns.seen %}
-                      {% set notes = (o.get('notes') or '') | string | trim %}
-                      {% set who = (o.get('assignee') or '') | string | trim %}
+                      {% set l = (o.get('notes') or '') | string | trim %}
+                      {% set l = l.split('\n') %}
+                      {% set tagged = l[-1].startswith('Assigned:') %}
+                      {% set notes = ((l[:-1] if tagged else l) | join('\n')) | trim %}
+                      {% set who = ((o.get('assignee') or '') | string | trim) or (l[-1][9:] | trim if tagged else '') %}
                       {% set lines = ([notes] if notes else []) + (['Assigned: ' ~ who] if who else []) %}
                       {% set ns.seen = ns.seen + [t | lower] %}
-                      {% set ns.out = ns.out + [{'title': t[:120], 'desc': lines | join('\n')}] %}
+                      {% set ns.out = ns.out + [{'title': t[:120], 'notes': notes, 'who': who, 'desc': lines | join('\n')}] %}
                     {% endif %}
                   {% endfor %}
                   {{ ns.out }}
@@ -432,11 +440,20 @@ automation:
                     {% set ns.out = ns.out + [i] %}
                   {% endfor %}
                   {{ ns.out }}
+                # Notes and assignee the push carries replace HA's; ones it leaves out are kept.
                 to_update: >-
                   {% set ns = namespace(out=[]) %}
                   {% for e in existing if (e.summary | lower) not in intent %}
-                    {% for i in incoming if (i.title | lower) == (e.summary | lower) and (e.description or '') != i.desc %}
-                      {% set ns.out = ns.out + [{'uid': e.uid, 'desc': i.desc}] %}
+                    {% for i in incoming if (i.title | lower) == (e.summary | lower) %}
+                      {% set l = (e.description or '') | trim %}
+                      {% set l = l.split('\n') %}
+                      {% set tagged = l[-1].startswith('Assigned:') %}
+                      {% set notes = i.notes or (((l[:-1] if tagged else l) | join('\n')) | trim) %}
+                      {% set who = i.who or (l[-1][9:] | trim if tagged else '') %}
+                      {% set d = (([notes] if notes else []) + (['Assigned: ' ~ who] if who else [])) | join('\n') %}
+                      {% if (e.description or '') != d %}
+                        {% set ns.out = ns.out + [{'uid': e.uid, 'desc': d}] %}
+                      {% endif %}
                     {% endfor %}
                   {% endfor %}
                   {{ ns.out }}

@@ -1,4 +1,6 @@
 // Home / Today: the glanceable overview. Never scrolls.
+import { createHold } from '../todo.js';
+
 (function () {
   'use strict';
   var D = window.DATA, V = {};
@@ -351,15 +353,15 @@
   }
 
   // The pinned Reminders list (CONFIG.pinnedList) takes the chores tile once live data is configured (App.reminders set).
-  // Every item is rendered; fitPinned then trims to what fits the tile. An assigned item's dot takes
-  // that person's colour.
+  // Every item is rendered; fitPinned then trims to what fits the tile. An assigned item's dot is
+  // that person's initial, in their colour.
   function who(it) { return it.who && it.who !== 'family' ? App.person(it.who) : null; }
   function pinned() {
     var items = App.reminders.pinned;
     return '<div class="label">' + App.esc(window.CONFIG.pinnedList) + (items.length ? ' · ' + items.length : '') + '</div>' +
       (items.length ? '<ul class="h-pinned">' + items.map(function (it) {
         var p = who(it);
-        return '<li><i' + (p ? ' class="is-who" style="' + App.pstyle(p) + '"' : '') + '></i>' + App.esc(it.title) + '</li>';
+        return '<li>' + (p ? '<i class="is-who" style="' + App.pstyle(p) + '">' + App.esc(p.name[0]) + '</i>' : '<i></i>') + App.esc(it.title) + '</li>';
       }).join('') + '</ul><small class="h-more"></small>'
         : '<p class="h-pinned-empty">' + (App.reminders.updated ? 'All clear.' : 'Waiting for the iPhone Shortcut.') + '</p>');
   }
@@ -377,17 +379,25 @@
     if (App.phone) { while (ul.children.length > 8) ul.removeChild(ul.lastChild); label(); return; }
     while (ul.children.length > 1 && tile.scrollHeight > tile.clientHeight + 1) { ul.removeChild(ul.lastChild); label(); }
   }
-  // The whole list, editable (App.todo, live.js): add at the top, tick the box, tap an item to rename,
-  // add notes or delete it (App.todoEditSheet, shopping.js). Ticked items wait under "Done" until the
-  // phone drops them. Updated in place while open.
+  // The whole list, editable (App.todo, live.js): add at the top (optionally assigned to someone),
+  // tick the box, tap an item to rename, add notes, assign or delete it (App.todoEditSheet,
+  // shopping.js). Ticked items wait under "Done" until the phone drops them. Updated in place while
+  // open, except for 1.5 s after a tick or untick (or until a tap outside the list), so rows don't
+  // move under the finger.
   var PS = { el: null, done: false, query: '' };
+  PS.hold = createHold(function () { paintPinnedSheet(); }, 1500);
+  document.addEventListener('pointerdown', function (e) {
+    if (!PS.hold.held()) return;
+    var w = PS.el && PS.el.querySelector('.pl-body-wrap');
+    if (!w || !w.contains(e.target)) PS.hold.release();
+  }, true);
   function pinnedRow(it) {
     var p = who(it), id = App.esc(it.id), busy = it.pending || !it.uid;
     return '<li class="pl-row' + (it.done ? ' is-done' : '') + (it.pending ? ' is-pending' : '') + '" data-id="' + id + '">' +
       '<button class="pl-box" data-pl-tick="' + id + '"' + (busy ? ' disabled' : '') + ' aria-label="' + (it.done ? 'Not done' : 'Done') + '"><span class="pl-chk">' + App.icon('check', 22) + '</span></button>' +
       '<button class="pl-body" data-pl-edit="' + id + '"' + (busy ? ' disabled' : '') + '><b>' + App.esc(it.title) + '</b>' +
       (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') +
-      (p ? '<small class="pinned-who" style="' + App.pstyle(p) + '">' + App.esc(p.name) + '</small>'
+      (p ? '<small class="pinned-who" style="' + App.pstyle(p) + '">' + App.avatar(p, 20) + App.esc(p.name) + '</small>'
         : it.assignee ? '<small class="pinned-who">' + App.esc(it.assignee) + '</small>' : '') + '</button></li>';
   }
   function pinnedSync() {
@@ -406,8 +416,8 @@
   function paintPinnedSheet() {
     if (!PS.el || !PS.el.isConnected) { PS.el = null; return; }
     var can = App.todo && App.todo.can('pinned');
-    var body = PS.el.querySelector('.pl-body-wrap'), h = pinnedListHTML();
-    if (body._h !== h) { body._h = h; body.innerHTML = h; }
+    var body = PS.el.querySelector('.pl-body-wrap'), h;
+    if (!PS.hold.held() && body._h !== (h = pinnedListHTML())) { body._h = h; body.innerHTML = h; }
     var s = PS.el.querySelector('.pl-sync');
     s.textContent = pinnedSync();
     PS.el.querySelector('.pl').classList.toggle('is-ro', !can);
@@ -419,11 +429,14 @@
     App.sheet('<div class="sheet-pad pl"><div class="label">Apple Reminders <span class="pl-sync"></span></div><h2 class="sheet-h serif">' + App.esc(window.CONFIG.pinnedList) + '</h2>' +
       '<form class="pl-add" action="#"><input class="pl-input" maxlength="120" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" aria-label="New item">' +
       '<button class="pl-add-btn" type="submit" aria-label="Add">' + App.icon('plus', 28) + '</button></form>' +
+      (App.assigneeSeg ? '<div class="pl-who"><span class="label">For</span>' + App.assigneeSeg('') + '</div>' : '') +
       '<div class="pl-body-wrap"></div></div>', {
       cls: App.phone ? '' : 'sheet--top',
       onClose: function () { PS.el = null; },
       onMount: function (el) {
         PS.el = el;
+        PS.hold.release();
+        if (App.assigneePick) App.assigneePick(el.querySelector('.pl-who') || el);
         var input = el.querySelector('.pl-input');
         input.value = PS.query;
         input.addEventListener('input', function () { PS.query = input.value; });
@@ -432,7 +445,11 @@
           var title = input.value.trim();
           if (!title || !App.todo.can('pinned')) return;
           input.value = PS.query = '';
-          App.todo.add('pinned', title).then(function (r) {
+          var who = App.assigneeOf && App.assigneeOf(el.querySelector('.pl-who'));
+          // Back to "None" for the next one: an assignment is a choice each time.
+          var none = el.querySelector('.pl-who [data-who=""]');
+          if (none) none.click();
+          App.todo.add('pinned', title, '', who).then(function (r) {
             if (r && r.dup) App.toast('<b>' + App.esc(r.dup.title) + '</b> is already on the list', { icon: 'check', ms: 2500 });
             // Failed (live.js said why): give back what was typed.
             else if (!r && !PS.query) { PS.query = title; if (PS.el) PS.el.querySelector('.pl-input').value = title; }
@@ -444,7 +461,11 @@
           if ((t = e.target.closest('[data-pl-tick]'))) {
             var id = t.dataset.plTick, it = App.todo.find('pinned', id);
             if (!it || !App.todo.can('pinned')) return;
+            // Ticked in place: the row moves to "Done" once the hold ends.
+            PS.hold.touch();
             App.todo.toggle('pinned', id, !it.done);
+            var row = t.closest('.pl-row');
+            if (row) row.classList.toggle('is-done', !it.done);
             if (!it.done) App.toast('<b>' + App.esc(it.title) + '</b> done', { icon: 'check', undo: function () { App.todo.toggle('pinned', id, false); } });
             return;
           }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WATCH_DOMAINS, fromPoll, parsePush, applyPush } from '../js/hastate.js';
+import { WATCH_DOMAINS, fromPoll, parsePush, applyPush, haDown } from '../js/hastate.js';
 import { every } from '../js/poll.js';
 
 const st = (id, state, at = '2026-11-19T15:00:00.000000+00:00', attributes = {}) =>
@@ -92,4 +92,13 @@ test('every() skips ticks while hidden and catches up once when shown', async ()
   stop();
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(resumes, 1);
+});
+
+test('haDown: no state yet past half the window, or a stale poll without the live stream', () => {
+  assert.equal(haDown({ ready: false }, 1e6, 0, 45000), false);
+  assert.equal(haDown({ ready: true, updated: null }, 20000, 0, 45000), false);
+  assert.equal(haDown({ ready: true, updated: null }, 23000, 0, 45000), true);
+  assert.equal(haDown({ ready: true, updated: 1000 }, 47000, 0, 45000), true);
+  assert.equal(haDown({ ready: true, updated: 1000, isLive: () => true }, 47000, 0, 45000), false);
+  assert.equal(haDown({ ready: true, updated: 10000 }, 47000, 0, 45000), false);
 });

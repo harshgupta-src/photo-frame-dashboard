@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTodos, scriptData, splitDesc, joinDesc, bumpHistory, topHistory } from '../js/todo.js';
+import { createTodos, scriptData, splitDesc, joinDesc, bumpHistory, topHistory, createHold } from '../js/todo.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 function setup(over = {}) {
@@ -86,6 +86,45 @@ test('edits keep the assignee line; nothing is sent while offline', async () => 
   assert.equal(await s.toggle('g', 'ua', true), false);
   assert.equal(s.remove('g', 'ua'), null);
   assert.equal(sent.length, 1);
+});
+
+test('assigning sends the notes with an Assigned line, shows at once and settles on HA\'s split', async () => {
+  const { s, sent, calls, at } = setup();
+  s.setBase('g', [{ uid: 'a', title: 'Milk', notes: 'oat', assignee: '' }], 0);
+  at(2000);
+  await s.edit('g', 'ua', { title: 'Milk', notes: 'oat', assignee: 'Harsh' });
+  assert.deepEqual(sent.at(-1), { entity_id: 'todo.g', op: 'edit', uid: 'a', description: 'oat\nAssigned: Harsh' });
+  assert.equal(s.items('g')[0].assignee, 'Harsh');
+  s.setBase('g', [{ uid: 'a', title: 'Milk', ...splitDesc('oat\nAssigned: Harsh') }], 2500);
+  assert.equal(s.items('g')[0].assignee, 'Harsh');
+  assert.ok(!calls.includes('mismatch:set'));
+  // Unassigning keeps the notes; leaving the assignee out keeps it; no change sends nothing.
+  await s.edit('g', 'ua', { assignee: '' });
+  assert.deepEqual(sent.at(-1), { entity_id: 'todo.g', op: 'edit', uid: 'a', description: 'oat' });
+  const n = sent.length;
+  assert.equal(await s.edit('g', 'ua', { assignee: '' }), true);
+  assert.equal(sent.length, n);
+  // An add can carry one too.
+  await s.add('g', 'Bins', '', 'Ambuja');
+  assert.deepEqual(sent.at(-1), { entity_id: 'todo.g', op: 'add', title: 'Bins', description: 'Assigned: Ambuja' });
+});
+
+test('a hold keeps rows still until it times out or is released, then paints once', async () => {
+  let paints = 0;
+  const h = createHold(() => paints++, 20);
+  h.touch();
+  await new Promise((r) => setTimeout(r, 10));
+  h.touch(); // a second tap extends it
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(h.held(), true);
+  assert.equal(paints, 0);
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(h.held(), false);
+  assert.equal(paints, 1);
+  h.touch();
+  h.release();
+  h.release();
+  assert.equal(paints, 2);
 });
 
 test('quick-add history ranks most bought, then most recent', () => {

@@ -169,7 +169,7 @@
 .h-pinned { display: flex; flex-direction: column; gap: 4px; width: 100%; } /* the tile is a <button>, which shrink-wraps */
 .h-pinned li { font-size: 19px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-pinned i { display: inline-block; width: 8px; height: 8px; margin-right: 10px; vertical-align: middle; border-radius: 50%; background: var(--ink-2); }
-.h-pinned i.is-who { width: 10px; height: 10px; margin-right: 9px; background: var(--c); }
+.h-pinned i.is-who { width: 20px; height: 20px; margin: -2px 8px 0 -4px; display: inline-grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 900; line-height: 1; background: var(--c); color: var(--c-ink); }
 .h-pinned-tile .h-more { min-height: 0; padding: 0; margin-top: 0; font-size: 14px; }
 .h-pinned-empty { font-family: var(--serif); font-style: italic; font-size: 22px; color: var(--ink-2); }
 
@@ -204,6 +204,10 @@ html[data-phone] .pl-sync { display: block; margin: 2px 0 0; }
 .pl-input:focus { border-color: var(--ink); }
 .pl-add-btn { flex: none; width: 72px; height: 72px; border-radius: 14px; display: grid; place-items: center; background: var(--ink); color: var(--paper); }
 .pl-add-btn:active { transform: scale(.94); }
+.pl-who { display: flex; align-items: center; gap: 12px; margin: 0 64px 12px 0; }
+.pl-who .te-who-seg { flex: 1; }
+.pl-who .te-who-seg button { min-height: 60px; }
+.pinned-list .pinned-who { display: inline-flex; align-items: center; gap: 6px; }
 .pinned-list .pl-row { flex-direction: row; align-items: stretch; gap: 0; padding: 0; }
 .pl-box { flex: none; width: 68px; display: grid; place-items: center; }
 .pl-chk { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: transparent; box-shadow: inset 0 0 0 3px var(--line); }
@@ -219,6 +223,8 @@ html[data-phone] .pl-sync { display: block; margin: 2px 0 0; }
 .pl.is-ro .pl-add-btn, .pl.is-ro .pl-box, .pl.is-ro .pl-body { pointer-events: none; opacity: .55; }
 
 html[data-phone] .pl-add { margin-right: 0; }
+html[data-phone] .pl-who { margin-right: 0; gap: 8px; }
+html[data-phone] .pl-who .te-who-seg button { min-height: 40px; }
 html[data-phone] .pl-input { height: 48px; font-size: 17px; padding: 0 14px; }
 html[data-phone] .pl-add-btn { width: 48px; height: 48px; }
 html[data-phone] .pl-box { width: 48px; }

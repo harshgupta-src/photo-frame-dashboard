@@ -79,3 +79,12 @@ export function applyPush(states, msg, domains) {
   });
   return changed;
 }
+
+// Is HA unreachable? No state yet halfway through staleMs after boot, or (without the live stream)
+// no fresh poll for staleMs. The same test as the Home tab's "Can't reach Home Assistant" banner.
+export function haDown(ha, now, boot, staleMs) {
+  if (!ha || !ha.ready) return false;
+  if (!ha.updated) return now - boot > staleMs / 2;
+  var live = ha.isLive ? ha.isLive() : ha.live;
+  return !live && now - ha.updated > staleMs;
+}

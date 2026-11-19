@@ -21,10 +21,13 @@
 // HA's state wins once a reload shows it. Without HA (the Worker fallback) the lists are read-only.
 // Views get 'data' with 'reminders' when the items change, and 'todo' when App.todo.status() or
 // App.todo.pending() does (the "Syncing…" note); they update those parts themselves.
+// When HA stops answering (the same test as the Home tab's banner, hastate.js haDown), the lists turn
+// read-only within about 15 s instead of at the next reload, and reload once HA is back.
 // Polls pause while the page is hidden and catch up once when it's shown (poll.js).
 // 'data' is emitted only when something changed, with what changed: 'events', 'reminders', 'photos'.
 import { every } from './poll.js';
 import { createTodos, scriptData, splitDesc } from './todo.js';
+import { haDown } from './hastate.js';
 
 (function () {
   'use strict';
@@ -297,11 +300,21 @@ import { createTodos, scriptData, splitDesc } from './todo.js';
     reloadSoon(1000);
   });
 
+  var BOOT = Date.now(), wasDown = false;
+  function checkHA() {
+    var down = haDown(App.ha, Date.now(), BOOT, 45000);
+    if (down === wasDown) return;
+    wasDown = down;
+    if (!down) return reloadSoon(500);
+    if (App.todo.online || status !== 'offline') { App.todo.online = false; status = 'offline'; publish(); }
+  }
+
   App.startCalendar = function () {
     load();
     loadReminders();
     loadPhotos();
     every(5 * 60000, function () { load(); loadReminders(); });
+    if (HA_GROCERY || HA_PINNED) every(15000, checkHA);
     every(15 * 60000, loadPhotos, { delay: 5000 });
   };
 })();
