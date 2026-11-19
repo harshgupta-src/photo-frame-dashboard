@@ -34,7 +34,7 @@
 // COPILOT_KEY (default: derived from PUSH_TOKEN), VAULT_MCP_URL + VAULT_MCP_TOKEN (recipes), RECIPES_PATH.
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
-import { readAlbum } from './photos.js';
+import { readAlbum, attachPlaces, GEO_MAX_LOOKUPS } from './photos.js';
 import { parseReminders, forwardToHA, cleanOps, opsForPhone } from './reminders.js';
 import { walkAccess, walkRoute, walkKey } from './walkapi.js';
 import { copilotRoute } from './copilot.js';
@@ -136,7 +136,13 @@ async function reminderOps(req, env) {
 }
 
 // PHOTO_ALBUM: one or more shared album links, separated by spaces, commas or new lines.
-async function albumData(env, force) {
+// Each photo with a location gets a place name from the geo:* KV cache. Spots not named yet are
+// geocoded after the response (ctx.waitUntil), at most GEO_MAX_LOOKUPS per refresh, and the cached
+// list is rewritten with the new names; the next /photos returns them.
+// Subrequests per refresh (Cloudflare's free plan allows 50): a CloudKit album is 1 resolve + 1 query
+// page per ~100 photos (2 today; ≤6 at its 500-photo cap), an old sharedstreams one ≤2 + 1 per 25
+// photos (≤22). Plus ≤15 geocodes: ≤37 for one album.
+async function albumData(env, force, ctx) {
   const cached = await env.DATA.get('photos', 'json');
   if (!force && cached && Date.now() - Date.parse(cached.updated) < PHOTOS_TTL * 1000) return cached;
   const links = String(env.PHOTO_ALBUM || '').split(/[\s,]+/).filter(Boolean);
@@ -146,8 +152,10 @@ async function albumData(env, force) {
     for (const link of links) {
       for (const p of (await readAlbum(link)).photos) if (!seen.has(p.id)) { seen.add(p.id); photos.push(p); }
     }
+    const { missing } = await attachPlaces(env.DATA, photos);
     const out = { updated: new Date().toISOString(), photos };
     await env.DATA.put('photos', JSON.stringify(out));
+    if (missing && ctx) ctx.waitUntil(fillPlaces(env));
     return out;
   } catch (e) {
     if (cached) return { ...cached, stale: true };
@@ -155,15 +163,31 @@ async function albumData(env, force) {
   }
 }
 
-async function photoList(env) {
-  const d = await albumData(env);
-  return json({ updated: d.updated, stale: !!d.stale, photos: d.photos.map(({ url, ...p }) => p) });
+async function fillPlaces(env) {
+  try {
+    const d = await env.DATA.get('photos', 'json');
+    if (!d) return;
+    const { added } = await attachPlaces(env.DATA, d.photos, { lookups: GEO_MAX_LOOKUPS });
+    if (!added) return;
+    // Another refresh may have stored a newer list meanwhile: name that one instead.
+    const now = await env.DATA.get('photos', 'json');
+    const latest = now && now.updated !== d.updated ? now : d;
+    if (latest !== d) await attachPlaces(env.DATA, latest.photos);
+    await env.DATA.put('photos', JSON.stringify(latest));
+  } catch (e) {
+    console.warn('photo places:', e.message);
+  }
 }
 
-async function photoImage(url, env) {
+async function photoList(env, ctx) {
+  const d = await albumData(env, false, ctx);
+  return json({ updated: d.updated, stale: !!d.stale, photos: d.photos.map(({ url, lat, lon, ...p }) => ({ ...p, place: p.place || '' })) });
+}
+
+async function photoImage(url, env, ctx) {
   const id = url.searchParams.get('id'), size = url.searchParams.get('s') === 's' ? 's' : 'l';
   for (const force of [false, true]) {
-    const p = (await albumData(env, force)).photos.find((x) => x.id === id);
+    const p = (await albumData(env, force, ctx)).photos.find((x) => x.id === id);
     if (!p) return json({ error: 'no such photo' }, 404);
     const r = await fetch(p.url[size] || p.url.l);
     if (r.ok) {
@@ -251,8 +275,8 @@ export default {
     if (!canRead(req, url, env)) return json({ error: 'unauthorized' }, 401);
     try {
       if (url.pathname === '/events') return await events(env, ctx);
-      if (url.pathname === '/photos') return await photoList(env);
-      if (url.pathname === '/photo') return await photoImage(url, env);
+      if (url.pathname === '/photos') return await photoList(env, ctx);
+      if (url.pathname === '/photo') return await photoImage(url, env, ctx);
       if (url.pathname === '/tile') return await mapTile(url, ctx);
       if (url.pathname === '/recipes') { const r = await recipesRoute(url, env, ctx); return json(r.body, r.status); }
       if (url.pathname === '/calendars') return json((await listCalendars(env)).map((c) => ({ name: c.name, shared: c.shared })));

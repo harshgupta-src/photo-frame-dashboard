@@ -13,30 +13,94 @@
   App.photoSrc = src;
 
   function parseDate(p) { var a = p.date.split('-'); return new Date(+a[0], +a[1] - 1, +a[2]); }
+  function leap(y) { return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; }
+  function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+
+  // Memories, as in Apple Photos: a photo taken on today's month and day in an earlier year is "on
+  // this day"; one within MEMORY_DAYS of it is from "this week". The anniversary nearest today is
+  // used, across the year end (Dec 30 is 3 days from Jan 2), and a Feb 29 photo has its anniversary
+  // on Feb 28 in other years. years: whole years back to that anniversary (0: not a memory).
+  var MEMORY_DAYS = 3;
+  function memory(d, now) {
+    var y = now.getFullYear(), today = Date.UTC(y, now.getMonth(), now.getDate()), best = null;
+    for (var k = -1; k <= 1; k++) {
+      var day = d.getMonth() === 1 && d.getDate() === 29 && !leap(y + k) ? 28 : d.getDate();
+      var gap = Math.round(Math.abs(Date.UTC(y + k, d.getMonth(), day) - today) / 86400000);
+      if (!best || gap < best.gap) best = { gap: gap, years: y + k - d.getFullYear() };
+    }
+    var on = best.years > 0 && best.gap <= MEMORY_DAYS;
+    return { years: on ? best.years : 0, onThisDay: on && best.gap === 0, thisWeek: on };
+  }
+  App.photoMemory = function (p, now) { return memory(parseDate(p), now || App.now()); };
+
   App.photoMeta = function (p) {
-    var d = parseDate(p), now = App.now();
+    var d = parseDate(p), now = App.now(), mem = memory(d, now);
     var years = now.getFullYear() - d.getFullYear();
-    var onThisDay = d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-    var kicker = onThisDay ? years + (years === 1 ? ' year' : ' years') + ' ago today' : (years > 0 ? years + (years === 1 ? ' year ago' : ' years ago') : 'This year');
+    var kicker = mem.onThisDay ? plural(mem.years, 'year') + ' ago today'
+      : mem.thisWeek ? plural(mem.years, 'year') + ' ago this week'
+      : years > 0 ? plural(years, 'year') + ' ago' : 'This year';
     return {
       date: App.fmt.month(d) + ' ' + d.getDate() + ', ' + d.getFullYear(),
       monthYear: App.fmt.month(d) + ' ' + d.getFullYear(),
-      kicker: kicker, onThisDay: onThisDay, place: p.place, from: App.person(p.from)
+      kicker: kicker, onThisDay: mem.onThisDay, thisWeek: mem.thisWeek,
+      place: p.place || '', caption: p.caption || '', from: App.person(p.from)
     };
   };
+  // Place and the photo's own caption, for one line: "Lisbon, Portugal · Grandma's 80th".
+  App.photoWhere = function (m) {
+    var cap = m.caption && m.caption.length <= 60 ? m.caption : '';
+    return [m.place, cap].filter(Boolean).join(' · ');
+  };
+
+  // One cycle of the slideshow. Each photo appears once; on-this-day photos 4 times, this-week ones
+  // twice, favourites once more. A photo's copies are spread evenly through the cycle (never two in a
+  // row when it can be helped), and the on-this-day photos open it. rand: Math.random (tests seed it).
+  App.photoQueue = function (pool, now, rand) {
+    rand = rand || Math.random;
+    var singles = [], multi = [], items = [], first = [], rest = [], total = 0;
+    pool.forEach(function (p) {
+      var mem = memory(parseDate(p), now), n = (mem.onThisDay ? 4 : mem.thisWeek ? 2 : 1) + (p.fav ? 1 : 0);
+      (n > 1 ? multi : singles).push({ p: p, n: n, lead: mem.onThisDay });
+      total += n;
+    });
+    // Singles evenly through the cycle in random order; each photo with n copies at n evenly spaced
+    // spots from a random start. So two copies have about singles/n photos between them.
+    shuffle(singles, rand).forEach(function (it, i) { items.push({ p: it.p, k: (i + rand()) * total / singles.length }); });
+    multi.forEach(function (it) {
+      var off = rand();
+      for (var j = 0; j < it.n; j++) items.push({ p: it.p, k: (j + off) * total / it.n, lead: it.lead && j === 0 });
+    });
+    items.sort(function (a, b) { return a.k - b.k; });
+    items.forEach(function (it) { (it.lead ? first : rest).push(it.p); });
+    var q = first.concat(rest);
+    // The same photo twice in a row: pull the next different photo in between. If only copies of it
+    // are left, put this one back earlier, between two other photos.
+    for (var i = 1; i < q.length; i++) {
+      if (q[i] !== q[i - 1]) continue;
+      var j = i + 1;
+      while (j < q.length && q[j] === q[i]) j++;
+      if (j < q.length) { q.splice(i, 0, q.splice(j, 1)[0]); continue; }
+      var moved = false;
+      for (var k = 1; k < i && !moved; k++) {
+        if (q[k - 1] !== q[i] && q[k] !== q[i]) { q.splice(k, 0, q.splice(i, 1)[0]); moved = true; }
+      }
+      if (!moved) break;
+    }
+    return q;
+  };
+
+  function shuffle(a, rand) {
+    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(rand() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
+  }
 
   // 'p' on a portrait screen, 'l' on a landscape one (photos use the same letters in p.o).
   function screenShape() { return App.portrait ? 'p' : 'l'; }
 
-  function shuffle(a) {
-    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
-    return a;
-  }
-
   function caption(ps, size) {
-    var m = App.photoMeta(ps[0]);
+    var m = App.photoMeta(ps[0]), where = App.photoWhere(m);
     return '<div class="cap cap--' + (size || 'l') + '">' +
-      '<div class="cap-kicker">' + (m.onThisDay ? '<b>On this day</b> · ' : '') + m.kicker + (m.place ? ' · ' + App.esc(m.place) : '') + '</div>' +
+      '<div class="cap-kicker">' + (m.onThisDay ? '<b>On this day</b> · ' : '') + m.kicker + (where ? ' · ' + App.esc(where) : '') + '</div>' +
       '<div class="cap-date serif">' + (ps.length > 1 ? m.monthYear : m.date) + '</div>' +
       '</div>';
   }
@@ -69,10 +133,10 @@
       return '<div class="slide slide--collage"><div class="pane pane--a">' + kb(ps[0], o, true) + '</div><div class="pane pane--b">' + kb(ps[1], o, true) + '</div><div class="pane pane--c">' + kb(ps[2], o, true) + '</div>' + (o.captions ? caption(ps, 'm') : '') + '</div>';
     },
     polaroid: function (ps, o) {
-      var p = ps[0], m = App.photoMeta(p), rot = (Math.random() * 5 - 2.5).toFixed(1);
+      var p = ps[0], m = App.photoMeta(p), where = App.photoWhere(m), rot = (Math.random() * 5 - 2.5).toFixed(1);
       return '<div class="slide slide--polaroid">' +
         '<figure class="polaroid polaroid--' + p.o + '" style="transform:rotate(' + rot + 'deg)"><div class="polaroid-img">' + img(p, o) + '</div>' +
-        '<figcaption class="serif"><i>' + (m.place ? App.esc(m.place) + ', ' : '') + m.monthYear + '</i></figcaption></figure></div>';
+        '<figcaption class="serif"><i>' + (where ? App.esc(where) + ', ' : '') + m.monthYear + '</i></figcaption></figure></div>';
     }
   };
 
@@ -106,12 +170,8 @@
     return m.length ? m : D.photos;
   };
   S.refill = function () {
-    var q = [];
     this.ver = App.photosVer;
-    this.pool().forEach(function (p) { q.push(p); if (p.fav) q.push(p); });
-    // On-this-day photos always come first in a fresh cycle
-    shuffle(q).sort(function (a, b) { return (App.photoMeta(b).onThisDay ? 1 : 0) - (App.photoMeta(a).onThisDay ? 1 : 0); });
-    this.queue = q;
+    this.queue = App.photoQueue(this.pool(), App.now());
   };
   S.take = function (pred) {
     if (!this.queue.length || this.ver !== App.photosVer) this.refill();

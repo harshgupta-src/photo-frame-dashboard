@@ -78,6 +78,12 @@ the Mac and a Home Assistant add-on; see [COPILOT.md](dashboard/COPILOT.md). A R
 only on phones and tablets (never on the frame), reads recipe notes from the Obsidian vault; see
 [RECIPES.md](dashboard/RECIPES.md). The same dashboard installs on an
 iPhone as a home-screen app, and each deploy updates the phones too; see [IPHONE.md](dashboard/IPHONE.md).
+Photos come from an iCloud Shared Album (`PHOTO_ALBUM`; the Worker's `/photos`). Each photo's caption
+shows where it was taken ("Lisbon, Portugal"): the Worker decodes the album's location and names it
+with OpenStreetMap's Nominatim, cached in KV per ~1 km spot, at most 15 new spots per refresh. Like
+Apple Photos' memories, photos from today's date in earlier years are shown "On this day" four times
+as often, and those from within 3 days of it ("2 years ago this week") twice as often, spread through
+the slideshow.
 
 ## For agents: start here
 

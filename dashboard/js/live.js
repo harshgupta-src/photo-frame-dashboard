@@ -194,7 +194,7 @@ import { haDown } from './hastate.js';
       var d = new Date(p.date), day = isNaN(d) ? '2000-01-01' : d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
       var base = API + '/photo?id=' + encodeURIComponent(p.id);
       return {
-        id: p.id, o: p.h > p.w ? 'p' : 'l', date: day, place: p.caption || '', from: personFromName(p.by), tag: day, fav: !!f[p.id],
+        id: p.id, o: p.h > p.w ? 'p' : 'l', date: day, place: p.place || '', caption: p.caption || '', from: personFromName(p.by), tag: day, fav: !!f[p.id],
         url: { l: base + '&s=l' + q, s: base + '&s=s' + q }
       };
     });
@@ -205,8 +205,9 @@ import { haDown } from './hastate.js';
     fetch(API + '/photos', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (j) {
-        var ids = (D.photos || []).map(function (p) { return p.id; }).join();
-        if (!j.photos || j.photos.map(function (p) { return p.id; }).join() === ids) return;
+        // Place names arrive a refresh after their photos, so they count as a change too.
+        function sig(p) { return p.id + '|' + (p.place || '') + '|' + (p.caption || ''); }
+        if (!j.photos || j.photos.map(sig).join() === (D.photos || []).map(sig).join()) return;
         try { localStorage.setItem(PCACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
         if (applyPhotos(j)) App.emit('data', 'photos');
       })
