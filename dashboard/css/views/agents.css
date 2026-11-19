@@ -57,7 +57,7 @@ i.cp-auto, .cp-auto i { background: var(--auto); }
 
 /* sessions: list + conversation */
 .cp-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 420px 1fr; gap: 14px; }
-.cp-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.cp-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
 .cp-seg { align-self: flex-start; }
 .cp-seg button { min-height: 50px; padding: 0 16px; font-size: 15px; }
 .cp-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; overscroll-behavior: contain; }
@@ -65,10 +65,10 @@ i.cp-auto, .cp-auto i { background: var(--auto); }
 .cp-row.is-sel { background: var(--ink); color: var(--paper); }
 .cp-row.is-sel .cp-row-meta, .cp-row.is-sel .cp-when { color: rgba(255, 255, 255, .7); }
 [data-theme="dark"] .cp-row.is-sel .cp-row-meta, [data-theme="dark"] .cp-row.is-sel .cp-when { color: rgba(0, 0, 0, .6); }
-.cp-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cp-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
 .cp-row-top b { font-size: 18px; font-weight: 800; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cp-when { font-size: 13px; color: var(--mute); white-space: nowrap; }
-.cp-row-meta { display: flex; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--mute); min-width: 0; flex-wrap: wrap; }
+.cp-row-meta { width: 100%; display: flex; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--mute); min-width: 0; flex-wrap: wrap; }
 .cp-row-meta span:not(.cp-tag) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .cp-tag { font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; color: #fff; }
 .cp-tag--development { background: var(--dev); }
@@ -115,3 +115,4 @@ i.cp-auto, .cp-auto i { background: var(--auto); }
 .cp-err { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; background: rgb(var(--alert-rgb) / .1); color: var(--alert); font-size: 14px; font-weight: 700; }
 .cp-note { display: flex; flex-direction: column; gap: 12px; color: var(--mute); font-size: 16px; }
 .cp-more { align-self: center; }
+.cp-list .cp-more { flex: none; margin: 6px 0 10px; }

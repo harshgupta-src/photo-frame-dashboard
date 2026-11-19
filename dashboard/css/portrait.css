@@ -14,7 +14,7 @@
   padding-bottom: var(--safe-b, 0px);
 }
 [data-orient="portrait"] .rail-item { flex: 1; height: auto; min-width: 0; font-size: 11px; letter-spacing: .05em; }
-[data-orient="portrait"] .rail-clock { margin: 0 0 0 auto; flex: 1; padding: 0; display: flex; flex-direction: column; justify-content: center; }
+[data-orient="portrait"] .rail-clock { margin: 0 0 0 auto; flex: 1; padding: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; }
 
 [data-orient="portrait"] .toasts { left: 0; bottom: calc(108px + var(--safe-b, 0px)); }
 [data-orient="portrait"] .toast { max-width: 720px; }
@@ -27,8 +27,9 @@
 /* ---------------------------------------------------------------- Today
    Grouped top to bottom: now + outside (clock, weather, and Maya's walk as a strip right under the
    weather it's based on) / schedule (hero + lanes) / photo beside the list, with shopping + home under the list.
-   .h-side's tiles join the .home grid so they can be placed with the walk tile (a .home child). */
-[data-orient="portrait"] .home { grid-template-rows: 172px 76px 452px minmax(0, 1fr) 150px; }
+   .h-side's tiles join the .home grid so they can be placed with the walk tile (a .home child).
+   The last row fits the Home tile's two light buttons + inside temperature (192px). */
+[data-orient="portrait"] .home { grid-template-rows: 172px 76px 452px minmax(0, 1fr) 192px; }
 [data-orient="portrait"] .h-clock { grid-column: 1 / 6; grid-row: 1; }
 [data-orient="portrait"] .h-time { font-size: 128px; }
 [data-orient="portrait"] .h-ampm { font-size: 24px; margin-left: 6px; }
@@ -39,16 +40,17 @@
 [data-orient="portrait"] .h-wx-say { font-size: 20px; margin: 6px 0; }
 
 /* Walk strip: label, verdict, plan. The conditions it uses are the weather just above, so they're not repeated. */
-[data-orient="portrait"] .h-walk { grid-column: 1 / 13; grid-row: 2; flex-direction: row; align-items: center; justify-content: flex-start; gap: 22px; padding: 0 24px; }
+[data-orient="portrait"] .h-walk { grid-column: 1 / 13; grid-row: 2; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; padding: 0 18px; }
 [data-orient="portrait"] .h-walk .label { width: 64px; line-height: 1.1; white-space: normal; }
 [data-orient="portrait"] .h-walk-title { font-size: 34px; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-sub { font-size: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-orient="portrait"] .h-walk-now { display: none; }
-[data-orient="portrait"] .h-walk-plan { flex: 0 1 auto; gap: 14px; }
+[data-orient="portrait"] .h-walk-plan { flex: 0 1 auto; gap: 10px; }
+[data-orient="portrait"] .h-walk-when { font-size: 18px; }
 [data-orient="portrait"] .h-walk-head { display: contents; }
 [data-orient="portrait"] .h-walk-head .label { white-space: normal; overflow: visible; }
 [data-orient="portrait"] .h-walk-go { order: 9; margin-left: auto; }
-[data-orient="portrait"] .h-walk-last { order: 8; margin-left: auto; font-size: 17px; }
+[data-orient="portrait"] .h-walk-last { order: 8; margin-left: auto; font-size: 16px; }
 [data-orient="portrait"] .h-walk-last + .h-walk-go, [data-orient="portrait"] .h-walk-last ~ .h-walk-go { margin-left: 0; }
 [data-orient="portrait"] .h-walk--out .label { width: 120px; }
 [data-orient="portrait"] .h-walk-timer { font-size: 54px; }
@@ -122,13 +124,13 @@
 
 /* ---------------------------------------------------------------- Agents */
 [data-orient="portrait"] .cp-usage { grid-template-columns: 1fr 1fr; grid-template-rows: 148px 150px; height: auto; }
-[data-orient="portrait"] .cp-body { grid-template-columns: 1fr; }
+[data-orient="portrait"] .cp-body { grid-template-columns: minmax(0, 1fr); }
 [data-orient="portrait"] .cp-detail { display: none; }
 [data-orient="portrait"] .cp-body.is-detail .cp-side { display: none; }
 [data-orient="portrait"] .cp-body.is-detail .cp-detail { display: flex; }
 [data-orient="portrait"] .cp-back { display: grid; }
 [data-orient="portrait"] .cp-seg { align-self: stretch; }
-[data-orient="portrait"] .cp-seg button { flex: 1; }
+[data-orient="portrait"] .cp-seg button { flex: 1 1 0; min-width: 0; padding: 0 10px; }
 
 /* ---------------------------------------------------------------- Takeovers */
 [data-orient="portrait"] .tk-cam::after { background: linear-gradient(0deg, rgba(0, 0, 0, .9) 0%, rgba(0, 0, 0, .4) 55%, rgba(0, 0, 0, 0) 100%); }

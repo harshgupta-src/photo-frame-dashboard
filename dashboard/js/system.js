@@ -221,7 +221,9 @@
     }
     App.hold($('#railClock'), 700, { done: App.openDemo });
     document.addEventListener('keydown', function (e) {
-      if (e.target.tagName === 'INPUT') return;
+      // Typing in a sheet's notes (a textarea) mustn't switch tabs or put the frame to sleep.
+      var t = e.target;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable || e.ctrlKey || e.metaKey || e.altKey || !e.key) return;
       var k = e.key.toLowerCase();
       if (k === 'd') { $('#demo').classList.contains('is-open') ? closeDemo() : App.openDemo(); }
       if (k === 'a') App.setMode('ambient');

@@ -36,6 +36,7 @@ import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityNodeProvider;
 import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebResourceRequest;
@@ -689,7 +690,13 @@ public class MainActivity extends Activity implements HaDevice.Host {
     getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         | WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
-    web = new WebView(this);
+    // The navigation overlay is an accessibility service, and while any service is on Chromium
+    // builds its accessibility tree on every frame (~60-110 ms per frame on an A33). The page has
+    // no screen-reader users, so never hand Android a node provider and keep Chromium's tree off.
+    web = new WebView(this) {
+      @Override public AccessibilityNodeProvider getAccessibilityNodeProvider() { return null; }
+    };
+    web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
     WebSettings s = web.getSettings();
     s.setJavaScriptEnabled(true);
     s.setDomStorageEnabled(true);

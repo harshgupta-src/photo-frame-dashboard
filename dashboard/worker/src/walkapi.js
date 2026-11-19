@@ -11,7 +11,7 @@
 //   GET    /walks/active    just the walk in progress (Home Assistant polls it)
 //   PUT    /walks/:id/route {points: [{who, lat, lon, acc, t}]}  the route from the walkers' phones
 //   GET    /walks/plan?date=YYYY-MM-DD   the day's walk plan (default today) with each walk's status
-//   PUT    /walks/plan/:date {walks: [{start, end?|durationMin?, walkers, note?, id?}]}  replace it
+//   PUT    /walks/plan/:date {walks: [{start, end?|durationMin?, walkers, expect?, note?, id?}], lateUntil?}  replace it
 //   DELETE /walks/plan/:date             drop it (and its calendar events)
 // Keys, in a header only: READ_KEY (X-Frame-Key) or WALK_KEY, both read and write. WALK_KEY is a
 // Worker secret if set, else derived from PUSH_TOKEN (HMAC-SHA256), so it needs no setup;

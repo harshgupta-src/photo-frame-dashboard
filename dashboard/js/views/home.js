@@ -94,14 +94,16 @@
     mel.innerHTML = walk();
   }
 
-  // End-of-walk (or edit) sheet. The common case is one tap: pee yes, poop no, walked by the first
-  // person in VITE_PEOPLE, so just Save.
+  // End-of-walk (or edit) sheet. The common case is one tap, Save: finishing a walk starts with what it
+  // probably was (App.walk.suggest: the planned walk's walkers and expected pee/poop, else her history),
+  // with a small "Based on …" line; everything stays editable and nothing is saved without a tap.
   function walkSheet(rec, opts) {
     opts = opts || {};
+    var g = opts.finishing ? App.walk.suggest(rec) : null;
     var r = {
       id: rec.id, startedAt: rec.startedAt, endedAt: rec.endedAt, notes: rec.notes || '', planId: rec.planId,
-      pee: rec.pee == null ? true : rec.pee, poop: rec.poop == null ? false : rec.poop,
-      walkers: rec.walkers && rec.walkers.length ? rec.walkers.slice() : App.walk.defaultWalkers()
+      pee: rec.pee != null ? rec.pee : g ? g.pee : true, poop: rec.poop != null ? rec.poop : g ? g.poop : false,
+      walkers: g ? g.walkers.slice() : rec.walkers && rec.walkers.length ? rec.walkers.slice() : App.walk.defaultWalkers()
     };
     var guessed = opts.finishing && r.endedAt - r.startedAt > STALE;
     if (guessed) r.endedAt = r.startedAt + App.walk.typical();
@@ -117,6 +119,7 @@
       '<h2 class="sheet-h serif"><span class="num" data-ws-t="min"></span></h2>' +
       (guessed ? '<p class="sheet-p">Nobody stopped the timer, so the end time is a guess. Adjust it if you know.</p>' : '') +
       nudgeRow('s', 'Left') + nudgeRow('e', 'Back') +
+      (g ? '<p class="ws-hint">' + App.esc(g.hint) + '</p>' : '') +
       '<div class="ws-togs">' +
       '<button class="ws-tog" data-ws="pee"><span class="ws-emoji">💧</span>Pee<i class="ws-check">' + App.icon('check', 22) + '</i></button>' +
       '<button class="ws-tog" data-ws="poop"><span class="ws-emoji">💩</span>Poop<i class="ws-check">' + App.icon('check', 22) + '</i></button></div>' +

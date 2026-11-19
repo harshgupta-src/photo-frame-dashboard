@@ -218,3 +218,17 @@ test('Home Assistant polls the active walk and stores its route, which goes with
   await call('remove', id);
   assert.ok(events.get(id + '-route').deleted_at);
 });
+
+test('a plan walk carries its expect; a Shortcut stop without pee/poop uses it', async () => {
+  const now = Date.now(), date = new Date(now).toISOString().slice(0, 10);
+  const start = new Date(now + 10 * 60e3).toISOString();
+  if (new Date(now + 3600e3).toISOString().slice(0, 10) !== date || new Date(now).getUTCHours() >= 21) return; // near bedtime/midnight UTC: skip
+  const r = await call('putPlan', date, { walks: [{ start, durationMin: 30, walkers: ['harsh'], expect: { pee: true, poop: true } }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.walks[0].expect, { pee: true, poop: true, from: 'plan' });
+  assert.deepEqual((await call('state')).body.plans[0].walks[0].expect.from, 'plan');
+  const id = (await call('start', { by: 'harsh' })).body.id;
+  events.get(id).started_at = new Date(now - 5 * 60e3).toISOString();
+  const s = await call('stop', {});
+  assert.deepEqual([s.body.pee, s.body.poop], [true, true]);
+});

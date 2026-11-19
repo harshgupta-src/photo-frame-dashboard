@@ -78,6 +78,7 @@
 .walk-sheet .ws-k { width: 64px; font-size: var(--fs-label); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); }
 .ws-time { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .ws-time b { min-width: 120px; font-size: 30px; font-weight: 700; }
+.ws-hint { margin: 14px 0 -8px; font-size: 15px; font-weight: 600; color: var(--mute); }
 .ws-togs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
 .ws-tog {
   display: flex; align-items: center; gap: 12px; height: 76px; padding: 0 18px; border-radius: var(--r-s);
@@ -165,7 +166,7 @@
 .h-ring.is-done .ring-bg { fill: var(--c); }
 .h-ring.is-done .num { color: var(--c-ink); }
 .h-pinned-tile { gap: 6px; text-align: left; }
-.h-pinned { display: flex; flex-direction: column; gap: 4px; }
+.h-pinned { display: flex; flex-direction: column; gap: 4px; width: 100%; } /* the tile is a <button>, which shrink-wraps */
 .h-pinned li { font-size: 19px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-pinned i { display: inline-block; width: 8px; height: 8px; margin-right: 10px; vertical-align: middle; border-radius: 50%; background: var(--ink-2); }
 .h-pinned i.is-who { width: 10px; height: 10px; margin-right: 9px; background: var(--c); }

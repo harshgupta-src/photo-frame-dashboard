@@ -163,7 +163,7 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .ring-fg { fill: none; stroke: var(--c); stroke-width: 7; stroke-linecap: round; }
 
 /* ---------------------------------------------------------------- toasts */
-.toasts { position: absolute; left: 76px; right: 0; bottom: 24px; display: flex; justify-content: center; pointer-events: none; z-index: 60; }
+.toasts { position: absolute; left: 76px; right: 0; bottom: 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; pointer-events: none; z-index: 60; }
 .toast {
   pointer-events: auto;
   min-height: 72px; max-width: 760px; padding: 0 10px 0 24px;

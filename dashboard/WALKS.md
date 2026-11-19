@@ -26,9 +26,13 @@ iPhone Shortcut ──POST /walks/start|stop──┘   │
   of a planned one is tied to it.
 - **Tap the tile** to start a walk. It turns teal and counts up (`0:42`, `1:05:10` after an hour);
   the ambient photo screen shows a small "Rex's out · 12 min" chip. ✕ cancels (with Undo).
-- **Tap it again when you're back.** A sheet opens with the walk's length, pee ✓ (default on),
-  poop (default off) and who went (default: the first person in `VITE_PEOPLE`; tap to add or swap,
-  more than one can be picked). The common case is one tap: **Save**. −/+ moves the start or end by
+- **Tap it again when you're back.** A sheet opens with the walk's length, pee, poop and who went,
+  pre-filled with what the walk probably was, and a small line saying why ("Based on the 11:15 AM
+  plan"). Who went: the people picked on the tile, else the planned walk's walkers (the one the walk
+  is tied to, else the nearest within 90 minutes), else whoever started it. Pee/poop: the planned
+  walk's [`expect`](#expected-pee-and-poop), else the last 14 days of walks around that time of day,
+  else her routine. Tap to change anything (more than one person can be picked); nothing is saved
+  until **Save**, so the common case is one tap. −/+ moves the start or end by
   5 minutes. ✕ or a tap outside means "not back yet" and the timer keeps going; if the sheet closes
   by itself (idle, ambient) the walk is saved as it stands.
 - When nobody stopped the timer, after 2½ hours the tile says "Still out? Tap to fix" and the sheet
@@ -122,12 +126,12 @@ the home time zone (sent by the frame).
 | `PUT /walks/:id` | create or replace `{startedAt, endedAt?, pee?, poop?, walkers?: ["<person id>"], notes?}` |
 | `DELETE /walks/:id` | delete a walk and its calendar event |
 | `POST /walks/start` | start now `{by?: "<person id>"}` (409 if one is active) |
-| `POST /walks/stop` | stop now `{pee?: true, poop?: false, by?}` (404 if none is active). A stop within a minute of the start discards the walk (`discarded: true`) |
+| `POST /walks/stop` | stop now `{pee?, poop?, by?}`; pee/poop left out default to the walk's [expected](#expected-pee-and-poop) ones (404 if none is active). A stop within a minute of the start discards the walk (`discarded: true`) |
 | `POST /walks/resync` | retry calendar writes |
 | `GET /walks/active` | just the walk in progress, or `active: null` (Home Assistant polls it) |
 | `PUT /walks/:id/route` | `{points: [{who, lat, lon, acc, t}]}` the route (404 if the walk is gone) |
-| `GET /walks/plan?date=` | the day's plan (default today) with each walk's status |
-| `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], note?, id?}], notes?, source?}` |
+| `GET /walks/plan?date=` | the day's plan (default today) with each walk's status and `expect` |
+| `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], expect?: {pee, poop}, note?, id?}], notes?, source?, lateUntil?: "HH:MM"}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
 | `GET /meals?date=` | the day's planned meal events (one per kind): `{kind, start, end, usual, calendar, people, cups, title, uid}` |
 | `PUT /meals/plan/:date` | move or reassign meals `{meals: [{kind, start: "HH:MM", people: ["<id>"], note?}], reason?}` → `{changed, unchanged, skipped}` |
@@ -214,10 +218,34 @@ replans: the rest of today (from 04:30), or tomorrow if it already has a plan. T
 change and the current plan, and moves only what needs to move. It asks the HA Copilot Agent to pick times,
 lengths and walkers from the dog's pee/poop rhythm (the last 14 days of walks with the gaps between
 pees and between poops, and the time since the last ones), both people's calendars, the forecast and
-the dog's vault note. A replan keeps the walks already done or under way and replaces the rest; the
+the dog's vault note, and to say what each walk will likely bring (`expect`). A replan keeps the walks already done or under way and replaces the rest; the
 agent's one-line reading of the rhythm is the plan's `notes`. 15 minutes before each planned walk that
 hasn't started, HA sends its walkers a time-sensitive "get ready" notification (`sensor.maya_walk_plan`
 caches today's plan; refreshed every 10 min, after a walk and after each plan).
+
+### Bedtime
+
+Nobody is up after 22:00 on a normal day, so her last walk is around 21:00. The Worker drops planned
+walks that start after 22:00 (they come back under `dropped` in the answer) unless the PUT's
+`lateUntil` allows them, or they were already walked. Home Assistant sets `lateUntil` to 30 minutes after
+the latest event on Harsh's, Ambuja's or the A&H Life calendar that starts that day and ends after 22:00
+(timed events only; Maya's own walk and meal events don't count, so they can't keep anyone up), at most
+23:59, filters the agent's walks the same way and tells the agent.
+
+### Expected pee and poop
+
+Each planned walk in `GET /walk` and `GET /walks/plan` has `expect: {pee, poop, from, n?}`, the end-of-walk
+sheet's defaults (`worker/src/walkexpect.js`, shared by the Worker and the frame):
+
+1. `plan`: the agent's `expect` for that walk (it says what she'll most likely do when it plans).
+2. `history`: walks of the last 14 days that started within ±90 minutes of that time of day (at least
+   3); yes when 60% or more of them had it.
+3. `usual`: her routine: always a pee; a poop on the first morning walk (05:00–08:30), the late-morning
+   walk (10:00–12:30) and the walk after dinner (19:00–23:30).
+
+It's worked out from the walks the Worker already reads for the plan, so it costs no extra Lifelog call,
+and the frame keeps it with the plan, so opening the sheet fetches nothing. A walk not tied to a plan
+uses 2 and 3 on the frame's own 14 days of walks.
 
 ### Meals
 

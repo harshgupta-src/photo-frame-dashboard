@@ -46,8 +46,9 @@ button.s-edit:active { background: var(--paper-2); color: var(--ink); }
 .s-drawer-h > span:first-child { display: flex; align-items: center; gap: 10px; }
 .s-drawer-h .num { font-size: 24px; }
 .s-drawer-list { padding: 0 12px 16px; display: flex; flex-direction: column; gap: 4px; }
-.s-got { min-height: 60px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; font-size: 20px; color: var(--mute); text-decoration: line-through; border-radius: 12px; }
-.s-got .label { text-decoration: none; }
+.s-got { min-height: 60px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; font-size: 20px; color: var(--mute); border-radius: 12px; gap: 12px; }
+.s-got-t { text-decoration: line-through; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-got .label { flex: none; }
 .s-got:active { background: var(--line); }
 .s-clear { margin-top: 8px; align-self: flex-start; }
 

@@ -102,7 +102,7 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
     if (!d.length) return '';
     return '<button class="s-drawer-h" data-drawer><span>' + App.icon('check', 22) + ' Got it <b class="num">(' + d.length + ')</b></span><span class="label">' + (V.drawer ? 'Hide' : 'Show') + '</span></button>' +
       (V.drawer ? '<div class="s-drawer-list">' + d.map(function (g) {
-        return '<button class="s-got' + (g.pending ? ' is-pending' : '') + '" data-revive="' + App.esc(g.id) + '">' + App.esc(g.name) + '<span class="label">Add back</span></button>';
+        return '<button class="s-got' + (g.pending ? ' is-pending' : '') + '" data-revive="' + App.esc(g.id) + '"><span class="s-got-t">' + App.esc(g.name) + '</span><span class="label">Add back</span></button>';
       }).join('') + '<button class="btn btn--ghost s-clear" data-clear>Clear ' + d.length + ' checked item' + (d.length === 1 ? '' : 's') + '</button></div>' : '');
   }
   function emptyHTML() {
@@ -296,8 +296,10 @@ import { createTodos, applyLocal, bumpHistory, topHistory } from '../todo.js';
         });
         el.querySelector('.te-del').addEventListener('click', function () {
           close();
-          var undo = T.remove(list, id), k = it.title.toLowerCase();
+          // Marked before remove(): it re-renders (and learn() runs) at once, and a deleted item mustn't count as bought.
+          var k = it.title.toLowerCase();
           if (list === L) deleted[k] = 1;
+          var undo = T.remove(list, id);
           if (undo) App.toast('Deleted <b>' + App.esc(it.title) + '</b>', { icon: 'trash', undo: function () { delete deleted[k]; undo(); } });
         });
       }

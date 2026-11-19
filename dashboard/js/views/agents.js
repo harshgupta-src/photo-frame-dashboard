@@ -4,8 +4,10 @@
 (function () {
   'use strict';
   var C = App.copilot, esc = App.esc;
-  var PAGE = 120;
-  var V = { el: null, filter: 'all', sel: null, detail: false, shown: PAGE, chatFor: null };
+  var PAGE = 120, ROWS = 30;
+  // rows: how many sessions the list shows; the rest come in ROWS at a time ("Show more"), so the
+  // frame lays out ~30 rows instead of every session (139 rows took 1–2 s per render on the A33).
+  var V = { el: null, filter: 'all', sel: null, detail: false, shown: PAGE, chatFor: null, rows: ROWS };
   var KINDS = { development: 'Development', automation: 'Automation' };
 
   function sessions() { return (C.data && C.data.sessions) || []; }
@@ -110,7 +112,20 @@
   }
   function list() {
     var l = filtered();
-    return l.length ? l.map(row).join('') : '<p class="cp-empty">' + (sessions().length ? 'No sessions of this type.' : C.on && !C.data ? 'Loading…' : 'No Copilot sessions yet.') + '</p>';
+    if (!l.length) return '<p class="cp-empty">' + (sessions().length ? 'No sessions of this type.' : C.on && !C.data ? 'Loading…' : 'No Copilot sessions yet.') + '</p>';
+    // The selected session stays listed even when it's further down than the rows shown.
+    var n = Math.max(V.rows, l.findIndex(function (s) { return s.id === V.sel; }) + 1);
+    return l.slice(0, n).map(row).join('') +
+      (l.length > n ? '<button class="btn cp-more" data-rows>Show more · ' + (l.length - n) + ' left</button>' : '');
+  }
+  // Every minute: only the relative times change (no list rebuild).
+  function retime() {
+    App.$$('.cp-row', V.el).forEach(function (r) {
+      var s = find(r.dataset.id), w = r.querySelector('.cp-when'), t = s ? ago(s.updatedAt) : '';
+      if (w && w.textContent !== t) w.textContent = t;
+    });
+    V.el.querySelector('.cp-usage').innerHTML = plan() + today() + models() + week();
+    V.el.querySelector('[data-synced]').textContent = synced();
   }
 
   // ---------------------------------------------------------------- conversation
@@ -260,9 +275,17 @@
     var f = t.closest('[data-filter]');
     if (f) {
       V.filter = f.dataset.filter;
+      V.rows = ROWS;
       var l = filtered();
       if (!App.portrait && !l.some(function (s) { return s.id === V.sel; })) V.sel = l.length ? l[0].id : null;
       return refreshList();
+    }
+    if (t.closest('[data-rows]')) {
+      var lst = V.el.querySelector('.cp-list'), top = lst.scrollTop;
+      V.rows += ROWS;
+      lst.innerHTML = list();
+      lst.scrollTop = top;
+      return;
     }
     if (t.closest('[data-back]')) { V.detail = false; V.el.querySelector('.cp-body').classList.remove('is-detail'); return; }
     if (t.closest('[data-more]')) {
@@ -286,13 +309,13 @@
       if (C.ensureFresh) C.ensureFresh();
       else if (C.on && (!C.updated || Date.now() - C.updated > 60e3)) C.refresh();
     },
-    release: function (el) { V.chatFor = null; el.textContent = ''; }
+    release: function (el) { V.chatFor = null; V.rows = ROWS; el.textContent = ''; }
   });
   // Hidden: nothing to update (the view is rebuilt when shown).
   App.on('copilot', function () {
     if (App.onScreen('agents')) refreshList();
     else if (App.views.agents._built) App.views.agents._dirty = true;
   });
-  App.on('minute', function () { if (App.onScreen('agents')) refreshList(); });
+  App.on('minute', function () { if (App.onScreen('agents') && V.el.firstChild) retime(); });
   App.on('orient', function () { if (App.onScreen('agents') && V.el.firstChild) render(); });
 })();

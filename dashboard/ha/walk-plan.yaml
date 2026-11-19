@@ -224,10 +224,28 @@ script:
             {%- set ns = namespace(out=[]) -%}
             {%- for x in (cur.content.walks if rest and cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
               {%- if x.status in ['done', 'active'] or as_timestamp(x.start) < from_ts -%}
-                {%- set ns.out = ns.out + [{'id': x.id, 'start': x.start, 'end': x.end, 'walkers': x.walkerIds, 'note': x.note | default(none), 'status': x.status}] -%}
+                {%- set ns.out = ns.out + [{'id': x.id, 'start': x.start, 'end': x.end, 'walkers': x.walkerIds, 'note': x.note | default(none), 'status': x.status,
+                     'expect': x.expect if x.expect is defined and x.expect is mapping and x.expect.from | default('') == 'plan' else none}] -%}
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
+          # Bedtime: no walks start after 22:00 unless Harsh, Ambuja or A&H Life has an event (not Maya's own
+          # walks or meals, not all-day) that starts that day and ends after 22:00; then until 30 min after the
+          # latest such end (at most 23:59). The Worker drops later walks too (lateUntil in the PUT).
+          bed_ts: "{{ as_timestamp(strptime(day ~ ' 22:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) }}"
+          late_ts: >-
+            {%- set ns = namespace(t=bed_ts) -%}
+            {%- set eod = as_timestamp(strptime(day ~ ' 23:59', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
+            {%- for ent in calendars.keys() -%}
+              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if 'T' in (e.end | string) and 'T' in (e.start | string)
+                    and not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
+                {%- if as_timestamp(e.end, 0) > bed_ts and as_timestamp(e.start, 0) <= eod -%}
+                  {%- set ns.t = [ns.t, as_timestamp(e.end) + 1800] | max -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {{ [ns.t, eod] | min }}
+          late_until: "{{ late_ts | timestamp_custom('%H:%M') }}"
           # The rest of the current plan, which a replan may keep or change.
           ahead: >-
             {%- set ns = namespace(out=[]) -%}
@@ -315,7 +333,9 @@ script:
             Maya only pees and poops on walks, so the walks must fit her bladder and bowel rhythm. Learn it from her history below and her note: how long she usually goes between pees and how long she can hold it at most (daytime and overnight), when she usually poops (e.g. after which meals and how long after), and how her meals and walk snack fall. Then:
             - Time each walk before she would need to go: no longer between pee walks than her usual daytime gap (never past her longest comfortable hold), and a poop opportunity around when she usually poops (counting from her last poop and her meals). Count from her last pee and poop below, not from the plan.
             - Only plan a walk when the chosen walkers are free: not in a calendar event and not travelling to or from one (allow ~30 min for anything away from home). Harsh's calendar blocks Harsh, Ambuja's blocks Ambuja, A&H Life blocks both. All-day events usually don't block unless they are travel or away from home. If her timing clashes with both people's commitments, move the walk just before the clash rather than after.
-            - Keep her usual rhythm from the recent walks (times and lengths), avoid bad weather (heavy rain, extreme heat or cold) when a nearby slot works, and include a last walk before bed.
+            - Keep her usual rhythm from the recent walks (times and lengths), avoid bad weather (heavy rain, extreme heat or cold) when a nearby slot works.
+            - Bedtime: on a normal day her last walk is around 21:00. {% if late_ts > bed_ts %}A calendar event runs past 22:00 that day, so someone is up late: the last walk may start as late as {{ late_until }} (no later).{% else %}Nothing on the calendars runs past 22:00 that day, so Harsh, Ambuja and Maya are in bed by then: never start a walk after 22:00.{% endif %} Maya's own walks and meals don't count as anyone being up.
+            - For each walk, say what she will most likely do in "expect" (pee and poop, true/false) from her history at that time of day and her rhythm (e.g. the late-morning walk and the walk after dinner usually bring a poop). This pre-fills the form when the walk is logged.
             - Prefer both walkers together when both are free and it suits the day; otherwise share the walks fairly.
             - Every walk lasts 5–180 minutes and starts on {{ day }} (local time, 24h){{ ' at or after ' ~ from_ts | timestamp_custom('%H:%M') if rest else '' }}.
             {%- if meals %}
@@ -335,7 +355,7 @@ script:
             {%- endif %}
 
             Reply with ONLY this JSON, no prose or code fences{{ ' (only the walks still ahead; an empty list if none are needed)' if rest else '' }}:
-            {"walks": [{"start": "HH:MM", "durationMin": 30, "walkers": ["harsh"], "note": "short reason, e.g. pee due ~3h after the 13:05 walk"}]{{ ', "meals": [{"kind": "lunch", "start": "HH:MM", "people": ["harsh"], "note": "only if moved or reassigned: why"}]' if meals else '' }}, "notes": "one line: Maya's rhythm as you understand it (pee every ~Xh, holds up to ~Yh, poops ~Z after meals) and the day's plan"}
+            {"walks": [{"start": "HH:MM", "durationMin": 30, "walkers": ["harsh"], "expect": {"pee": true, "poop": false}, "note": "short reason, e.g. pee due ~3h after the 13:05 walk"}]{{ ', "meals": [{"kind": "lunch", "start": "HH:MM", "people": ["harsh"], "note": "only if moved or reassigned: why"}]' if meals else '' }}, "notes": "one line: Maya's rhythm as you understand it (pee every ~Xh, holds up to ~Yh, poops ~Z after meals) and the day's plan"}
 
             Maya now: last pee {{ potty.last_pee }}; last poop {{ potty.last_poop }}.
             Gaps between pees: {{ potty.pee_gap }}. Gaps between poops: {{ potty.poop_gap }}.
@@ -382,8 +402,9 @@ script:
             {%- for w in (plan.walks if ok else []) if w is mapping -%}
               {%- set s = w.start | default('') | string -%}
               {%- set ts = as_timestamp(strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none).replace(tzinfo=now().tzinfo)) if strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none) else none -%}
-              {%- if ts is none or ts >= from_ts - 60 -%}
-                {%- set ns.out = ns.out + [{'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none)}] -%}
+              {%- if (ts is none or ts >= from_ts - 60) and (ts is none or ts <= late_ts) -%}
+                {%- set ns.out = ns.out + [{'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none),
+                     'expect': w.expect if w.expect is defined and w.expect is mapping else none}] -%}
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
@@ -397,6 +418,7 @@ script:
               body:
                 walks: "{{ kept + fresh }}"
                 notes: "{{ plan.notes | default('') }}"
+                lateUntil: "{{ late_until }}"
                 source: "{{ 'ha-copilot-replan' if rest else 'ha-copilot' }}"
             response_variable: put
             continue_on_error: true

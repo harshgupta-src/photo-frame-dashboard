@@ -301,6 +301,9 @@ import { assetKey, decide, markApplied } from './update.js';
     if (!App.views[name]) name = 'home';
     var prev = App.current;
     if (prev && prev !== name) {
+      // Leaving a half-typed field: drop the soft keyboard with it (and let the frame idle again).
+      var focused = document.activeElement;
+      if (focused && focused.closest && focused.closest('#view-' + prev)) focused.blur();
       if (App.views[prev].hide) App.views[prev].hide();
       if (App.views[prev].heavy) release(prev);
     }
@@ -361,13 +364,15 @@ import { assetKey, decide, markApplied } from './update.js';
     return hit ? hit[1] : 'Other';
   };
 
-  // ------------------------------------------------------------ toasts (single, with undo)
-  var toastTimer;
+  // ------------------------------------------------------------ toasts (with undo)
+  // A new toast replaces plain ones but stacks above any still offering Undo (up to 3), so
+  // deleting two things in a row leaves both undoable.
+  var TOAST_MAX = 3;
   App.toast = function (html, opts) {
     opts = opts || {};
     var box = $('#toasts');
-    box.innerHTML = '';
-    clearTimeout(toastTimer);
+    Array.prototype.slice.call(box.children).forEach(function (old) { if (!old._undo) old._kill(); });
+    while (box.children.length >= TOAST_MAX) box.firstChild._kill();
     var ms = opts.ms || 5000;
     var t = document.createElement('div');
     t.className = 'toast' + (opts.tone ? ' toast--' + opts.tone : '');
@@ -376,9 +381,10 @@ import { assetKey, decide, markApplied } from './update.js';
       (opts.undo ? '<button class="toast-undo">' + App.icon('undo', 22) + 'Undo</button>' : '');
     box.appendChild(t);
     t.classList.add('is-in');
-    function kill() { t.remove(); }
-    toastTimer = setTimeout(kill, ms);
-    if (opts.undo) t.querySelector('.toast-undo').addEventListener('click', function () { clearTimeout(toastTimer); opts.undo(); kill(); });
+    var timer = setTimeout(kill, ms);
+    function kill() { clearTimeout(timer); t.remove(); }
+    t._kill = kill; t._undo = !!opts.undo;
+    if (opts.undo) t.querySelector('.toast-undo').addEventListener('click', function () { kill(); opts.undo(); });
   };
 
   // ------------------------------------------------------------ sheets (modal cards)
@@ -447,6 +453,9 @@ import { assetKey, decide, markApplied } from './update.js';
     if (App.current && App.views[App.current].stay) return; // e.g. a recipe open in a desktop browser
     var blocked = takeoverEl.classList.contains('is-open');
     if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
+    // Typing on the soft keyboard sends the page no touches (and keys only sometimes): give someone
+    // mid-edit longer before going home or to sleep, then drop the keyboard with the sheet.
+    if (editing()) { if (idleSec < EDIT_IDLE) return; document.activeElement.blur(); }
     var asleep = App.isSleep();
     if (!asleep && (App.mode === 'night' || App.mode === 'nightdash')) { App.setMode('day'); App.go('home'); return; }
     if (App.mode === 'nightdash' && idleSec >= 20) { App.setMode('night'); return; }
@@ -462,6 +471,11 @@ import { assetKey, decide, markApplied } from './update.js';
     }
   }
   App.resetIdle = function () { idleSec = 0; };
+  var EDIT_IDLE = 300;
+  function editing() {
+    var a = document.activeElement;
+    return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+  }
 
   // ------------------------------------------------------------ self-update (hosted builds)
   // A deploy changes the hashed /assets/ files index.html points at. The page fetches index.html
@@ -530,7 +544,7 @@ import { assetKey, decide, markApplied } from './update.js';
     checkUpdate(1).then(function (v) { if (v === 'apply' && updateSafe()) applyUpdate(); });
   }
   function updateSafe() {
-    if ($('#sheetLayer').classList.contains('is-open') || $('#demo').classList.contains('is-open')) return false;
+    if ($('#sheetLayer').classList.contains('is-open') || $('#demo').classList.contains('is-open') || editing()) return false;
     return !(App.walk && App.walk.active);
   }
   function applyUpdate() {
@@ -681,6 +695,8 @@ import { assetKey, decide, markApplied } from './update.js';
       if (b && e.detail === 0) App.go(b.dataset.go);
     });
     document.addEventListener('pointerdown', App.resetIdle, true);
+    document.addEventListener('input', App.resetIdle, true);
+    document.addEventListener('keydown', App.resetIdle, true);
     window.addEventListener('hashchange', function () { App.go(location.hash.slice(1)); });
     App.go(location.hash.slice(1) || 'home');
     try { sessionStorage.removeItem('selfheal'); } catch (e) { /* storage disabled */ }

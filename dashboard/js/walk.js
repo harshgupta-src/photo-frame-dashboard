@@ -4,12 +4,15 @@
 //   App.walk.recent   completed walks from the last 14 days, newest first
 //   App.walk.plans    today's and tomorrow's walk plans (the HA agent's, see WALKS.md); App.walk.next()
 //                     is the next planned walk, whose walkers are the default (tap an avatar to change)
+//   App.walk.suggest(rec)  the end-of-walk sheet's defaults: who walked (the planned walk's walkers unless
+//                     someone picked on the tile) and pee/poop (the plan's expect, else her history)
 // Changes are saved to localStorage first and queued in an outbox, so a reload, a reboot or no
 // Wi-Fi loses nothing; the outbox is sent in order (PUT is a full upsert, DELETE removes) and the
 // Worker's copy is adopted whenever the outbox is empty. Times are real time (Date.now(), never the
 // demo-shifted App.now()), and a walk can't start while the clock still reads 1970 after a reboot.
 // Emits 'walk' on every change. Syncing pauses while the page is hidden (poll.js).
 import { every } from './poll.js';
+import { suggestWalk } from '../worker/src/walkexpect.js';
 
 (function () {
   'use strict';
@@ -64,11 +67,24 @@ import { every } from './poll.js';
   };
   W.clockOk = function () { return Date.now() >= MIN_TIME; };
 
+  // Defaults for the end-of-walk sheet: {walkers, pee, poop, hint} (worker/src/walkexpect.js). Walkers:
+  // picked on the tile, else the planned walk's, else whoever started it, else the tile's default.
+  // Pee/poop: the plan's expect (the HA agent's, else the Worker's reading of her history), else her
+  // last 14 days at this time of day, else her usual routine. Nothing is saved until someone taps Save.
+  function minuteOfDay(ms) { var d = new Date(ms); return d.getHours() * 60 + d.getMinutes(); }
+  W.suggest = function (rec) {
+    var g = suggestWalk(rec, W.plans, W.recent, minuteOfDay, function (id) { return !!person(id); });
+    var walkers = g.walkerIds.map(function (id) { return { id: id, name: person(id).name }; });
+    var hint = g.plan ? 'Based on the ' + App.fmt.time(new Date(Date.parse(g.plan.start))) + ' plan'
+      : g.from === 'history' ? 'Based on her walks around this time' : 'Based on her usual routine';
+    return { walkers: walkers.length ? walkers : W.defaultWalkers(), pee: g.pee, poop: g.poop, hint: hint };
+  };
+
   // Worker JSON → frame record
   function fromServer(j) {
     return {
       id: j.id, startedAt: Date.parse(j.startedAt), endedAt: j.endedAt ? Date.parse(j.endedAt) : null,
-      pee: j.pee, poop: j.poop, notes: j.notes || '', calendar: j.calendar, planId: j.planId || undefined,
+      pee: j.pee, poop: j.poop, notes: j.notes || '', calendar: j.calendar, planId: j.planId || undefined, source: j.source,
       walkers: (j.walkerIds || []).map(function (id, i) { var p = person(id); return { id: id, name: p ? p.name : j.walkers[i] }; })
     };
   }
@@ -145,6 +161,7 @@ import { every } from './poll.js';
           var a = j.active ? fromServer(j.active) : null;
           // Keep the frame's "I'm back" (sheet open) on top of the server's still-active walk.
           if (a && W.active && W.active.id === a.id && W.active.endedAt) a = W.active;
+          else if (a && W.active && W.active.id === a.id && W.active.picked) a.picked = true;
           W.active = a;
           W.recent = (j.recent || []).map(fromServer);
           W.plans = j.plans || [];
@@ -158,8 +175,9 @@ import { every } from './poll.js';
   W.start = function () {
     if (W.active) return W.active;
     if (!W.clockOk()) { App.toast('The frame’s clock isn’t set yet. Try again in a minute.', { tone: 'error', icon: 'clock' }); return null; }
-    var x = W.next(), now = Date.now();
+    var x = W.next(), now = Date.now(), c = read(CHOSEN, null);
     W.active = { id: newId(), startedAt: now, endedAt: null, walkers: W.defaultWalkers() };
+    if (c && c.key === (x ? x.id : '') && c.walkers.length) W.active.picked = true; // chosen on the tile: keep them
     if (x && Date.parse(x.start) - now <= PLAN_AHEAD) {
       W.active.planId = x.id;
       x.status = 'active';
@@ -213,9 +231,10 @@ import { every } from './poll.js';
   W.pending = read(OUTBOX, []).length;
   // Reloaded with the end-of-walk sheet open: they were back, so log it with what's known.
   if (W.active && W.active.endedAt) {
-    var r = W.active;
-    if (r.pee == null) r.pee = true;
-    if (r.poop == null) r.poop = false;
+    var r = W.active, g = { pee: true, poop: false };
+    try { g = W.suggest(r); } catch (e) { /* App.fmt not ready: plain defaults */ }
+    if (r.pee == null) r.pee = g.pee;
+    if (r.poop == null) r.poop = g.poop;
     W.save(r);
   }
 

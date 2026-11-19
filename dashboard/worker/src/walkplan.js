@@ -4,7 +4,8 @@
 // A planned walk's event is removed once a walk is logged for it: the walk names it (planId, sent by the
 // frame) or, failing that, is the nearest walk within 90 minutes of its start.
 import { icsTime, VTIMEZONE } from './ics.js';
-import { WalkError, walkersOf, validId, localDate, PLAN_PREFIX } from './walks.js';
+import { WalkError, walkersOf, validId, localDate, localHM, PLAN_PREFIX } from './walks.js';
+import { expectPotty, normalizeExpect } from './walkexpect.js';
 
 export const MATCH_WINDOW = 90 * 60e3;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -33,14 +34,21 @@ export function when(v, date, tz, name) {
   return wall - tzOffset(wall - tzOffset(wall, tz), tz);
 }
 
-// PUT body {walks: [{id?, start, end? | durationMin?, walkers, note?}], notes?, source?} → the stored plan.
+// PUT body {walks: [{id?, start, end? | durationMin?, walkers, note?, expect?: {pee, poop}}], notes?, source?, lateUntil?}
+// → the stored plan. expect: what the agent thinks the walk will bring (the end-of-walk sheet's defaults); optional.
+// Bedtime: walks starting after 22:00 local are dropped (plan.dropped) unless lateUntil ("HH:MM", from HA:
+// 30 min after the last non-Maya calendar event that ends after 22:00 that day) allows them, or their id
+// is in keep (already walked or under way).
 // start/end: "16:00" (local, on that date), "2026-11-09T16:00" (local) or ISO with an offset.
 // names: walker id → display name (from the frame's walks).
-export function normalizePlan(body, date, tz, names = {}, now = Date.now()) {
+export const BEDTIME = '22:00';
+export function normalizePlan(body, date, tz, names = {}, now = Date.now(), keep = new Set()) {
   if (!validDate(date)) throw new WalkError('the plan date must be YYYY-MM-DD');
   if (!body || typeof body !== 'object' || !Array.isArray(body.walks)) throw new WalkError('body must be {"walks": [...]}');
   if (body.walks.length > 8) throw new WalkError('at most 8 walks a day');
-  const items = body.walks.map((x, i) => {
+  let late = when(BEDTIME, date, tz, 'bedtime');
+  if (body.lateUntil) { try { late = Math.max(late, when(body.lateUntil, date, tz, 'lateUntil')); } catch { /* ignore a bad lateUntil */ } }
+  const all = body.walks.map((x, i) => {
     if (!x || typeof x !== 'object') throw new WalkError('walk ' + (i + 1) + ' is not an object');
     const start = when(x.start, date, tz, 'start');
     const end = x.end != null ? when(x.end, date, tz, 'end') : start + Math.round(Number(x.durationMin ?? x.minutes ?? 30)) * 60e3;
@@ -49,10 +57,15 @@ export function normalizePlan(body, date, tz, names = {}, now = Date.now()) {
     const walkers = walkersOf(x.walkers ?? x.by).map(({ id, name, named }) => ({ id, name: named ? name : names[id] || name }));
     if (!walkers.length) throw new WalkError('walk ' + (i + 1) + ' needs walkers');
     const id = validId(x.id) ? x.id : date + '-' + new Date(start).toISOString().slice(11, 16).replace(':', '');
-    return { id, start, end, walkers, note: clean(x.note ?? x.notes, 200) || null, created: now };
+    return { id, start, end, walkers, note: clean(x.note ?? x.notes, 200) || null, expect: normalizeExpect(x.expect), created: now };
   }).sort((a, b) => a.start - b.start);
+  const items = all.filter((x) => x.start <= late || keep.has(x.id));
+  const dropped = all.filter((x) => !items.includes(x)).map((x) => ({ start: new Date(x.start).toISOString(), walkers: x.walkers.map((p) => p.id), reason: 'after bedtime' }));
   if (new Set(items.map((x) => x.id)).size !== items.length) throw new WalkError('two planned walks share an id or a start time');
-  return { date, tz, items, notes: clean(body.notes, 500) || null, source: clean(body.source, 40) || 'api', updated: new Date(now).toISOString() };
+  return {
+    date, tz, items, notes: clean(body.notes, 500) || null, source: clean(body.source, 40) || 'api', updated: new Date(now).toISOString(),
+    lateUntil: new Date(late).toISOString(), ...(dropped.length ? { dropped } : {}),
+  };
 }
 
 // Which logged walk covers each planned item → Map(itemId → walk). Walks naming a plan item win; the
@@ -135,10 +148,16 @@ export function planICS(item, dog, now) {
     'END:VEVENT', 'END:VCALENDAR', ''].map(fold).join('\r\n');
 }
 
-// The plan as JSON for the frame and agents (times ISO; status from the matched walks).
-export function planJSON(plan, matched, now) {
+// Minutes since local midnight in tz.
+export const minuteOfDay = (tz) => (ms) => { const [h, m] = localHM(ms, tz).split(':'); return +h * 60 + +m; };
+
+// The plan as JSON for the frame and agents (times ISO; status from the matched walks). walks (live
+// walks of the last 14 days) give each walk's expect {pee, poop, from: plan|history|usual, n?}.
+export function planJSON(plan, matched, now, walks = [], tz = plan.tz || 'UTC') {
+  const mod = minuteOfDay(tz);
   return {
     date: plan.date, updated: plan.updated, source: plan.source, notes: plan.notes || undefined,
+    lateUntil: plan.lateUntil || undefined, dropped: plan.dropped || undefined,
     walks: plan.items.map((x) => {
       const w = matched.get(x.id);
       return {
@@ -146,6 +165,7 @@ export function planJSON(plan, matched, now) {
         durationMin: Math.round((x.end - x.start) / 60e3),
         walkers: x.walkers.map((p) => p.name), walkerIds: x.walkers.map((p) => p.id),
         note: x.note || undefined, status: planStatus(x, w, now), walkId: w ? w.id : undefined,
+        expect: expectPotty(x.expect, walks, x.start, mod, w && w.id),
         calendar: x.cal ? (x.cal.error ? 'error' : x.cal.href ? 'synced' : x.cal.name ? 'none' : 'off') : 'off',
         calendarName: x.cal && x.cal.name || undefined,
       };

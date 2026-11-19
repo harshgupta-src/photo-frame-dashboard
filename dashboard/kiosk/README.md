@@ -268,7 +268,9 @@ optional service adds floating **Back** and **Dashboard** buttons outside Home H
 The buttons hide while Home HQ is active and return when you leave it. Android
 keeps the service enabled across reboots. It requests no accessibility events or
 screen-content access and does not require root. Disable **Home HQ navigation**
-in Accessibility settings to remove the buttons.
+in Accessibility settings to remove the buttons. From kiosk 1.6 the dashboard WebView
+opts out of accessibility, because any enabled service otherwise makes Chromium rebuild
+its accessibility tree on every frame, which costs 60–110 ms per frame on an A33.
 
 On a PF1007L (`20260519` firmware), the vendor `BackgroundManagerService` dropped the
 service from the enabled list after every `adb install -r` or force stop of Home HQ, so the

@@ -133,9 +133,17 @@
 [data-theme="dark"] .ct-tile--media_player .ct-fill, [data-theme="dark"] .ct-tile--switch .ct-fill { background: #3D3657; }
 [data-theme="dark"] .ct-tile.is-on .ct-fill { opacity: .8; }
 [data-theme="dark"] .ct-alloff.is-on .ct-alloff-btn { background: #111; }
+/* Slider labels sit on both the dark track and the fill: light text on a darker fill in the dark theme. */
+[data-theme="dark"] .ct-sl-fill { background: #8C6A1E; }
+[data-theme="dark"] .ct-sl-val { color: var(--ink); }
 
 /* portrait (800×1280): status strip, rooms, then thermostat | media side by side */
 [data-orient="portrait"] .ct-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+/* The rooms take all the height above the thermostat and media cards: spare height goes to the tiles
+   (bigger touch targets) rather than a gap; more rooms than fit scroll as before. */
+[data-orient="portrait"]:not([data-phone]) .ct-rooms { align-content: stretch; }
+[data-orient="portrait"]:not([data-phone]) .ct-room { display: flex; flex-direction: column; }
+[data-orient="portrait"]:not([data-phone]) .ct-tiles { flex: 1; grid-auto-rows: minmax(148px, 1fr); }
 [data-orient="portrait"] .ct-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; }
 [data-orient="portrait"] .ct-tile { min-height: 148px; }
 [data-orient="portrait"] .ct-media { justify-content: space-between; }
@@ -188,6 +196,6 @@ html[data-phone] .ct-slider--big .ct-sl-val { line-height: 80px; font-size: 30px
 html[data-phone] .ct-chips button { min-height: 48px; padding: 0 16px; font-size: 16px; }
 html[data-phone] .ct-person { flex: 1; }
 html[data-phone] .ct-person small { display: block; }
-[data-orient="portrait"] .ct-alloff small { display: none; }
 .ct-alloff-btn { white-space: nowrap; }
+html[data-phone] .ct-alloff small { display: none; }
 [data-orient="portrait"]:not([data-phone]) .ct-alloff > .i { display: none; }

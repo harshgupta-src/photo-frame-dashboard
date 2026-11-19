@@ -15,7 +15,8 @@ import {
   normalize, summarize, walkJSON, walkICS, renderLog, validId, WalkError, UID_PREFIX, PLAN_PREFIX,
   toEvent, fromEvent, calRev, needsSync, pottyTimes, pottyType, pottyICS, localDate, normalizeRoute,
 } from './walks.js';
-import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate } from './walkplan.js';
+import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
+import { expectPotty } from './walkexpect.js';
 
 const DAY = 864e5;
 const RECENT_DAYS = 14;
@@ -131,7 +132,7 @@ export class WalkStore {
       if (!plan) continue;
       const matched = matchPlan(plan.items, live);
       if (this.planDue(plan, matched, now)) this.later(() => this.syncPlan(date));
-      plans.push(planJSON(plan, matched, now));
+      plans.push(planJSON(plan, matched, now, live, tz));
     }
     return {
       now: new Date(now).toISOString(), tz,
@@ -225,10 +226,23 @@ export class WalkStore {
     // Stopped within a minute of starting: a mis-tap, not a walk. Drop it instead of logging it.
     if (Date.now() - a.startedAt < MIN_WALK_MS) return { ...(await this.remove(a.id)), discarded: true };
     const pick = (v, d) => (v == null || v === '' ? d : v);
+    const guess = body.pee == null || body.pee === '' || body.poop == null || body.poop === '' ? await this.expectFor(a) : { pee: true, poop: false };
     return this.upsert(a.id, {
-      startedAt: a.startedAt, endedAt: Date.now(), pee: pick(body.pee, true), poop: pick(body.poop, false),
+      startedAt: a.startedAt, endedAt: Date.now(), pee: pick(body.pee, guess.pee), poop: pick(body.poop, guess.poop),
       walkers: pick(body.by || body.walkers, a.walkers), notes: pick(body.notes, a.notes), source: body.source || 'shortcut',
     });
+  }
+
+  // What a walk probably brought (a stop that doesn't say): its planned walk's expect, else history.
+  async expectFor(w) {
+    const now = Date.now(), recent = await this.walks(now - 15 * DAY), tz = w.tz || household(recent).tz;
+    const plan = await this.loadPlan(localDate(w.startedAt, tz)).catch(() => null);
+    let item = null;
+    if (plan) {
+      item = plan.items.find((x) => x.id === w.planId) ||
+        plan.items.filter((x) => Math.abs(x.start - w.startedAt) <= MATCH_WINDOW).sort((x, y) => Math.abs(x.start - w.startedAt) - Math.abs(y.start - w.startedAt))[0];
+    }
+    return expectPotty(item && item.expect, recent.filter((x) => !x.deletedAt), w.startedAt, minuteOfDay(tz), w.id);
   }
 
   // Retry calendar writes that gave up (and walks logged while the calendar was off).
@@ -318,7 +332,8 @@ export class WalkStore {
   }
   // Live walks near the plan's day.
   async planWalks(plan) {
-    const from = Math.min(...plan.items.map((x) => x.start), Date.parse(plan.date + 'T00:00:00Z')) - DAY;
+    // 15 days back: the walks it matches, and the history behind each walk's expect.
+    const from = Math.min(...plan.items.map((x) => x.start), Date.parse(plan.date + 'T00:00:00Z')) - 15 * DAY;
     return (await this.walks(from)).filter((w) => !w.deletedAt);
   }
   // Does any planned event need writing or removing? (no iCloud call)
@@ -339,15 +354,18 @@ export class WalkStore {
     if (!validDate(d)) throw new WalkError('the plan date must be YYYY-MM-DD');
     const plan = await this.loadPlan(d);
     if (!plan) return { date: d, walks: [] };
-    return planJSON(plan, matchPlan(plan.items, await this.planWalks(plan)), now);
+    const walks = await this.planWalks(plan);
+    return planJSON(plan, matchPlan(plan.items, walks), now, walks, household(walks).tz);
   }
 
   // Replaces the day's plan and writes its calendar events before answering.
   async putPlan(date, body) {
     const now = Date.now(), recent = await this.walks(now - 30 * DAY), h = household(recent);
-    const plan = normalizePlan(body, date, (body && body.tz) || h.tz, h.names, now);
-    plan.dog = h.dog;
     const old = await this.loadPlan(date);
+    // Planned walks already walked or under way are never dropped for being after bedtime.
+    const walked = old ? [...matchPlan(old.items, recent.filter((w) => !w.deletedAt)).keys()] : [];
+    const plan = normalizePlan(body, date, (body && body.tz) || h.tz, h.names, now, new Set(walked));
+    plan.dog = h.dog;
     const prev = new Map(((old && old.items) || []).map((x) => [x.id, x]));
     for (const x of plan.items) {
       const o = prev.get(x.id);
@@ -412,7 +430,7 @@ export class WalkStore {
       if (cur && cur.updated !== plan.updated) return this.syncPlan(date);
       await this.savePlan(plan);
     }
-    return planJSON(plan, matched, now);
+    return planJSON(plan, matched, now, walks, household(walks).tz);
   }
 
   async syncAll(walks, force = false) {

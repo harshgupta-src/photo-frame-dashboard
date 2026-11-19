@@ -102,3 +102,60 @@ test('plan: a walk planned after another walk ended is not matched to it', async
   assert.equal(matchPlan([replanned], [walk]).size, 0);
   assert.equal(matchPlan([{ ...replanned, created: t - 3600e3 }], [walk]).get('p'), walk);
 });
+
+test('walk-sheet defaults: walkers from the planned walk (alone, together, Ambuja only), else who started it', async () => {
+  const { suggestWalk } = await import('../src/walkexpect.js');
+  const t = Date.parse('2026-11-19T16:15:00Z'), mod = (ms) => new Date(ms).getUTCHours() * 60 + new Date(ms).getUTCMinutes();
+  const plans = [{ walks: [
+    { id: 'p1', start: '2026-11-19T11:15:00Z', walkerIds: ['ambuja'] },
+    { id: 'p2', start: '2026-11-19T16:15:00Z', walkerIds: ['harsh'] },
+    { id: 'p3', start: '2026-11-19T21:10:00Z', walkerIds: ['harsh', 'ambuja'] },
+  ] }];
+  const ids = (rec) => suggestWalk(rec, plans, [], mod, (id) => id !== 'guest', t + 3600e3).walkerIds;
+  const started = [{ id: 'ambuja', name: 'Ambuja' }];
+  assert.deepEqual(ids({ startedAt: t + 5 * 60e3, endedAt: t + 30 * 60e3, walkers: started }), ['harsh'], 'nearest plan: Harsh alone');
+  assert.deepEqual(ids({ startedAt: t, planId: 'p3', walkers: started }), ['harsh', 'ambuja'], 'named plan: together');
+  assert.deepEqual(ids({ startedAt: Date.parse('2026-11-19T11:30:00Z'), walkers: [] }), ['ambuja'], 'Ambuja only');
+  assert.deepEqual(ids({ startedAt: t, walkers: started, picked: true }), ['ambuja'], 'picked on the tile wins');
+  assert.deepEqual(ids({ startedAt: Date.parse('2026-11-19T02:00:00Z'), walkers: started }), ['ambuja'], 'no plan near: who started it');
+  // A plan made for later than the walk ended isn't this walk's.
+  assert.equal(suggestWalk({ startedAt: t - 60 * 60e3, endedAt: t - 40 * 60e3 }, plans, [], mod).plan, null);
+});
+
+test('walk-sheet defaults: pee/poop from the plan, else 14 days of history at this time, else her routine', async () => {
+  const { expectPotty, normalizeExpect, routineExpect } = await import('../src/walkexpect.js');
+  const NY = 'America/New_York', { minuteOfDay } = await import('../src/walkplan.js'), mod = minuteOfDay(NY);
+  const at = Date.parse('2026-11-19T16:00:00Z'); // 11:00 in New York
+  assert.deepEqual(expectPotty({ pee: true, poop: false }, [], at, mod), { pee: true, poop: false, from: 'plan' });
+  // 11 AM walks of the last days: poop 3 of 4 (75%) → yes; walks at 4 PM (no poop) don't count.
+  const hist = [1, 2, 3, 4].map((d) => ({ id: 'a' + d, startedAt: at - d * 864e5 + 20 * 60e3, endedAt: at - d * 864e5 + 50 * 60e3, pee: true, poop: d !== 2 }))
+    .concat([1, 2, 3].map((d) => ({ id: 'b' + d, startedAt: at - d * 864e5 + 5 * 3600e3, endedAt: at - d * 864e5 + 5.5 * 3600e3, pee: true, poop: false })));
+  assert.deepEqual(expectPotty(null, hist, at, mod), { pee: true, poop: true, from: 'history', n: 4 });
+  assert.equal(expectPotty(null, hist, at + 5 * 3600e3, mod).poop, false, '4 PM: no poop');
+  assert.equal(expectPotty(null, hist, at - 15 * 864e5, mod).from, 'usual', 'too little history');
+  // Routine fallback: always pee; poop on the morning, late-morning and after-dinner walks.
+  assert.deepEqual([6 * 60, 11 * 60, 16 * 60, 21 * 60].map((m) => routineExpect(m).poop), [true, true, false, true]);
+  assert.deepEqual(expectPotty(null, [], at, mod), { pee: true, poop: true, from: 'usual' });
+  assert.deepEqual(normalizeExpect({ pee: 'yes', poop: 0 }), { pee: true, poop: false });
+  assert.equal(normalizeExpect({ pee: true }), null);
+});
+
+test('plan: no walks after 22:00 unless lateUntil (a late calendar event) allows them', async () => {
+  const { normalizePlan, planJSON } = await import('../src/walkplan.js');
+  const NY = 'America/New_York', now = Date.parse('2026-11-19T09:30:00Z');
+  const body = { walks: [{ start: '06:15', walkers: ['harsh'] }, { start: '21:00', walkers: ['harsh', 'ambuja'], expect: { pee: true, poop: true } },
+    { start: '22:30', walkers: ['harsh'] }] };
+  const p = normalizePlan(body, '2026-11-19', NY, {}, now);
+  assert.deepEqual(p.items.map((x) => new Date(x.start).toISOString()), ['2026-11-19T11:15:00.000Z', '2026-11-20T02:00:00.000Z'], 'last walk 21:00');
+  assert.deepEqual(p.dropped.map((x) => x.start), ['2026-11-20T03:30:00.000Z']);
+  assert.deepEqual(p.items[1].expect, { pee: true, poop: true });
+  const j = planJSON(p, new Map(), now, [], NY);
+  assert.deepEqual(j.walks.map((x) => x.expect.from), ['usual', 'plan']);
+  // Out late (an event ends at 22:15): a walk by 22:45 is fine, one at 23:00 is not.
+  const late = normalizePlan({ ...body, lateUntil: '22:45', walks: [...body.walks, { start: '23:00', walkers: ['harsh'] }] }, '2026-11-19', NY, {}, now);
+  assert.deepEqual(late.items.map((x) => new Date(x.start).toISOString().slice(11, 16)), ['11:15', '02:00', '03:30']);
+  assert.equal(late.dropped.length, 1);
+  // A walk already walked keeps its place.
+  const kept = normalizePlan(body, '2026-11-19', NY, {}, now, new Set(['2026-11-19-0330']));
+  assert.equal(kept.items.length, 3);
+});

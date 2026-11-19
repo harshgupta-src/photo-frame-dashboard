@@ -69,16 +69,28 @@ import { every } from './poll.js';
 
   // ---------------------------------------------------------------- the plan (everyone's calendars)
   function calEvents() { return (window.DATA.events || []).filter(function (e) { return !e.allDay || isDog(e); }); }
+  // The dog tab asks for 7+ days at a time; parsing every event's title again for each one took
+  // ~200 ms on the frame. Derived lists are kept until the data, the events or the walks change.
+  var memo = {}, memoFor = null;
+  function cached(name, make) {
+    var ev = window.DATA.events || [], d = data();
+    if (!memoFor || memoFor.ev !== ev || memoFor.n !== ev.length || memoFor.d !== d) { memo = {}; memoFor = { ev: ev, n: ev.length, d: d }; }
+    return name in memo ? memo[name] : (memo[name] = make());
+  }
+  App.on('data', function () { memoFor = null; });
+  App.on('dog', function () { memoFor = null; });
+  App.on('walk', function () { memoFor = null; });
+  function calMeals() { return cached('calMeals', function () { return calEvents().map(mealFrom).filter(Boolean); }); }
   function plannedMeals(day) {
     var want = ymd(day), seen = {};
-    return calEvents().map(mealFrom).filter(function (m) {
-      if (!m || m.key.slice(0, 10) !== want || seen[m.key]) return false;
+    return calMeals().filter(function (m) {
+      if (m.key.slice(0, 10) !== want || seen[m.key]) return false;
       return (seen[m.key] = true);
     });
   }
   // "Maya prep" notes: "3 cups Purina Pro Plan + 1/2 cup Royal Canin GI" → foods with shares.
   function prep(day) {
-    var e = calEvents().filter(function (x) { return isPrep(x) && sameDay(x.start, day); })[0];
+    var e = cached('preps', function () { return calEvents().filter(isPrep); }).filter(function (x) { return sameDay(x.start, day); })[0];
     if (!e || !e.notes) return null;
     var re = new RegExp(QTY + '\\s*cups?\\s+([A-Z][A-Za-z\u2019\']*(?:\\s+[A-Z][A-Za-z\u2019\']*)*)', 'g'), m, foods = [], total = 0;
     while ((m = re.exec(e.notes))) {
@@ -96,7 +108,8 @@ import { every } from './poll.js';
   // ---------------------------------------------------------------- what happened
   function data() { return G.demo ? demo() : (G.data || {}); }
   function logEvents() { return (data().log || []).filter(function (e) { return !e.allDay; }); }
-  function fedMeals() {
+  function fedMeals() { return cached('fed', fedMealsNow); }
+  function fedMealsNow() {
     var out = {};
     (data().meals || []).forEach(function (m) {
       var kind = MEALS.indexOf(m.meal) > -1 ? m.meal : mealKind(m.meal, m.plannedAt || m.at) || 'Extra';
@@ -171,6 +184,12 @@ import { every } from './poll.js';
   // Pee/poop times: Lifelog's events, the walks' ticks (pee 1 min after the start, poop 2 min after
   // that, like the Worker) and Life Log calendar entries, merged within 3 minutes of each other.
   G.potty = function (sinceMs) {
+    var W = App.walk, k = 'potty:' + Math.floor(+App.now() / MIN) + ':' + W.recent.length + ':' + (W.active ? W.active.id + (W.active.endedAt || '') : '');
+    var all = cached('potty', function () { return {}; });
+    if (all.k !== k) { all.k = k; all.list = allPotty(); }
+    return all.list.filter(function (x) { return x.at >= (sinceMs || 0); });
+  };
+  function allPotty() {
     var list = [];
     (data().potty || []).forEach(function (x) { list.push({ kind: x.kind, at: Date.parse(x.at), walkId: x.walkId }); });
     walks().forEach(function (w) {
@@ -184,14 +203,14 @@ import { every } from './poll.js';
       var w = /dog-walk-(.+)-(?:pee|poop)(?:@|$)/.exec(e.id || '');
       if (k) list.push({ kind: k, at: Date.parse(e.start), walkId: w ? w[1] : null });
     });
-    list = list.filter(function (x) { return x.at >= (sinceMs || 0) && x.at <= +App.now() + MIN; }).sort(function (a, b) { return b.at - a.at; });
+    list = list.filter(function (x) { return x.at <= +App.now() + MIN; }).sort(function (a, b) { return b.at - a.at; });
     var out = [];
     list.forEach(function (x) {
       var dup = out.some(function (y) { return y.kind === x.kind && ((x.walkId && y.walkId === x.walkId) || Math.abs(y.at - x.at) < 3 * MIN); });
       if (!dup) out.push(x);
     });
     return out;
-  };
+  }
   // Typical daytime gap between two of a kind (median, over the last 14 days; overnight gaps left out).
   G.gap = function (kind) {
     var t = G.potty(+App.now() - 14 * 864e5).filter(function (x) { return x.kind === kind; }).map(function (x) { return x.at; }).sort();
