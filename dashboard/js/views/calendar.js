@@ -362,7 +362,7 @@
     }
   });
   App.on('minute', function () {
-    if (App.current !== 'calendar') return;
+    if (!App.onScreen('calendar')) return;
     var line = V.el.querySelector('.now-line');
     var now = App.now();
     if (line) { line.style.top = y(now) + 'px'; line.querySelector('span').textContent = App.fmt.time(now, false); }

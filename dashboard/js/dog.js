@@ -11,7 +11,12 @@
 //   App.dog.potty(sinceMs)   [{kind: 'pee'|'poop', at}] newest first
 //   App.dog.upcoming(n)      the next n other "Maya …" events (training, vet, …)
 //   App.dog.lastRoute()      the newest walk's GPS path, for the route map
-// Emits 'dog' when the Worker's data changes.
+//   App.dog.ensureFresh(ms)  fetches GET /dog if the copy is older than ms (views/dog.js on show)
+// Emits 'dog' when the Worker's data changes. GET /dog (~70 kB) is fetched every 5 min while the dog
+// tab is shown and every 15 min otherwise (only the dog tab reads it), never while the page is hidden;
+// an unchanged answer is neither parsed nor stored again.
+import { every } from './poll.js';
+
 (function () {
   'use strict';
   var API = import.meta.env.VITE_FRAME_API, KEY = import.meta.env.VITE_FRAME_KEY;
@@ -249,16 +254,27 @@
   G.MEALS = MEALS;
 
   // ---------------------------------------------------------------- sync
+  var lastText = null, inflight = null;
   G.refresh = function () {
     if (!G.on) return Promise.resolve();
-    return fetch(API + '/dog?days=' + DAYS, { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (j) {
-        var before = JSON.stringify(G.data);
-        G.data = j; G.error = null; G.updated = Date.now();
+    if (inflight) return inflight;
+    inflight = fetch(API + '/dog?days=' + DAYS, { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (t) {
+        G.error = null; G.updated = Date.now();
+        if (t === lastText) return;
+        var j = JSON.parse(t), first = lastText === null;
+        lastText = t;
+        if (first && G.data && JSON.stringify(j) === JSON.stringify(G.data)) return; // same as the cached copy
+        G.data = j;
         write({ at: G.updated, data: j });
-        if (JSON.stringify(j) !== before) App.emit('dog');
-      }).catch(function (e) { G.error = e.message; console.warn('Dog data sync failed', e); });
+        App.emit('dog');
+      }).catch(function (e) { G.error = e.message; console.warn('Dog data sync failed', e); })
+      .then(function () { inflight = null; });
+    return inflight;
+  };
+  G.ensureFresh = function (ms) {
+    return G.on && (!G.updated || Date.now() - G.updated > (ms == null ? 5 * MIN : ms)) ? G.refresh() : Promise.resolve();
   };
   var c = read();
   if (c) { G.data = c.data; G.updated = c.at; }
@@ -313,10 +329,12 @@
     return;
   }
   App.on('ready', function () {
-    G.refresh();
-    setInterval(G.refresh, 5 * 60000);
-    window.addEventListener('online', G.refresh);
+    if (App.current === 'dog') G.refresh();
+    every(MIN, function () { G.ensureFresh(App.current === 'dog' ? 5 * MIN : 15 * MIN); });
+    window.addEventListener('online', function () { G.refresh(); });
   });
   // A walk logged here changes the potty and walk data right away; fetch Lifelog's side shortly after.
-  App.on('walk', function () { setTimeout(G.refresh, 15000); });
+  var walkTimer = null;
+  App.on('walk', function () { clearTimeout(walkTimer); walkTimer = setTimeout(G.refresh, 15000); });
+  App.on('memory', function () { lastText = null; });
 })();

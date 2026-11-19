@@ -3,6 +3,7 @@
 // calendar of whoever walks (WALK_PLAN_CALENDARS, else the CALENDARS entry for exactly those people).
 // A planned walk's event is removed once a walk is logged for it: the walk names it (planId, sent by the
 // frame) or, failing that, is the nearest walk within 90 minutes of its start.
+import { icsTime, VTIMEZONE } from './ics.js';
 import { WalkError, walkersOf, validId, localDate, PLAN_PREFIX } from './walks.js';
 
 export const MATCH_WINDOW = 90 * 60e3;
@@ -123,11 +124,11 @@ export function planICS(item, dog, now) {
     item.note || '',
     'Planned walk for ' + dog + ' (Home Assistant agent). Start it from the walk tile on the photo frame; this event is removed once the walk is logged and the walk itself goes on the Life Log calendar.',
   ].filter(Boolean).join('\n\n');
-  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walk-plan//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walk-plan//EN', 'CALSCALE:GREGORIAN', ...VTIMEZONE, 'BEGIN:VEVENT',
     'UID:' + planUid(item.id),
     'DTSTAMP:' + stamp(now),
-    'DTSTART:' + stamp(item.start),
-    'DTEND:' + stamp(item.end),
+    icsTime('DTSTART', item.start),
+    icsTime('DTEND', item.end),
     'SUMMARY:' + icsText('🐕 ' + dog + ' walk — ' + who),
     'DESCRIPTION:' + icsText(desc),
     'CATEGORIES:' + icsText(dog + ' walk plan'),

@@ -3,8 +3,11 @@
 .stage[data-mode="ambient"] .ambient { display: block; }
 .amb-stage { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
 /* Info sits small in the bottom-left corner so the photo stays visible */
-.amb-scrim { position: absolute; left: 0; bottom: 0; width: 60%; height: 40%; background: radial-gradient(ellipse at 0% 100%, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0) 70%); pointer-events: none; }
-.amb-info { position: absolute; left: 28px; bottom: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-shadow: 0 1px 6px rgba(0, 0, 0, .5); }
+/* The scrim and the info are static over a photo that changes every 14 s, and the info is nudged
+   every minute (pixelShift): each gets its own layer, so a new photo doesn't repaint the gradient and
+   the blurred text shadow, and a nudge is a compositor move rather than a repaint. */
+.amb-scrim { position: absolute; left: 0; bottom: 0; width: 60%; height: 40%; background: radial-gradient(ellipse at 0% 100%, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0) 70%); pointer-events: none; will-change: transform; }
+.amb-info { position: absolute; left: 28px; bottom: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-shadow: 0 1px 6px rgba(0, 0, 0, .5); will-change: transform; }
 .amb-time { font-size: 64px; line-height: .8; letter-spacing: -.03em; }
 .amb-date { font-family: var(--serif); font-size: 18px; margin-top: 4px; }
 .amb-right { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }

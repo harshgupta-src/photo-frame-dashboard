@@ -82,6 +82,17 @@ export async function calendarEntries(env, url, from, to) {
     .filter((r) => typeof r.ics === 'string' && r.ics.includes('BEGIN:VEVENT'));
 }
 
+const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Objects whose VEVENT UID contains `uid`: [{href, ics}]. Events made on a phone or Mac are not
+// necessarily stored at <uid>.ics, so the href comes from the server. Callers check the UID exactly.
+export async function eventsByUid(env, url, uid) {
+  const rows = await dav(env, 'REPORT', url,
+    `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:prop-filter name="UID"><c:text-match collation="i;octet">${xmlEsc(uid)}</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 1);
+  return rows.map((r) => ({ href: new URL(r.href, url).href, ics: String(text(r.prop['calendar-data']) ?? '') }))
+    .filter((r) => r.ics.includes('BEGIN:VEVENT'));
+}
+
 const basic = (env) => 'Basic ' + btoa(env.ICLOUD_APPLE_ID + ':' + env.ICLOUD_APP_PASSWORD);
 
 // Writes one event (the whole VCALENDAR text) to href, creating or replacing it. Needs write access

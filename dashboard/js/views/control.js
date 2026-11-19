@@ -332,6 +332,7 @@
   }
 
   App.register('control', {
+    heavy: true, // camera snapshots and album art: dropped while another tab is up
     show: function (el) {
       if (!V.el) {
         V.el = el;
@@ -346,6 +347,11 @@
       camTimer();
     },
     resume: function () { camTimer(); },
-    hide: function () { clearInterval(V.camTimer); }
+    hide: function () { clearInterval(V.camTimer); V.camTimer = null; },
+    release: function (el) {
+      clearInterval(V.camTimer); V.camTimer = null;
+      el.querySelector('.hc-cams').textContent = '';
+      el.querySelector('.hc-media').textContent = '';
+    }
   });
 })();

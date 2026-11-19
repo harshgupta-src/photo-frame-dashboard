@@ -98,7 +98,7 @@ self-heal; and a stalled or sleeping page shows the right time on its first tick
   costs one boot on the A33 — keep deploys to when nobody's using the frame.
 - No APK rebuild needed.
 - Optional follow-ups (not done here): self-host or make the Google Fonts stylesheet non-blocking so
-  a slow fonts.googleapis.com can't hold the first paint; a reload during the sleep window boots in
+  a slow fonts.googleapis.com can't hold the first paint (since done: "lighter rendering" below); a reload during the sleep window boots in
   day mode and lights the screen for ~60 s before going back to night (pre-existing, `onIdleTick`).
 
 ## Follow-up: pushed deploys, an "Updating…" screen, fewer redraws
@@ -120,3 +120,22 @@ painted. With deploys several times a day, that was a frozen photo several times
   re-rendered the current view even when nothing changed, and `'data'` re-builds every hidden view
   400 ms apart — a few seconds of main-thread work on the A33 every 5 minutes. Both now compare with
   what's shown first; the Home card's HA status (every 15 s) only touches the DOM when it changed.
+
+## Follow-up: lighter rendering (idle freezes)
+CDP on the frame showed little JS but ~16 s of style/layout/paint/raster per 90 s while idle, long
+tasks every few seconds and RSS climbing 130→210 MB: all eight views were built and kept (2,479 DOM
+nodes, 14–15 images including 1536×2048 photos, nine map tiles and camera snapshots in hidden tabs).
+- **Views are built on first visit** (`js/app.js` router). No pre-building; `'data'`/`'time'` only
+  mark hidden views dirty and they're rebuilt when opened. Event handlers check `App.onScreen(name)`
+  before touching the DOM. Heavy views (`heavy: true`: photos, control, agents, dog) `release()` their
+  images/DOM when left. Ambient/night pause the view underneath; night also releases every view's
+  images (`App.releaseImages()`, callable on memory pressure). Startup: 285 nodes, 1 image.
+- **Images.** The Home tile uses the 360×480 derivative (`url.s`); only full-screen slides use
+  `url.l`. Slides decode off-thread (`decoding="async"`, `decode()` before the swap) and the old slide
+  goes in the same frame, so at most one full-size photo is up. Ambient drops its photo when it ends.
+- **Paint.** Agents' live dot pulses with transform/opacity (not box-shadow); animations pause in
+  hidden views and under ambient/night; one filter over the map tiles instead of one per tile; the
+  ambient scrim and info get their own layers so a new photo or a pixel-shift doesn't repaint them.
+- **Fonts** are self-hosted (`css/fonts/`, woff2, `font-display: swap`, OFL licences alongside) — no
+  render-blocking fonts.googleapis.com.
+- **Clock.** `App.isSleep()` is cached per minute; the per-second tick touches cached nodes only.

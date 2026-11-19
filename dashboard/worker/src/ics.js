@@ -5,14 +5,84 @@ const pad = (n) => String(n).padStart(2, '0');
 const dateOnly = (t) => t.year + '-' + pad(t.month) + '-' + pad(t.day);
 const MAX_OCCURRENCES = 2000;
 
+// ------------------------------------------------------------------ writing local times
+// Timed events we write carry TZID=America/New_York plus this VTIMEZONE (US rules since 2007), so
+// Apple Calendar shows them in Eastern Time instead of as UTC.
+export const EVENT_TZ = 'America/New_York';
+export const VTIMEZONE = [
+  'BEGIN:VTIMEZONE', 'TZID:' + EVENT_TZ,
+  'BEGIN:DAYLIGHT', 'TZOFFSETFROM:-0500', 'TZOFFSETTO:-0400', 'TZNAME:EDT', 'DTSTART:20070311T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU', 'END:DAYLIGHT',
+  'BEGIN:STANDARD', 'TZOFFSETFROM:-0400', 'TZOFFSETTO:-0500', 'TZNAME:EST', 'DTSTART:20071104T020000', 'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU', 'END:STANDARD',
+  'END:VTIMEZONE',
+];
+// TZID=America/New_York reads correctly even from objects that leave the VTIMEZONE out.
+ICAL.TimezoneService.register(new ICAL.Component(ICAL.parse(VTIMEZONE.join('\r\n'))));
+
+// Offset (ms) of `tz` from UTC at instant `ms` (whole seconds).
+export function tzOffset(ms, tz = EVENT_TZ) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+}
+
+const wallParts = (ms, tz) => {
+  const d = new Date(Math.floor(ms / 1000) * 1000 + tzOffset(ms, tz));
+  return [d.getUTCFullYear(), pad(d.getUTCMonth() + 1), pad(d.getUTCDate()), pad(d.getUTCHours()), pad(d.getUTCMinutes()), pad(d.getUTCSeconds())];
+};
+const utcStamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+
+// The local wall time of `ms` also names another instant (the hour repeated when DST ends).
+function ambiguous(ms, tz) {
+  const off = tzOffset(ms, tz), wall = Math.floor(ms / 1000) * 1000 + off;
+  return [tzOffset(ms - 3600e3, tz), tzOffset(ms + 3600e3, tz)]
+    .some((o) => o !== off && tzOffset(wall - o, tz) === o);
+}
+
+// 'DTSTART' + ms → 'DTSTART;TZID=America/New_York:20261112T123000'. Times in the hour repeated when
+// DST ends stay UTC: readers disagree on which pass a bare wall time means (RFC 5545 says the first,
+// ical.js takes the second).
+export function icsTime(name, ms, tz = EVENT_TZ) {
+  if (ambiguous(ms, tz)) return name + ':' + utcStamp(ms);
+  const [y, mo, d, h, mi, s] = wallParts(ms, tz);
+  return name + ';TZID=' + tz + ':' + y + mo + d + 'T' + h + mi + s;
+}
+
+// ms → '2026-11-12T12:30:00-05:00' (local time with its offset).
+export function localISO(ms, tz = EVENT_TZ) {
+  const [y, mo, d, h, mi, s] = wallParts(ms, tz);
+  const off = tzOffset(ms, tz) / 60e3, a = Math.abs(off);
+  return y + '-' + mo + '-' + d + 'T' + h + ':' + mi + ':' + s + (off < 0 ? '-' : '+') + pad(Math.floor(a / 60)) + ':' + pad(a % 60);
+}
+
 // One CalDAV object (or a whole .ics feed) → events overlapping [from, to).
 // All-day dates stay 'YYYY-MM-DD' (end exclusive) so the frame reads them in its own time zone.
-export function expandICS(icsText, cal, from, to) {
+function parseRoot(icsText) {
   const root = new ICAL.Component(ICAL.parse(icsText));
   for (const tz of root.getAllSubcomponents('vtimezone')) {
     const id = tz.getFirstPropertyValue('tzid');
     if (id && !ICAL.TimezoneService.has(id)) ICAL.TimezoneService.register(tz);
   }
+  return root;
+}
+
+// What one CalDAV object holds for `uid` (exact match): {title, start, recurring}, or null.
+export function describeUid(icsText, uid) {
+  let root;
+  try { root = parseRoot(icsText); } catch { return null; }
+  const vs = root.getAllSubcomponents('vevent').filter((v) => v.getFirstPropertyValue('uid') === uid);
+  if (!vs.length) return null;
+  const ev = new ICAL.Event(vs.find((v) => !v.hasProperty('recurrence-id')) || vs[0]);
+  const s = ev.startDate;
+  return {
+    title: ev.summary || '(No title)',
+    start: !s ? null : s.isDate ? dateOnly(s) : localISO(s.toJSDate().getTime()),
+    recurring: ev.isRecurring(),
+  };
+}
+
+export function expandICS(icsText, cal, from, to) {
+  const root = parseRoot(icsText);
   const masters = new Map(), overrides = [];
   for (const v of root.getAllSubcomponents('vevent')) {
     if (v.hasProperty('recurrence-id')) overrides.push(v);

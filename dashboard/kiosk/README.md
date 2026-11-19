@@ -63,9 +63,16 @@ adb shell am start -n com.wesbos.homehq/.MainActivity --es url 'https://frame-da
   sheet, alert or dog walk is open, behind an "Updating…" screen rather than a frozen photo (at most
   once per build every 6 hours; `../UPDATE-FREEZE.md`). No USB needed.
 - Changes to the kiosk app itself (Java, `build.sh`) still need a USB install.
-- The kiosk passes the frame's ambient light sensor to the page as `window.frameLux(lux)` every
-  few seconds. The dashboard's Auto theme uses it (`js/theme.js`) and falls back to sunset/sunrise
-  without it.
+- The kiosk passes the frame's ambient light sensor to the page as `window.frameLux(lux)` when it
+  moves by 2 lux or 10 % (at most every 2 seconds), and at least every 30 seconds as a heartbeat
+  (`js/theme.js` counts the sensor as stale after 60). The dashboard's Auto theme uses it and falls
+  back to sunset/sunrise without it.
+- When Android asks for memory back, the kiosk calls `window.frameMemory(level)` (an
+  `onTrimMemory` level; 80 for `onLowMemory`) so the page can drop caches.
+- Hung page watchdog (kiosk 1.4): every 30 seconds the kiosk asks the page to evaluate `1`. Two
+  answers missing for 20 seconds in a row reload the page, at most once every 10 minutes; still hung
+  at the next allowed reload, the app restarts itself (Android 6 runs WebView's renderer inside the
+  app). Look for `Page didn't answer` / `Page hung` in `adb logcat -s HomeHQ`.
 - Without internet, the frame shows the native offline screen and comes back on its own. To use
   the bundled copy instead, save `http://127.0.0.1:8765/` as the URL (see below).
 
@@ -89,6 +96,30 @@ Reminders from HA are set up in `../ha/README.md`.
    ```
 
    An empty `ha_token` turns it off. Reload the dashboard to pick up a change.
+
+### Live state (kiosk 1.4)
+
+Instead of polling `/api/states`, the page can ask the kiosk for a live stream: the kiosk keeps one
+WebSocket to HA (`ws://` or `wss://` from `ha_url` + `/api/websocket`, same token; `HaLive.java`),
+loads `get_states` once, subscribes to `state_changed`, and pushes only the watched domains.
+
+- `HomeHQ.haWatch('["light","switch",...]')` starts (or restarts) it. Domains outside the kiosk's
+  allow-list (light, switch, fan, climate, media_player, vacuum, scene, script, todo, sensor,
+  binary_sensor, person, calendar, weather, sun, input_boolean; no locks or alarms) are dropped.
+  Calling it again with the same domains just resends the snapshot.
+- `HomeHQ.haLive()` is true while the socket is authenticated, subscribed and has its snapshot.
+- The kiosk calls `window.haPush(json)`:
+  - `{"full":true,"live":true,"states":[…]}` on every (re)subscribe, on `haWatch`, and when the
+    screen comes back on or the kiosk returns to the front;
+  - `{"live":true,"states":[…],"removed":["entity_id",…]}` for changes, batched: at most every
+    250 ms, latest state per entity. `sensor` and `binary_sensor` are only sent when their `state`
+    changes (attribute-only updates are skipped);
+  - `{"live":false}` when the link drops.
+
+  State objects are as in `/api/states` without `context`. Nothing is pushed while the screen is off
+  or the kiosk is in the background.
+- It reconnects after 2 s, doubling to 60 s, and at once when Wi-Fi connects. An HA ping every
+  30 s that isn't answered within 10 s counts as a dropped link. Logs: `adb logcat -s HomeHQ.live`.
 
 The Today screen's Home card then shows `VITE_HA_ROOM` (for example
 `Living room:light.living_room_*`) and All lights as buttons, plus the thermostat's inside

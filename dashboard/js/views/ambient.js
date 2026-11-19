@@ -35,9 +35,12 @@
   App.on('mode', function (m) {
     clearInterval(shiftTimer);
     if (m === 'ambient') { amb.show.start(); paint(); shiftTimer = setInterval(pixelShift, 60000); }
-    else amb.show.stop();
+    // Leaving ambient drops the full-screen photo (1536×2048, ~12 MB decoded) rather than keeping it
+    // under display:none; the next ambient starts with a fresh one.
+    else amb.show.clear();
     App.resetIdle();
   });
+  App.on('release', function () { if (App.mode !== 'ambient' && amb.show) amb.show.clear(); });
   App.on('minute', paint);
   App.on('walk', paint);
 })();

@@ -1,6 +1,7 @@
 // Dog walk log: validation, JSON shapes, the Lifelog event mapping, the calendar event and the
 // generated markdown log. Pure functions (no Cloudflare APIs) so node --test can cover them;
 // walkstore.js reads and writes the walks in Lifelog.
+import { icsTime, VTIMEZONE } from './ics.js';
 
 export const MIN_TIME = Date.UTC(2026, 0, 1); // frames without an RTC boot at 1970 until NTP syncs
 export const MAX_WALK = 6 * 3600e3;
@@ -264,7 +265,7 @@ export function pottyTimes(w) {
 export const pottyType = (walkType, kind) => (/_walk$/.test(walkType) ? walkType.replace(/_walk$/, '_' + kind) : walkType + '_' + kind);
 
 function vcal(lines) {
-  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walks//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walks//EN', 'CALSCALE:GREGORIAN', ...VTIMEZONE, 'BEGIN:VEVENT',
     ...lines, 'END:VEVENT', 'END:VCALENDAR', ''].map(fold).join('\r\n');
 }
 
@@ -274,8 +275,8 @@ export function pottyICS(w, kind, now) {
   return vcal([
     'UID:' + UID_PREFIX + w.id + '-' + kind + '@frame-data',
     'DTSTAMP:' + stamp(now),
-    'DTSTART:' + stamp(at),
-    'DTEND:' + stamp(at + 60e3),
+    icsTime('DTSTART', at),
+    icsTime('DTEND', at + 60e3),
     'SUMMARY:' + icsText(dog + (kind === 'pee' ? ' pee 💧' : ' poop 💩')),
     'DESCRIPTION:' + icsText('On the ' + clockUTC(w) + ' walk' + (w.walkers.length ? ' with ' + w.walkers.map((x) => x.name).join(' & ') : '') +
       '.\nLogged with the walk timer on the photo frame; edit the walk there.'),
@@ -297,13 +298,13 @@ export function walkICS(w, now) {
     'Logged with the walk timer on the photo frame. Edit or delete it there (Today → walk tile → history); changes here are overwritten.',
   ].filter((l, i, a) => l || (i && a[i - 1])).join('\n');
   return [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walks//EN', 'CALSCALE:GREGORIAN',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//walks//EN', 'CALSCALE:GREGORIAN', ...VTIMEZONE,
     'BEGIN:VEVENT',
     'UID:' + eventUid(w.id),
     'DTSTAMP:' + stamp(now),
     'LAST-MODIFIED:' + stamp(w.updatedAt || now),
-    'DTSTART:' + stamp(w.startedAt),
-    'DTEND:' + stamp(Math.max(w.endedAt, w.startedAt + 60e3)),
+    icsTime('DTSTART', w.startedAt),
+    icsTime('DTEND', Math.max(w.endedAt, w.startedAt + 60e3)),
     'SUMMARY:' + icsText(eventTitle(w)),
     'DESCRIPTION:' + icsText(desc),
     'CATEGORIES:' + icsText((w.dog || 'Dog') + ' walk'),

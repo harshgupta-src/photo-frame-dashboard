@@ -1,22 +1,26 @@
 // Calendar read/write for household agents (the Home Brain MCP gateway), over the same iCloud
-// account the frame reads. Agents can only create, change or delete their own events: every agent
-// event has a UID starting with "hb-" and lives at <calendar>/<uid>.ics, so events people made are
-// never touched.
+// account the frame reads. Agents create and change only their own events (UID starting with "hb-",
+// stored at <calendar>/<uid>.ics) but may delete any event, by exact UID, on a calendar they can write.
+// Timed events are written in New York time (TZID + VTIMEZONE) and listed as local ISO with offset.
 //   GET    /agent/calendars                         [{alias, name, write}]
 //   GET    /agent/events?calendar=&from=&to=&q=     events (all agent calendars if no calendar)
 //   PUT    /agent/events/:uid                       create or replace {calendar, title, start, end, ...}
-//   DELETE /agent/events/:uid[?calendar=]           delete (from every writable calendar if none given)
+//   DELETE /agent/events/:uid[?calendar=]           delete any event by exact UID (every writable calendar if none given)
 // Auth: Authorization: Bearer AGENT_CAL_KEY (a Worker secret if set, else derived from PUSH_TOKEN like
 // WALK_KEY; scripts/walk-keys.mjs writes it). X-Agent-Person / X-Agent tag who wrote an event.
 // Secret AGENT_CALENDARS: {"alias": {"name": "iCloud calendar name", "write": true | false | ["person", ...]}}.
-import { listCalendars, calendarObjects, putEvent, deleteEvent, calKey } from './icloud.js';
-import { expandICS } from './ics.js';
+import { listCalendars, calendarObjects, eventsByUid, putEvent, deleteEvent, calKey } from './icloud.js';
+import { expandICS, describeUid, tzOffset, icsTime, localISO, VTIMEZONE, EVENT_TZ } from './ics.js';
 import { walkKey } from './walkapi.js';
 
 const DAY = 864e5;
 const MAX_RANGE_DAYS = 120;
 export const AGENT_UID = /^hb-[a-z0-9][a-z0-9._-]{0,120}$/;
-export const DEFAULT_TZ = 'America/New_York';
+// Any event's UID, as /agent/events lists it (deletes).
+const ANY_UID = /^[^\u0000-\u001f\u007f]{1,255}$/;
+// Occurrence ids of repeating events: "<series uid>@2026-11-12T18:30:00".
+const OCCURRENCE = /^(.+)@(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?)$/;
+export const DEFAULT_TZ = EVENT_TZ;
 
 export class AgentCalError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -37,14 +41,6 @@ export const canWrite = (cal, person) =>
 
 // ------------------------------------------------------------------ time handling
 const pad = (n) => String(n).padStart(2, '0');
-
-// Offset (ms) of `tz` from UTC at instant `ms`.
-function tzOffset(ms, tz) {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
-}
 
 // ISO with Z/offset → that instant. Wall-clock "YYYY-MM-DDTHH:MM[:SS]" → that time in `tz`.
 export function parseTime(s, tz = DEFAULT_TZ) {
@@ -90,10 +86,8 @@ export function agentICS(uid, ev, now, by = {}) {
   if (!AGENT_UID.test(uid)) throw new AgentCalError(400, 'uid must match ' + AGENT_UID);
   const title = String(ev.title ?? '').trim();
   if (!title) throw new AgentCalError(400, 'title is required');
-  const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//agents//EN', 'CALSCALE:GREGORIAN',
-    'BEGIN:VEVENT', 'UID:' + uid, 'DTSTAMP:' + stamp(now), 'LAST-MODIFIED:' + stamp(now),
-  ];
+  const head = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//photo-frame-dashboard//agents//EN', 'CALSCALE:GREGORIAN'];
+  const lines = ['BEGIN:VEVENT', 'UID:' + uid, 'DTSTAMP:' + stamp(now), 'LAST-MODIFIED:' + stamp(now)];
   if (ev.allDay) {
     const s = parseDate(ev.start);
     const e = ev.end ? parseDate(ev.end) : null;
@@ -105,7 +99,8 @@ export function agentICS(uid, ev, now, by = {}) {
     const e = ev.end ? parseTime(ev.end, ev.timezone) : s + 30 * 60e3;
     if (e <= s) throw new AgentCalError(400, 'end must be after start');
     if (e - s > 14 * DAY) throw new AgentCalError(400, 'events longer than 14 days are not supported');
-    lines.push('DTSTART:' + stamp(s), 'DTEND:' + stamp(e));
+    head.push(...VTIMEZONE);
+    lines.push(icsTime('DTSTART', s), icsTime('DTEND', e));
   }
   lines.push('SUMMARY:' + icsText(title.slice(0, 250)));
   if (ev.description) lines.push('DESCRIPTION:' + icsText(String(ev.description).slice(0, 4000)));
@@ -121,7 +116,7 @@ export function agentICS(uid, ev, now, by = {}) {
     lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsText(title.slice(0, 250)), 'TRIGGER:' + (min ? '-PT' + min + 'M' : 'PT0S'), 'END:VALARM');
   }
   lines.push('END:VEVENT', 'END:VCALENDAR', '');
-  return lines.map(fold).join('\r\n');
+  return [...head, ...lines].map(fold).join('\r\n');
 }
 
 // ------------------------------------------------------------------ HTTP
@@ -145,6 +140,22 @@ function pick(cals, alias) {
 }
 
 const hrefFor = (cal, uid) => cal.url + encodeURIComponent(uid) + '.ics';
+
+// Deletes the objects on `cal` whose UID is exactly `uid` → [{title, start, recurring}]. Objects are
+// found by a UID search (events made on a phone or Mac may live under any file name); if that finds
+// nothing, <uid>.ics, where agent events live, is tried.
+async function removeByUid(env, cal, uid, notes) {
+  let found = [];
+  try {
+    found = (await eventsByUid(env, cal.url, uid)).map((r) => ({ href: r.href, what: describeUid(r.ics, uid) })).filter((r) => r.what);
+  } catch (e) { notes.push(cal.alias + ': search failed: ' + e.message); }
+  if (!found.length) {
+    return (await deleteEvent(env, hrefFor(cal, uid))) ? [{ title: null, start: null }] : [];
+  }
+  const out = [];
+  for (const r of found) if (await deleteEvent(env, r.href)) out.push(r.what);
+  return out;
+}
 
 // → { status, body } or null when the path isn't an agent route.
 export async function agentCalRoute(req, url, env, ctx, ok) {
@@ -173,21 +184,30 @@ export async function agentCalRoute(req, url, env, ctx, ok) {
           for (const t of await calendarObjects(env, c.url, new Date(from), new Date(to))) {
             for (const e of expandICS(t, { name: c.name }, new Date(from), new Date(to))) {
               const uid = e.id; // recurring occurrences are "uid@occurrence"
-              events.push({ uid, calendar: c.alias, title: e.title, start: e.start, end: e.end, allDay: e.allDay, location: e.loc, description: e.notes, managed: AGENT_UID.test(uid) });
+              const series = OCCURRENCE.exec(uid);
+              events.push({
+                uid, calendar: c.alias, title: e.title,
+                start: e.allDay ? e.start : localISO(Date.parse(e.start)), end: e.allDay ? e.end : localISO(Date.parse(e.end)),
+                allDay: e.allDay, location: e.loc, description: e.notes, managed: AGENT_UID.test(uid),
+                ...(series ? { seriesUid: series[1] } : {}),
+                at: e.allDay ? parseTime(e.start + 'T00:00') : Date.parse(e.start),
+              });
             }
           }
         } catch (err) { errors.push(c.alias + ': ' + err.message); }
       }));
       const out = events.filter((e) => !q || (e.title + ' ' + (e.description || '')).toLowerCase().includes(q));
-      out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
-      return { status: 200, body: { from: new Date(from).toISOString(), to: new Date(to).toISOString(), events: out, errors } };
+      out.sort((a, b) => a.at - b.at || (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
+      for (const e of out) delete e.at;
+      return { status: 200, body: { from: localISO(from), to: localISO(to), timezone: DEFAULT_TZ, events: out, errors } };
     }
     const one = /^\/agent\/events\/([^/]+)$/.exec(p);
     if (one && (m === 'PUT' || m === 'DELETE')) {
-      const uid = decodeURIComponent(one[1]);
-      if (!AGENT_UID.test(uid)) throw new AgentCalError(403, 'agents can only change their own events (uid starting with "hb-")');
+      let uid;
+      try { uid = decodeURIComponent(one[1]); } catch { throw new AgentCalError(400, 'bad uid'); }
       const cals = await resolved(env);
       if (m === 'PUT') {
+        if (!AGENT_UID.test(uid)) throw new AgentCalError(403, 'agents can only create or change their own events (uid starting with "hb-")');
         let ev;
         try { ev = await req.json(); } catch { throw new AgentCalError(400, 'body must be JSON'); }
         const cal = pick(cals, ev.calendar);
@@ -203,16 +223,22 @@ export async function agentCalRoute(req, url, env, ctx, ok) {
         ctx.waitUntil(env.DATA.delete('events'));
         return { status: 200, body: { ok: true, uid, calendar: cal.alias, ...(movedFrom.length ? { movedFrom } : {}) } };
       }
+      if (!ANY_UID.test(uid)) throw new AgentCalError(400, 'bad uid');
       const alias = url.searchParams.get('calendar');
       const targets = alias ? [pick(cals, alias)] : cals.filter((c) => c.url && canWrite(c, person));
-      const deleted = [];
+      const removed = [], notes = [];
       for (const c of targets) {
         if (!canWrite(c, person)) throw new AgentCalError(403, 'calendar "' + c.alias + '" is read-only for ' + (person || 'this caller'));
-        if (await deleteEvent(env, hrefFor(c, uid))) deleted.push(c.alias);
+        for (const r of await removeByUid(env, c, uid, notes)) removed.push({ calendar: c.alias, ...r });
       }
-      if (!deleted.length) throw new AgentCalError(404, 'no agent event "' + uid + '" (agents can only delete events they created)');
+      if (!removed.length) {
+        const occ = OCCURRENCE.exec(uid);
+        throw new AgentCalError(404, 'no event with uid "' + uid + '" on ' + (targets.map((c) => c.alias).join(', ') || 'any calendar you can write') +
+          (occ ? ' (that is one occurrence of a repeating event; uid "' + occ[1] + '" deletes the whole series)' : '') +
+          (notes.length ? ' [' + notes.join('; ') + ']' : ''));
+      }
       ctx.waitUntil(env.DATA.delete('events'));
-      return { status: 200, body: { ok: true, uid, deletedFrom: deleted } };
+      return { status: 200, body: { ok: true, uid, deletedFrom: [...new Set(removed.map((r) => r.calendar))], deleted: removed } };
     }
     return { status: 404, body: { error: 'not found' } };
   } catch (e) {

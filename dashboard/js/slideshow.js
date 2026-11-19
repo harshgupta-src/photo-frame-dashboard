@@ -40,31 +40,38 @@
       '<div class="cap-date serif">' + (ps.length > 1 ? m.monthYear : m.date) + '</div>' +
       '</div>';
   }
-  function kb(p, still) {
+  // decoding="async": the 1536×2048 originals decode off the main thread. o.small: a small tile (the
+  // Today photo) gets the small derivative (url.s, 360×480) instead of the full-screen one.
+  function img(p, o, cls) {
+    return '<img' + (cls ? ' class="' + cls + '"' : '') + ' src="' + src(p, !o.small) + '" alt="" decoding="async">';
+  }
+  function kb(p, o, still) {
     var dx = (Math.random() > 0.5 ? 1 : -1) * (1 + Math.random() * 2.5) + '%';
     var dy = (Math.random() > 0.5 ? 1 : -1) * (0.5 + Math.random() * 1.5) + '%';
-    return '<div class="kb' + (still ? ' kb--still' : '') + '" style="--dx:' + dx + ';--dy:' + dy + '"><img src="' + src(p, true) + '" alt=""></div>';
+    return '<div class="kb' + (still ? ' kb--still' : '') + '" style="--dx:' + dx + ';--dy:' + dy + '">' + img(p, o) + '</div>';
   }
 
+  // (The blurred backdrop copies these layouts once had are hidden by the CSS, so they're not built:
+  // each would be one more image to fetch and keep.)
   var BUILD = {
-    // A photo the same shape as the screen fills it; the other shape is fitted over a blurred copy.
+    // A photo the same shape as the screen fills it; the other shape is fitted on black.
     cover: function (ps, o) {
       var p = ps[0];
       if (p.o !== screenShape()) {
-        return '<div class="slide slide--fit"><img class="blurfill" src="' + src(p) + '" alt=""><img class="fitimg" src="' + src(p, true) + '" alt="">' + (o.captions ? caption(ps) : '') + '</div>';
+        return '<div class="slide slide--fit">' + img(p, o, 'fitimg') + (o.captions ? caption(ps) : '') + '</div>';
       }
-      return '<div class="slide slide--cover">' + kb(p) + (o.captions ? caption(ps) : '') + '</div>';
+      return '<div class="slide slide--cover">' + kb(p, o) + (o.captions ? caption(ps) : '') + '</div>';
     },
     pair: function (ps, o) {
-      return '<div class="slide slide--pair"><div class="pane">' + kb(ps[0], true) + '</div><div class="pane">' + kb(ps[1], true) + '</div>' + (o.captions ? caption(ps, 'm') : '') + '</div>';
+      return '<div class="slide slide--pair"><div class="pane">' + kb(ps[0], o, true) + '</div><div class="pane">' + kb(ps[1], o, true) + '</div>' + (o.captions ? caption(ps, 'm') : '') + '</div>';
     },
     collage: function (ps, o) {
-      return '<div class="slide slide--collage"><div class="pane pane--a">' + kb(ps[0], true) + '</div><div class="pane pane--b">' + kb(ps[1], true) + '</div><div class="pane pane--c">' + kb(ps[2], true) + '</div>' + (o.captions ? caption(ps, 'm') : '') + '</div>';
+      return '<div class="slide slide--collage"><div class="pane pane--a">' + kb(ps[0], o, true) + '</div><div class="pane pane--b">' + kb(ps[1], o, true) + '</div><div class="pane pane--c">' + kb(ps[2], o, true) + '</div>' + (o.captions ? caption(ps, 'm') : '') + '</div>';
     },
-    polaroid: function (ps) {
+    polaroid: function (ps, o) {
       var p = ps[0], m = App.photoMeta(p), rot = (Math.random() * 5 - 2.5).toFixed(1);
-      return '<div class="slide slide--polaroid"><img class="blurfill" src="' + src(p) + '" alt="">' +
-        '<figure class="polaroid polaroid--' + p.o + '" style="transform:rotate(' + rot + 'deg)"><div class="polaroid-img"><img src="' + src(p, true) + '" alt=""></div>' +
+      return '<div class="slide slide--polaroid">' +
+        '<figure class="polaroid polaroid--' + p.o + '" style="transform:rotate(' + rot + 'deg)"><div class="polaroid-img">' + img(p, o) + '</div>' +
         '<figcaption class="serif"><i>' + (m.place ? App.esc(m.place) + ', ' : '') + m.monthYear + '</i></figcaption></figure></div>';
     }
   };
@@ -77,13 +84,14 @@
     this.count = 0;
     this.timer = null;
     this.current = null;
+    this.seq = 0; // bumped by every render and clear(), so a stale image load can't swap in
     var self = this;
     // Rotated: the slide on screen was picked for the old shape. Pick again (now, if running).
     App.on('orient', function () {
       self.history = [];
       self.queue = [];
       if (self.timer) self.next();
-      else { self.current = null; self.el.innerHTML = ''; }
+      else self.clear();
     });
   };
   var S = App.Slideshow.prototype;
@@ -141,36 +149,56 @@
     return { layout: layout, photos: ps };
   };
 
+  // The next slide is built off-screen and swapped in, in one step, once its images are decoded
+  // (or failed, or after 2.5 s): the stage never holds more than the slide on screen plus the one
+  // loading, and never paints two full-screen photos on top of each other.
   S.render = function (slide) {
     var self = this;
+    this.abort();
+    var seq = ++this.seq;
     this.current = slide;
     var wrap = document.createElement('div');
     wrap.innerHTML = BUILD[slide.layout](slide.photos, this.o);
     var node = wrap.firstChild;
-    node.style.opacity = '0';
+    var imgs = Array.prototype.slice.call(node.querySelectorAll('img'));
     // Fallback look if images can't load (offline)
-    Array.prototype.forEach.call(node.querySelectorAll('img'), function (im) {
-      im.addEventListener('error', function () { im.classList.add('is-broken'); });
-    });
-    var old = Array.prototype.slice.call(this.el.children);
-    this.el.appendChild(node);
-    var first = node.querySelector('img:not(.blurfill)');
+    imgs.forEach(function (im) { im.addEventListener('error', function () { im.classList.add('is-broken'); }); });
+    this.loading = imgs;
     var shown = false;
     function show() {
       if (shown) return; shown = true;
-      node.classList.add('is-in');
-      node.style.opacity = '';
+      clearTimeout(late);
+      if (seq !== self.seq) return; // superseded or cleared meanwhile
+      self.loading = null;
+      var old = Array.prototype.slice.call(self.el.children);
+      self.el.appendChild(node);
       old.forEach(function (o) { o.remove(); });
+      if (self.o.onChange) self.o.onChange(slide);
     }
-    if (first && !first.complete) { first.addEventListener('load', show); first.addEventListener('error', show); setTimeout(show, 2500); }
-    else show();
-    if (this.o.onChange) this.o.onChange(slide);
+    var late = setTimeout(show, 2500);
+    Promise.all(imgs.map(ready)).then(show, show);
   };
+  // A slide still loading when the next one is asked for (or the show is cleared) is dropped, and its
+  // downloads cancelled.
+  S.abort = function () {
+    (this.loading || []).forEach(function (im) { im.removeAttribute('src'); });
+    this.loading = null;
+  };
+  function ready(im) {
+    if (im.decode) return im.decode().catch(function () { /* broken or not decodable: show anyway */ });
+    return new Promise(function (res) {
+      if (im.complete) res();
+      else { im.addEventListener('load', res); im.addEventListener('error', res); }
+    });
+  }
 
   S.next = function () {
     var s = this.pick();
     if (!s) { this.restart(); return; }
-    if (this.current) this.history.push(this.current);
+    if (this.current) {
+      this.history.push(this.current);
+      if (this.history.length > 50) this.history.shift(); // ambient runs for hours
+    }
     this.render(s);
     this.restart();
   };
@@ -187,4 +215,12 @@
   };
   S.start = function () { if (!this.current) this.next(); else this.restart(); };
   S.stop = function () { clearInterval(this.timer); this.timer = null; };
+  // Stop and let go of the images (hidden view, ambient off, night). start() picks a new slide.
+  S.clear = function () {
+    this.stop();
+    this.abort();
+    this.seq++;
+    this.current = null;
+    this.el.textContent = '';
+  };
 })();

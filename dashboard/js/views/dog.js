@@ -164,14 +164,15 @@
       if (x1 - x0 <= w * 0.8 && y1 - y0 <= h * 0.8) break;
     }
     var ox = Math.round((x0 + x1) / 2 - w / 2), oy = Math.round((y0 + y1) / 2 - h / 2), tiles = '';
+    // (decoding="async": nine 256 px tiles decode off the main thread)
     for (var tx = Math.floor(ox / 256); tx * 256 < ox + w; tx++) {
       for (var ty = Math.floor(oy / 256); ty * 256 < oy + h; ty++) {
         var src = App.dog.tileUrl(z, tx, ty);
-        if (src) tiles += '<img alt="" src="' + esc(src) + '" style="left:' + (tx * 256 - ox) + 'px;top:' + (ty * 256 - oy) + 'px" onerror="this.remove()">';
+        if (src) tiles += '<img alt="" decoding="async" src="' + esc(src) + '" style="left:' + (tx * 256 - ox) + 'px;top:' + (ty * 256 - oy) + 'px" onerror="this.remove()">';
       }
     }
     var pts = xy.map(function (p) { return (p[0] - ox).toFixed(1) + ',' + (p[1] - oy).toFixed(1); }), a = pts[0].split(','), b = pts[pts.length - 1].split(',');
-    return tiles + '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+    return (tiles ? '<div class="dg-tiles">' + tiles + '</div>' : '') + '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
       '<polyline class="dg-path-c" points="' + pts.join(' ') + '"/><polyline class="dg-path" points="' + pts.join(' ') + '"/>' +
       '<circle class="dg-pin-s" cx="' + a[0] + '" cy="' + a[1] + '" r="8"/><circle class="dg-pin-e" cx="' + b[0] + '" cy="' + b[1] + '" r="9"/></svg>' +
       (tiles ? '<small class="dg-attr">© OpenStreetMap</small>' : '');
@@ -286,17 +287,21 @@
 
   App.register('dog', {
     minutely: true,
+    heavy: true, // map tiles: dropped (with the rest of the tab) while another tab is up
     show: function (el) {
       if (!V.el) { V.el = el; el.addEventListener('click', click); }
       render();
-    }
+      // GET /dog is only polled often while this tab is up (js/dog.js): catch up on opening it
+      if (App.dog && App.dog.ensureFresh) App.dog.ensureFresh();
+    },
+    release: function (el) { V.map = null; V.mapKey = null; el.textContent = ''; }
   });
   function update() {
-    if (App.current === 'dog') render();
-    else if (App.views.dog) App.views.dog._dirty = true;
+    if (App.onScreen('dog')) render();
+    else if (App.views.dog && App.views.dog._built) App.views.dog._dirty = true;
   }
   App.on('dog', update);
   App.on('walk', update);
   App.on('data', update);
-  App.on('minute', function () { if (App.current === 'dog') render(); });
+  App.on('minute', function () { if (App.onScreen('dog')) render(); });
 })();

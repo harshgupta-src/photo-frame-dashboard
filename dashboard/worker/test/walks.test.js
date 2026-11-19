@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize, summarize, walkICS, renderLog, eventTitle, walkersOf, WalkError } from '../src/walks.js';
+import { expandICS } from '../src/ics.js';
 
 const now = Date.parse('2026-11-08T16:00:00Z'); // 11:00 in New York
 const TZ = 'America/New_York';
@@ -52,11 +53,14 @@ test('summary: today in the home time zone, last pee and poop', () => {
   assert.equal(s.last7Days.avgMinutes, 30);
 });
 
-test('calendar event: UTC times, escaped text, folded lines', () => {
+test('calendar event: New York times, escaped text, folded lines', () => {
   const w = walk('abc123', '2026-11-08T15:00:00Z', 32, { poop: true, notes: 'Met a dog, pulled; ok', walkers: [{ id: 'a', name: 'Harsh' }, { id: 'b', name: 'Ambuja' }] });
   const ics = walkICS(w, now);
   assert.match(ics, /UID:dog-walk-abc123@frame-data\r\n/);
-  assert.match(ics, /DTSTART:20261108T150000Z\r\nDTEND:20261108T153200Z/);
+  assert.match(ics, /DTSTART;TZID=America\/New_York:20261108T100000\r\nDTEND;TZID=America\/New_York:20261108T103200/);
+  assert.match(ics, /BEGIN:VTIMEZONE\r\nTZID:America\/New_York/);
+  const [ev] = expandICS(ics, { name: 'Life Log' }, new Date('2026-11-08T00:00:00Z'), new Date('2026-11-09T00:00:00Z'));
+  assert.deepEqual([ev.start, ev.end], ['2026-11-08T15:00:00.000Z', '2026-11-08T15:32:00.000Z']);
   assert.match(ics, /Met a dog\\, pulled\\; ok/);
   assert.equal(eventTitle(w), 'Rex walk — Harsh & Ambuja · 💧💩');
   assert.equal(eventTitle({ ...w, pee: false, poop: false, walkers: [] }), 'Rex walk · no potty');

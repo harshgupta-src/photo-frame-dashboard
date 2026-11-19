@@ -1,7 +1,9 @@
 package com.wesbos.homehq;
 
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -52,12 +54,18 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
@@ -83,6 +91,7 @@ import org.json.JSONObject;
  *   the frame and never reaches the hosted dashboard. Use a long-lived token from a non-admin user:
  *     adb shell am start -n com.wesbos.homehq/.MainActivity --es ha_url http://<ha-ip>:8123 --es ha_token <token>
  *   An empty ha_token turns it off. Use the IP: Android 6 can't resolve .local names.
+ *   The page can also ask for live state (HomeHQ.haWatch, pushed as window.haPush; HaLive).
  * - Home Assistant device over MQTT discovery (screen, brightness, lux, moved, touched; HaDevice):
  *     adb shell am start -n com.wesbos.homehq/.MainActivity --es mqtt_url mqtt://<ha-ip>:1883 --es mqtt_user <user> --es mqtt_pass <password>
  *   An empty mqtt_url turns it off. For a real screen off: adb shell dpm set-active-admin com.wesbos.homehq/.ScreenAdmin
@@ -114,34 +123,57 @@ public class MainActivity extends Activity implements HaDevice.Host {
   private WebView web;
 
   // Ambient light sensor, passed to the page as window.frameLux(lux) (the dashboard's Auto theme
-  // uses it). Sent at most every LUX_MS, and at least every LUX_HEARTBEAT_MS so the page knows
-  // the sensor is alive when the reading doesn't change.
-  static final long LUX_MS = 2000, LUX_HEARTBEAT_MS = 10000;
+  // uses it). Sent at most every LUX_MS and only when it moved by LUX_STEP or LUX_STEP_FRACTION,
+  // and at least every LUX_HEARTBEAT_MS so the page knows the sensor is alive (js/theme.js counts
+  // it as stale after 60 s).
+  static final long LUX_MS = 2000, LUX_HEARTBEAT_MS = 30000;
+  static final float LUX_STEP = 2, LUX_STEP_FRACTION = 0.1f;
   private SensorManager sensors;
   private Sensor lightSensor;
-  private float lux = Float.NaN;
+  private float lux = Float.NaN, luxSent = Float.NaN;
   private long luxSentAt;
   private final SensorEventListener light = new SensorEventListener() {
     @Override
     public void onSensorChanged(SensorEvent e) {
       lux = e.values[0];
-      if (SystemClock.uptimeMillis() - luxSentAt >= LUX_MS) sendLux();
+      float moved = Math.abs(lux - luxSent);
+      if (!Float.isNaN(luxSent) && (moved == 0 || (moved < LUX_STEP && moved < LUX_STEP_FRACTION * luxSent))) return;
+      long since = SystemClock.uptimeMillis() - luxSentAt;
+      if (since >= LUX_MS) {
+        handler.removeCallbacks(luxLater);
+        sendLux();
+      } else if (!luxLaterPosted) {
+        luxLaterPosted = true;
+        handler.postDelayed(luxLater, LUX_MS - since);
+      }
     }
 
     @Override
     public void onAccuracyChanged(Sensor s, int accuracy) {}
   };
+  private boolean luxLaterPosted;
+  private final Runnable luxLater = () -> {
+    luxLaterPosted = false;
+    sendLux();
+  };
   private final Runnable luxHeartbeat = new Runnable() {
     @Override
     public void run() {
-      sendLux();
-      handler.postDelayed(this, LUX_HEARTBEAT_MS);
+      long since = SystemClock.uptimeMillis() - luxSentAt;
+      if (since >= LUX_HEARTBEAT_MS || Float.isNaN(luxSent)) {
+        sendLux();
+        since = 0;
+      }
+      handler.postDelayed(this, LUX_HEARTBEAT_MS - since);
     }
   };
 
   private void sendLux() {
     if (web == null || Float.isNaN(lux)) return;
+    handler.removeCallbacks(luxLater);
+    luxLaterPosted = false;
     luxSentAt = SystemClock.uptimeMillis();
+    luxSent = lux;
     web.evaluateJavascript("window.frameLux&&window.frameLux(" + lux + ")", null);
   }
 
@@ -155,6 +187,12 @@ public class MainActivity extends Activity implements HaDevice.Host {
       "/api/services/(light|switch|fan|climate|media_player|vacuum|scene|script)/[a-z0-9_]+"
       + "|/api/services/todo/update_item|/api/services/todo/get_items\\?return_response");
   private final ExecutorService haPool = Executors.newFixedThreadPool(2);
+  // Live state: the domains the page may watch, and how often changes reach it (the first change
+  // after a quiet spell waits only LIVE_GATHER_MS, so a scene's lights arrive together).
+  static final Set<String> HA_LIVE_DOMAINS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+      "light", "switch", "fan", "climate", "media_player", "vacuum", "scene", "script", "todo",
+      "sensor", "binary_sensor", "person", "calendar", "weather", "sun", "input_boolean")));
+  static final long LIVE_FLUSH_MS = 250, LIVE_GATHER_MS = 30;
   // The page in the WebView, for the bridge's origin check (JavascriptInterface runs off the UI thread).
   private volatile String pageUrl;
 
@@ -173,6 +211,36 @@ public class MainActivity extends Activity implements HaDevice.Host {
     public boolean updatePush() {
       HaDevice d = haDevice;
       return pageAllowed() && d != null && d.connected();
+    }
+
+    /**
+     * Starts (or restarts) live state for these domains, e.g. ["light","switch"], kept to
+     * HA_LIVE_DOMAINS. The page then gets window.haPush(json): a full snapshot
+     * {"full":true,"live":true,"states":[...]} on every (re)subscribe and resume, batched changes
+     * {"live":true,"states":[...],"removed":[...]}, and {"live":false} when the link drops.
+     */
+    @JavascriptInterface
+    public void haWatch(String domainsJson) {
+      if (!pageAllowed() || domainsJson == null) return;
+      final Set<String> want = new HashSet<>();
+      try {
+        JSONArray a = new JSONArray(domainsJson);
+        for (int i = 0; i < a.length(); i++) {
+          String d = a.optString(i);
+          if (HA_LIVE_DOMAINS.contains(d)) want.add(d);
+        }
+      } catch (JSONException e) {
+        Log.w(TAG, "haWatch: not a JSON array of domains");
+        return;
+      }
+      handler.post(() -> watchHa(want));
+    }
+
+    /** True while the live link is authenticated, subscribed and has its snapshot. */
+    @JavascriptInterface
+    public boolean haLive() {
+      HaLive s = haStream;
+      return pageAllowed() && s != null && s.live();
     }
 
     @JavascriptInterface
@@ -244,8 +312,113 @@ public class MainActivity extends Activity implements HaDevice.Host {
     }
   }
 
-  /** ha_url / ha_token extras from adb. The token is never logged. */
-  private void applyHaConfig(Intent intent) {
+  // Live state (HaLive). haStream is replaced on the UI thread only; the bridge reads it.
+  private volatile HaLive haStream;
+  private Set<String> haWatched;
+  private boolean started, livePaused = true, liveFlushPosted, liveFullDue;
+  private long liveFlushedAt;
+
+  private final HaLive.Listener liveListener = new HaLive.Listener() {
+    @Override
+    public void onLive(final HaLive s, final boolean up) {
+      handler.post(() -> {
+        if (s != haStream) return;
+        if (up) {
+          liveFullDue = true;
+          flushLive();
+        } else {
+          liveFullDue = false;
+          handler.removeCallbacks(liveFlush);
+          liveFlushPosted = false;
+          if (!livePaused) pushHa("{\"live\":false}");
+        }
+      });
+    }
+
+    @Override
+    public void onChanges(final HaLive s) {
+      handler.post(() -> { if (s == haStream) scheduleLiveFlush(); });
+    }
+  };
+
+  private final Runnable liveFlush = this::flushLive;
+
+  /** UI thread. Same domains and login: a fresh snapshot from the cache, no reconnect. */
+  private void watchHa(Set<String> want) {
+    haWatched = want;
+    String[] ha = haPrefs();
+    if (want.isEmpty() || ha[0] == null || ha[1] == null) {
+      stopLive();
+      return;
+    }
+    HaLive s = haStream;
+    if (s != null && s.sameAs(ha[0], ha[1], want)) {
+      if (s.live()) {
+        liveFullDue = true;
+        flushLive();
+      } else {
+        s.reconnectNow();
+      }
+      return;
+    }
+    stopLive();
+    Log.i(TAG, "Home Assistant live state for " + want);
+    haStream = new HaLive(ha[0], ha[1], want, liveListener);
+    haStream.start();
+  }
+
+  private void stopLive() {
+    if (haStream != null) haStream.stop();
+    haStream = null;
+    handler.removeCallbacks(liveFlush);
+    liveFlushPosted = false;
+    liveFullDue = false;
+  }
+
+  private void scheduleLiveFlush() {
+    if (liveFlushPosted || livePaused) return;
+    liveFlushPosted = true;
+    handler.postDelayed(liveFlush, Math.max(LIVE_GATHER_MS, liveFlushedAt + LIVE_FLUSH_MS - SystemClock.uptimeMillis()));
+  }
+
+  private void flushLive() {
+    handler.removeCallbacks(liveFlush);
+    liveFlushPosted = false;
+    HaLive s = haStream;
+    if (s == null || livePaused) return;
+    String json = liveFullDue ? s.takeFull() : s.takeChanges();
+    liveFullDue = false;
+    if (json == null) return;
+    liveFlushedAt = SystemClock.uptimeMillis();
+    pushHa(json);
+  }
+
+  private void pushHa(String json) {
+    if (web == null || !pageAllowed()) return;
+    web.evaluateJavascript("window.haPush&&window.haPush(" + json + ")", null);
+  }
+
+  /** No pushes while stopped or the screen is off; a fresh snapshot (or live:false) on the way back. */
+  private void updateLivePause() {
+    boolean paused = !started || !screenOn();
+    if (paused == livePaused) return;
+    livePaused = paused;
+    HaLive s = haStream;
+    if (paused) {
+      handler.removeCallbacks(liveFlush);
+      liveFlushPosted = false;
+    } else if (s != null) {
+      if (s.live()) {
+        liveFullDue = true;
+        flushLive();
+      } else {
+        pushHa("{\"live\":false}");
+      }
+    }
+  }
+
+  /** ha_url / ha_token extras from adb. The token is never logged. Returns whether either changed. */
+  private boolean applyHaConfig(Intent intent) {
     android.content.SharedPreferences.Editor e = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
     boolean changed = false;
     String url = intent.getStringExtra(PREF_HA_URL);
@@ -264,6 +437,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
       Log.i(TAG, token.trim().isEmpty() ? "Home Assistant token removed" : "Home Assistant token saved");
     }
     if (changed) e.apply();
+    return changed;
   }
   static final String PREF_MQTT_URL = "mqtt_url", PREF_MQTT_USER = "mqtt_user", PREF_MQTT_PASS = "mqtt_pass",
       PREF_MQTT_NAME = "mqtt_name", PREF_BRIGHTNESS = "brightness", PREF_AUTO_BRIGHTNESS = "auto_brightness";
@@ -276,6 +450,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
     @Override
     public void onReceive(Context context, Intent intent) {
       if (haDevice != null) haDevice.screenChanged();
+      updateLivePause();
     }
   };
 
@@ -353,6 +528,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
         wake.acquire(5000);
       }
       Log.i(TAG, "Screen on");
+      updateLivePause();
       return;
     }
     DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
@@ -365,6 +541,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
     softOff = true;
     blackout.setVisibility(View.VISIBLE);
     applyBrightness();
+    updateLivePause();
   }
 
   @Override
@@ -466,6 +643,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
   private final BroadcastReceiver networkChange = new BroadcastReceiver() {
     @Override
     public void onReceive(Context context, Intent intent) {
+      if (haStream != null && wifiConnected()) haStream.reconnectNow();
       if (retryUrl == null || offline.getVisibility() != View.VISIBLE || !wifiConnected()) return;
       Log.i(TAG, "Wi-Fi connected or clock changed, retrying now");
       showOffline();
@@ -651,6 +829,96 @@ public class MainActivity extends Activity implements HaDevice.Host {
   }
 
   @Override
+  protected void onStart() {
+    super.onStart();
+    started = true;
+    updateLivePause();
+    handler.removeCallbacks(watchdog);
+    handler.postDelayed(watchdog, WATCHDOG_MS);
+  }
+
+  @Override
+  protected void onStop() {
+    started = false;
+    updateLivePause();
+    handler.removeCallbacks(watchdog);
+    watchdogAnswered = watchdogSeq; // no verdict on probes from before the stop
+    watchdogMisses = 0;
+    super.onStop();
+  }
+
+  /** Android wants memory back; the page can drop caches (level as in ComponentCallbacks2). */
+  @Override
+  public void onTrimMemory(int level) {
+    super.onTrimMemory(level);
+    pushMemory(level);
+  }
+
+  @Override
+  public void onLowMemory() {
+    super.onLowMemory();
+    pushMemory(TRIM_MEMORY_COMPLETE);
+  }
+
+  private void pushMemory(int level) {
+    Log.i(TAG, "Memory trim level " + level);
+    if (web != null && pageAllowed()) web.evaluateJavascript("window.frameMemory&&window.frameMemory(" + level + ")", null);
+  }
+
+  // Hung page watchdog. Android 6 has no onRenderProcessGone, so every WATCHDOG_MS the page is
+  // asked to evaluate "1". Two answers missing WATCHDOG_REPLY_MS in a row reload it, at most once
+  // per WATCHDOG_RELOAD_GAP_MS. If it is still hung by the next allowed reload (WebView renders in
+  // the app's process on Android 6, so a stuck renderer survives a reload), the app restarts.
+  static final long WATCHDOG_MS = 30000, WATCHDOG_REPLY_MS = 20000, WATCHDOG_RELOAD_GAP_MS = 10 * 60 * 1000;
+  private int watchdogSeq, watchdogAnswered, watchdogMisses;
+  private long watchdogReloadAt;
+  private boolean watchdogEverAnswered, answeredSinceReload = true;
+
+  private final Runnable watchdog = new Runnable() {
+    @Override
+    public void run() {
+      handler.postDelayed(this, WATCHDOG_MS);
+      if (web == null || portalMode || !screenOn()) return;
+      final int seq = ++watchdogSeq;
+      web.evaluateJavascript("1", v -> {
+        watchdogAnswered = Math.max(watchdogAnswered, seq);
+        watchdogMisses = 0;
+        watchdogEverAnswered = true;
+        answeredSinceReload = true;
+      });
+      handler.postDelayed(() -> checkWatchdog(seq), WATCHDOG_REPLY_MS);
+    }
+  };
+
+  private void checkWatchdog(int seq) {
+    if (!started || watchdogAnswered >= seq) return;
+    watchdogMisses++;
+    Log.w(TAG, "Page didn't answer within " + WATCHDOG_REPLY_MS + " ms (" + watchdogMisses + " in a row)");
+    if (watchdogMisses < 2) return;
+    long now = SystemClock.elapsedRealtime();
+    if (watchdogReloadAt != 0 && now - watchdogReloadAt < WATCHDOG_RELOAD_GAP_MS) return;
+    if (watchdogReloadAt != 0 && !answeredSinceReload && watchdogEverAnswered) {
+      Log.w(TAG, "Page still hung " + (now - watchdogReloadAt) / 1000 + " s after a reload, restarting the app");
+      restartApp();
+      return;
+    }
+    Log.w(TAG, "Page hung, reloading");
+    watchdogReloadAt = now;
+    answeredSinceReload = false;
+    watchdogMisses = 0;
+    web.reload();
+  }
+
+  private void restartApp() {
+    Intent again = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    PendingIntent pi = PendingIntent.getActivity(this, 0, again, PendingIntent.FLAG_CANCEL_CURRENT);
+    AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+    if (am == null) return;
+    am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 2000, pi);
+    android.os.Process.killProcess(android.os.Process.myPid());
+  }
+
+  @Override
   protected void onResume() {
     super.onResume();
     NavigationService.setDashboardVisible(true);
@@ -671,6 +939,8 @@ public class MainActivity extends Activity implements HaDevice.Host {
     NavigationService.setDashboardVisible(false);
     if (lightSensor != null) sensors.unregisterListener(light);
     handler.removeCallbacks(luxHeartbeat);
+    handler.removeCallbacks(luxLater);
+    luxLaterPosted = false;
     super.onPause();
   }
 
@@ -680,7 +950,10 @@ public class MainActivity extends Activity implements HaDevice.Host {
     setIntent(intent);
     applyDebugFlag(intent);
     applyHomeFlag(intent);
-    applyHaConfig(intent);
+    if (applyHaConfig(intent) && haWatched != null) {
+      stopLive();
+      watchHa(haWatched);
+    }
     if (applyMqttConfig(intent)) startHaDevice();
     applyScreenAdminFlag(intent);
     applyMenuButtonFlag(intent);
@@ -1085,6 +1358,7 @@ public class MainActivity extends Activity implements HaDevice.Host {
     unregisterReceiver(networkChange);
     unregisterReceiver(screenChange);
     if (haDevice != null) haDevice.stop();
+    stopLive();
     handler.removeCallbacksAndMessages(null);
     haPool.shutdownNow();
     if (web != null) web.destroy();

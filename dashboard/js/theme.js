@@ -87,12 +87,18 @@
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', t === 'dark' ? '#161513' : '#F2EEE6');
     // Views bake person colours (App.pstyle) into their HTML, so rebuild them.
-    if (!first && App.current) { App.emit('data'); App.rerender(); }
+    if (!first && App.current) { App.emit('data', 'theme'); App.rerender(); }
   }
   App.setThemePref = function (p) {
     pref = p;
     try { localStorage.setItem(KEY, p); } catch (e) { /* storage disabled */ }
     apply();
+  };
+
+  // The kiosk calls window.frameMemory(level) from Android's onTrimMemory: modules drop what they can
+  // fetch again (App.on('memory', fn), e.g. Copilot transcripts). Nothing visible changes.
+  window.frameMemory = function (level) {
+    try { App.emit('memory', +level || 0); } catch (e) { console.warn('frameMemory', e); }
   };
 
   apply();

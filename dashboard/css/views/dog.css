@@ -94,8 +94,10 @@
 .dg-map { flex: 1; min-height: 0; position: relative; border-radius: var(--r-s); overflow: hidden; background: var(--paper-2); }
 .dg-map-in, .dg-map-in svg { position: absolute; top: 0; left: 0; }
 .dg-map-in { right: 0; bottom: 0; }
-.dg-map-in img { position: absolute; width: 256px; height: 256px; max-width: none; filter: saturate(.6); }
-:root[data-theme="dark"] .dg-map-in img { filter: invert(1) hue-rotate(180deg) brightness(.8) saturate(.5); }
+.dg-map-in img { position: absolute; width: 256px; height: 256px; max-width: none; }
+/* One filter over all the tiles (js/views/dog.js wraps them) rather than one per tile */
+.dg-tiles { position: absolute; top: 0; right: 0; bottom: 0; left: 0; filter: saturate(.6); }
+:root[data-theme="dark"] .dg-tiles { filter: invert(1) hue-rotate(180deg) brightness(.8) saturate(.5); }
 .dg-path, .dg-path-c { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .dg-path { stroke: var(--walk); stroke-width: 6; }
 .dg-path-c { stroke: var(--card); stroke-width: 11; }

@@ -5,7 +5,14 @@
 //   App.copilot.transcript(id)    Promise → {items} for one session
 //   App.copilot.byDay(days)       [{day: Date, development, automation}] AI credits per local day
 //   App.copilot.byModel(since)    [{id, name, credits, sessions}] AI credits per model since a date
-// Emits 'copilot' when the list changes.
+//   App.copilot.refresh(force)    fetch now; without force only while the Agents tab is shown (a
+//                                 hidden pre-build of the tab doesn't fetch)
+//   App.copilot.ensureFresh(ms)   fetch if the copy is older than ms (default 1 min)
+// Emits 'copilot' when the list changes. GET /copilot (~100 kB) is only fetched for the Agents tab:
+// when it's opened (within a minute at the latest) and every 5 min while it stays open; an unchanged
+// answer is neither parsed nor stored again. Transcripts are dropped on memory pressure.
+import { every } from './poll.js';
+
 (function () {
   'use strict';
   var API = import.meta.env.VITE_FRAME_API, KEY = import.meta.env.VITE_FRAME_KEY;
@@ -16,17 +23,31 @@
   function read() { try { return JSON.parse(localStorage.getItem(CACHE) || 'null'); } catch (e) { return null; } }
   function write(v) { try { localStorage.setItem(CACHE, JSON.stringify(v)); } catch (e) { /* storage full or disabled */ } }
 
-  C.refresh = function () {
-    if (!C.on) return Promise.resolve();
-    return fetch(API + '/copilot', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (j) {
-        var before = JSON.stringify(C.data);
-        C.data = j; C.error = null; C.updated = Date.now();
+  var lastText = null, inflight = null;
+  function shown() { return App.current === 'agents' && !document.hidden; }
+  C.refresh = function (force) {
+    if (!C.on || (force !== true && !shown())) return Promise.resolve();
+    if (inflight) return inflight;
+    inflight = fetch(API + '/copilot', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (t) {
+        C.error = null; C.updated = Date.now();
+        if (t === lastText) return;
+        var j = JSON.parse(t), first = lastText === null;
+        lastText = t;
+        if (first && C.data && JSON.stringify(j) === JSON.stringify(C.data)) return; // same as the cached copy
+        C.data = j;
         write({ at: C.updated, data: j });
-        if (JSON.stringify(j) !== before) App.emit('copilot');
-      }).catch(function (e) { C.error = e.message; console.warn('Copilot sync failed', e); });
+        App.emit('copilot');
+      }).catch(function (e) { C.error = e.message; console.warn('Copilot sync failed', e); })
+      .then(function () { inflight = null; });
+    return inflight;
   };
+  C.ensureFresh = function (ms) {
+    return C.on && (!C.updated || Date.now() - C.updated > (ms == null ? 60e3 : ms)) ? C.refresh(true) : Promise.resolve();
+  };
+  // Memory pressure (window.frameMemory, theme.js): transcripts are refetched when opened again.
+  App.on('memory', function () { transcripts = {}; lastText = null; });
 
   // Transcripts are kept per session until the session changes (active ones are refetched).
   C.transcript = function (id) {
@@ -135,9 +156,13 @@
   }
 
   if (C.demo) { C.data = demo(); return; }
-  App.on('ready', function () {
-    C.refresh();
-    setInterval(C.refresh, 5 * 60000);
-    window.addEventListener('online', C.refresh);
+  // Checked every minute: fetch when the Agents tab has been opened and the copy is over a minute old
+  // (views/agents.js also asks on show), then every 5 min while it stays open.
+  var opened = false;
+  every(60e3, function () {
+    if (!shown()) { opened = false; return; }
+    C.ensureFresh(opened ? 5 * 60e3 : 60e3);
+    opened = true;
   });
+  window.addEventListener('online', function () { C.refresh(); });
 })();

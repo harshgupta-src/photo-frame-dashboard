@@ -279,13 +279,20 @@
   }
 
   App.register('agents', {
+    heavy: true, // a long session list (over 1000 nodes): emptied while another tab is up
     show: function (el) {
       if (!V.el) { V.el = el; el.addEventListener('click', click); }
       render();
-      if (C.on && (!C.updated || Date.now() - C.updated > 60e3)) C.refresh();
-    }
+      if (C.ensureFresh) C.ensureFresh();
+      else if (C.on && (!C.updated || Date.now() - C.updated > 60e3)) C.refresh();
+    },
+    release: function (el) { V.chatFor = null; el.textContent = ''; }
   });
-  App.on('copilot', function () { if (App.current === 'agents') refreshList(); });
-  App.on('minute', function () { if (App.current === 'agents') refreshList(); });
-  App.on('orient', function () { if (V.el && V.el.firstChild) render(); });
+  // Hidden: nothing to update (the view is rebuilt when shown).
+  App.on('copilot', function () {
+    if (App.onScreen('agents')) refreshList();
+    else if (App.views.agents._built) App.views.agents._dirty = true;
+  });
+  App.on('minute', function () { if (App.onScreen('agents')) refreshList(); });
+  App.on('orient', function () { if (App.onScreen('agents') && V.el.firstChild) render(); });
 })();

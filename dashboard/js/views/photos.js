@@ -12,6 +12,7 @@
   }
 
   App.register('photos', {
+    heavy: true, // full-screen photos: let go of them when leaving the tab
     show: function (el) {
       if (!V.el) {
         V.el = el;
@@ -53,6 +54,7 @@
       V.show.start();
     },
     resume: function () { V.show.start(); },
-    hide: function () { if (V.show) V.show.stop(); }
+    hide: function () { if (V.show) V.show.stop(); },
+    release: function () { if (V.show) V.show.clear(); }
   });
 })();

@@ -463,17 +463,25 @@
           var g = e.target.closest('[data-go]');
           if (g) { if (g.dataset.go === 'pinned') pinnedSheet(); else App.go(g.dataset.go); }
         });
-        V.slides = new App.Slideshow(el.querySelector('.h-photo-stage'), { layout: 'cover', captions: false, interval: 12000, onChange: photoCaption });
+        // The tile is about 300×400: the small derivative (360×480) is plenty.
+        V.slides = new App.Slideshow(el.querySelector('.h-photo-stage'), { layout: 'cover', captions: false, interval: 12000, small: true, onChange: photoCaption });
+        V.timer = null;
       }
+      V.stale = false;
       paint();
       V.slides.start();
     },
-    resume: function () { V.slides.start(); },
-    hide: function () { if (V.slides) V.slides.stop(); }
+    // Back on screen (another tab, ambient or night was over it): catch up on what was skipped.
+    resume: function () { if (V.stale) { V.stale = false; paint(); } V.slides.start(); },
+    hide: function () { if (V.slides) V.slides.stop(); },
+    release: function () { if (V.slides) V.slides.clear(); }
   });
-  // Every minute: just the clock and next-up countdown (cheap, even while hidden). Weather on the hour.
+  function shown() { return V.el && V.el.firstChild && App.onScreen('home'); }
+  // While Today is hidden or covered (ambient, night) nothing is painted; it catches up on return.
+  function later() { if (V.el && V.el.firstChild) V.stale = true; return false; }
+  // Every minute: just the clock and next-up countdown. Weather on the hour.
   App.on('minute', function (n) {
-    if (!V.el || !V.el.firstChild) return;
+    if (!shown()) return later();
     V.el.querySelector('.h-clock').innerHTML = clock();
     V.el.querySelector('.h-hero-slot').innerHTML = hero();
     fitHero(V.el);
@@ -482,13 +490,19 @@
   });
   // The walk timer ticks on its own: only its text changes.
   App.on('second', function () {
-    var t = App.walk.active && !App.walk.active.endedAt && V.el && V.el.querySelector('.h-walk-timer');
+    if (!App.walk.active || App.walk.active.endedAt || !shown()) return;
+    var t = V.timer && V.timer.isConnected ? V.timer : (V.timer = V.el.querySelector('.h-walk-timer'));
     if (t) t.textContent = dur(Date.now() - App.walk.active.startedAt);
   });
-  App.on('walk', paintWalk);
-  App.on('data', function () { if (App.current === 'home') paint(); });
+  App.on('walk', function () { if (shown()) paintWalk(); else later(); });
+  App.on('data', function () { if (shown()) paint(); });
   App.on('ha', function () {
-    var el = V.el && V.el.firstChild && V.el.querySelector('.h-status'), h = el && status();
+    if (!shown()) return later();
+    var el = V.el.querySelector('.h-status'), h = el && status();
     if (el && h !== el._html) { el._html = h; el.innerHTML = h; }
   });
+  // The web fonts arrive after the first paint (font-display: swap): fit the hero title again.
+  if (document.fonts && document.fonts.addEventListener) {
+    document.fonts.addEventListener('loadingdone', function () { if (shown()) fitHero(V.el); });
+  }
 })();

@@ -8,7 +8,9 @@
 // Wi-Fi loses nothing; the outbox is sent in order (PUT is a full upsert, DELETE removes) and the
 // Worker's copy is adopted whenever the outbox is empty. Times are real time (Date.now(), never the
 // demo-shifted App.now()), and a walk can't start while the clock still reads 1970 after a reboot.
-// Emits 'walk' on every change.
+// Emits 'walk' on every change. Syncing pauses while the page is hidden (poll.js).
+import { every } from './poll.js';
+
 (function () {
   'use strict';
   var API = import.meta.env.VITE_FRAME_API, KEY = import.meta.env.VITE_FRAME_KEY;
@@ -222,7 +224,7 @@
   var n = 0;
   App.on('ready', function () {
     W.refresh();
-    setInterval(function () { n++; if (W.active || W.pending || n % 5 === 0) W.refresh(); }, 60000);
+    every(60000, function () { n++; if (W.active || W.pending || n % 5 === 0) W.refresh(); }, { resume: W.refresh });
     window.addEventListener('online', function () { W.refresh(); });
   });
 })();

@@ -13,6 +13,12 @@
 //   VITE_HA_PINNED     to-do entity for CONFIG.pinnedList, e.g. todo.loml
 // HA's lists are filled from the iPhone Shortcut by ha/reminders-sync.yaml. Ticking a grocery item
 // on the frame completes it in HA. An item's assignee is the "Assigned: Name" line of its description.
+// When one of those to-do entities changes in HA (its state is the open-item count; the kiosk streams
+// it, ha.js), the lists are reloaded about a second later instead of at the next 5-min poll.
+// Polls pause while the page is hidden and catch up once when it's shown (poll.js).
+// 'data' is emitted only when something changed, with what changed: 'events', 'reminders', 'photos'.
+import { every } from './poll.js';
+
 (function () {
   'use strict';
   var D = window.DATA;
@@ -107,8 +113,10 @@
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
   }
   // A grocery item ticked (or un-ticked) on the frame; HA keeps it until the phone drops it.
+  var lastLocal = 0;
   App.reminderDone = function (g, done) {
     if (!g.ha || !haOn()) return;
+    lastLocal = Date.now();
     App.ha.call('POST', '/api/services/todo/update_item', { entity_id: g.ha.entity, item: g.ha.uid, status: done ? 'completed' : 'needs_action' })
       .catch(function (e) { App.toast('Couldn’t update Home Assistant · ' + App.esc(e.message), { tone: 'error', icon: 'bolt' }); });
   };
@@ -119,8 +127,10 @@
     }) : workerReminders())
       .then(function (j) {
         if (!j.lists) throw new Error(j.error || 'no lists');
+        if (!applyReminders(j)) return; // unchanged: no storage write, no redraw
         try { localStorage.setItem(RCACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
-        if (applyReminders(j)) { App.emit('data'); App.rerender(); }
+        App.emit('data', 'reminders');
+        App.rerender();
       })
       .catch(function (e) { console.warn('Reminders fetch failed', e); });
   }
@@ -158,7 +168,7 @@
         var ids = (D.photos || []).map(function (p) { return p.id; }).join();
         if (!j.photos || j.photos.map(function (p) { return p.id; }).join() === ids) return;
         try { localStorage.setItem(PCACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
-        if (applyPhotos(j)) App.emit('data');
+        if (applyPhotos(j)) App.emit('data', 'photos');
       })
       .catch(function (e) { console.warn('Photos fetch failed', e); });
   }
@@ -201,7 +211,7 @@
         shownEvents = key;
         apply(j);
         try { localStorage.setItem(CACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
-        App.emit('data');
+        App.emit('data', 'events');
         App.rerender();
       })
       .catch(function (e) { console.warn('Calendar fetch failed', e); });
@@ -229,11 +239,32 @@
     if (pcached) applyPhotos(pcached);
   } catch (e) { /* ignore a bad cache */ }
 
+  // A to-do list changed in HA (an item ticked or added on a phone, or on the frame): reload the lists
+  // shortly, waiting a little longer after a tick here so quick successive ticks land together.
+  var HA_TODOS = [HA_GROCERY, HA_PINNED].filter(Boolean), todoSeen = {}, todoTimer = null;
+  function todoKey(id) {
+    var st = App.ha.states[id];
+    return st ? st.state + '|' + st.last_changed + '|' + st.last_updated : '';
+  }
+  App.on('ha', function (ids) {
+    if (!HA_TODOS.length || !haOn()) return;
+    if (ids && ids.length && !HA_TODOS.some(function (id) { return ids.indexOf(id) > -1; })) return;
+    var hit = false;
+    HA_TODOS.forEach(function (id) {
+      var k = todoKey(id);
+      if (k && todoSeen[id] && todoSeen[id] !== k) hit = true;
+      if (k) todoSeen[id] = k;
+    });
+    if (!hit) return;
+    clearTimeout(todoTimer);
+    todoTimer = setTimeout(loadReminders, Math.max(1000, lastLocal + 3000 - Date.now()));
+  });
+
   App.startCalendar = function () {
     load();
     loadReminders();
     loadPhotos();
-    setInterval(function () { load(); loadReminders(); }, 5 * 60000);
-    setInterval(loadPhotos, 15 * 60000);
+    every(5 * 60000, function () { load(); loadReminders(); });
+    every(15 * 60000, loadPhotos, { delay: 5000 });
   };
 })();

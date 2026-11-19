@@ -45,7 +45,7 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
       - run: npm ci
       - name: Test the Worker
-        run: node --test worker/test/photos.test.js worker/test/ics.test.js
+        run: node --test worker/test/*.test.js
       - name: Write .env.local
         env:
           DASHBOARD_ENV: ${{ secrets.DASHBOARD_ENV }}

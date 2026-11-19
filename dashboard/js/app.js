@@ -57,11 +57,18 @@ import { assetKey, decide, markApplied } from './update.js';
     });
     return { from: from, to: to };
   };
+  // Asked every second by the idle loop: the answer for "now" is kept for the minute (it walks every
+  // event), and recomputed early when the events or the demo clock change.
+  var sleepMemo = { key: '', val: false };
   App.isSleep = function (now) {
+    var key = now ? '' : Math.floor(Date.now() / 60000) + '|' + offset + '|' + App.calMode;
+    if (key && key === sleepMemo.key) return sleepMemo.val;
     now = now || App.now();
-    var w = App.sleepWindow(now);
-    return now >= w.from && now < w.to;
+    var w = App.sleepWindow(now), val = now >= w.from && now < w.to;
+    if (key) sleepMemo = { key: key, val: val };
+    return val;
   };
+  function forgetSleep() { sleepMemo.key = ''; }
 
   var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -262,60 +269,89 @@ import { assetKey, decide, markApplied } from './update.js';
 
   // ------------------------------------------------------------ router
   App.register = function (name, view) { App.views[name] = view; };
-  // Views are built once and kept laid out (hidden with content-visibility), so switching tabs
-  // only has to paint. A view is rebuilt when its data changed ('data'/'time' events) or, for
-  // time-sensitive views (minutely: true), when the minute has rolled over since it was built.
+  // A view is built the first time it's shown and then kept (hidden with content-visibility), so
+  // going back to it only has to paint. While hidden it isn't touched: data and clock changes
+  // ('data'/'time' events) only mark it dirty, and it's rebuilt when it's next shown. Time-sensitive
+  // views (minutely: true) are also rebuilt when the minute has rolled over since they were built.
+  // Views can have:
+  //   hide()     stop timers/slideshows when it goes off screen (another tab, or ambient/night over it)
+  //   resume(el) start them again when it comes back without a rebuild
+  //   release(el) let go of images and heavy DOM; it's then rebuilt (show) on the next visit.
+  //              Called when leaving a view marked heavy: true, and for every view at night.
+  // Nothing else is pre-built: a hidden view costs no layout, style or image memory on the frame.
   function minuteKey() { return Math.floor(App.now().getTime() / 60000); }
+  // Ambient (the photo overlay) and night (black) cover the dashboard: the view underneath is paused.
+  function covered() { return App.mode === 'ambient' || App.mode === 'night'; }
+  // Is this view what's on screen right now? Event handlers use it to skip DOM work for hidden views.
+  App.onScreen = function (name) { return App.current === name && !covered(); };
   function build(name, opts) {
     var view = App.views[name];
     view.show($('#view-' + name), opts || {});
     view._built = true; view._dirty = false; view._min = minuteKey();
   }
+  function stale(view) { return !view._built || view._dirty || (view.minutely && view._min !== minuteKey()); }
+  function release(name) {
+    var view = App.views[name];
+    if (!view._built || !view.release) return;
+    view.release($('#view-' + name));
+    view._dirty = true;
+  }
   App.go = function (name, opts) {
     opts = opts || {};
     if (!App.views[name]) name = 'home';
-    if (App.current && App.current !== name && App.views[App.current].hide) App.views[App.current].hide();
+    var prev = App.current;
+    if (prev && prev !== name) {
+      if (App.views[prev].hide) App.views[prev].hide();
+      if (App.views[prev].heavy) release(prev);
+    }
     App.$$('.view').forEach(function (v) { v.classList.toggle('is-active', v.dataset.view === name); });
     App.$$('.rail-item').forEach(function (b) { b.classList.toggle('is-active', b.dataset.go === name); });
     App.current = name;
     var view = App.views[name];
-    if (!view._built || view._dirty || opts.rerender || (view.minutely && view._min !== minuteKey())) build(name, opts);
+    if (covered()) view._dirty = true; // (re)built when the overlay goes away
+    else if (opts.rerender || stale(view)) build(name, opts);
     else if (view.resume) view.resume($('#view-' + name));
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
   };
-  // Build a hidden view and lay it out now (cached by content-visibility; no paint happens).
-  function prebuild(name) {
-    var el = $('#view-' + name), view = App.views[name];
-    build(name);
-    if (view.hide) view.hide();
-    el.classList.add('is-warming');
-    el.offsetHeight;
-    el.classList.remove('is-warming');
-  }
-  // Pre-build (startup) and re-build (after data changes) hidden views in the background, one per
-  // slot, so navigating to them never pays the rebuild cost.
-  var refreshTimer = null;
-  function refreshStale(delay) {
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(function next() {
-      var name = Object.keys(App.views).filter(function (k) {
-        var v = App.views[k];
-        return k !== App.current && (!v._built || v._dirty);
-      })[0];
-      if (!name) return;
-      prebuild(name);
-      refreshTimer = setTimeout(next, 400);
-    }, delay);
-  }
+  // Hidden views are rebuilt when next shown; so is the current one if an overlay covers it.
   function markStale() {
-    Object.keys(App.views).forEach(function (k) { if (k !== App.current) App.views[k]._dirty = true; });
-    refreshStale(1500);
+    forgetSleep();
+    Object.keys(App.views).forEach(function (k) {
+      if (App.views[k]._built && !App.onScreen(k)) App.views[k]._dirty = true;
+    });
   }
   App.on('data', markStale);
   App.on('time', markStale);
   App.rerender = function () {
-    if (App.current) App.views[App.current].show($('#view-' + App.current), { rerender: true });
+    if (!App.current) return;
+    if (covered()) { App.views[App.current]._dirty = true; return; }
+    App.views[App.current].show($('#view-' + App.current), { rerender: true });
   };
+  // Drop the images and heavy DOM of every view that isn't on screen (photo slideshows, the dog
+  // view's map tiles, camera snapshots…); they come back when the view is shown again. Done
+  // automatically at night; callable any time memory is short.
+  App.releaseImages = function () {
+    Object.keys(App.views).forEach(function (k) {
+      if (!App.onScreen(k)) { if (k === App.current && App.views[k].hide) App.views[k].hide(); release(k); }
+    });
+    App.emit('release');
+  };
+  // Android onTrimMemory (via window.frameMemory): RUNNING_LOW (10) and worse → let go of images now.
+  App.on('memory', function (level) { if (level >= 10) App.releaseImages(); });
+  // Covered by ambient/night: pause the view underneath (night also releases its images). Uncovered:
+  // bring it up to date and start it again.
+  var wasCovered = false;
+  function modeChanged() {
+    var now = covered(), view = App.current && App.views[App.current];
+    if (!view) { wasCovered = now; return; }
+    if (now && !wasCovered && view.hide) view.hide();
+    if (App.mode === 'night') App.releaseImages();
+    if (!now && wasCovered) {
+      if (stale(view)) build(App.current);
+      else if (view.resume) view.resume($('#view-' + App.current));
+    }
+    wasCovered = now;
+  }
 
   App.categorize = function (name) {
     var n = name.toLowerCase();
@@ -397,17 +433,19 @@ import { assetKey, decide, markApplied } from './update.js';
     var stage = $('#stage');
     App.mode = m;
     stage.dataset.mode = m;
+    modeChanged();
     App.emit('mode', m);
   };
 
   // ------------------------------------------------------------ idle
   App.idle = { home: 60, ambient: 120 };
-  var idleSec = 0;
+  var idleSec = 0, takeoverEl = null;
   function onIdleTick() {
+    takeoverEl = takeoverEl || $('#takeover');
     idleSec++;
     if (App.handheld) return; // phones and tablets update on resume (resumeUpdate) and never idle into ambient/sleep
     if (App.current && App.views[App.current].stay) return; // e.g. a recipe open in a desktop browser
-    var blocked = $('#takeover').classList.contains('is-open');
+    var blocked = takeoverEl.classList.contains('is-open');
     if (updatePending && idleSec >= 30 && !blocked && updateSafe()) { applyUpdate(); return; }
     var asleep = App.isSleep();
     if (!asleep && (App.mode === 'night' || App.mode === 'nightdash')) { App.setMode('day'); App.go('home'); return; }
@@ -588,8 +626,7 @@ import { assetKey, decide, markApplied } from './update.js';
     App.closeSheet();
     App.emit('orient', portrait);
     Object.keys(App.views).forEach(function (k) { if (App.views[k]._built) App.views[k]._dirty = true; });
-    if (App.current) App.go(App.current, { rerender: true });
-    refreshStale(1500);
+    if (App.current) App.go(App.current);
   }
 
   // ------------------------------------------------------------ clock tick
@@ -598,7 +635,7 @@ import { assetKey, decide, markApplied } from './update.js';
   // hour still re-renders. A gap of over 90 s (frozen main thread, paused timers, NTP correction)
   // re-renders everything for the current time instead of waiting or reloading.
   var CLOCK_SET = Date.UTC(2026, 0, 1);
-  var lastMin = -1, lastTick = Date.now(), tickTimer = null;
+  var lastMin = -1, lastTick = Date.now(), tickTimer = null, railClock = null;
   function tick() {
     var real = Date.now();
     // Frames without an RTC boot at 1970 and jump forward when NTP syncs; reload once then, so
@@ -611,7 +648,8 @@ import { assetKey, decide, markApplied } from './update.js';
     App.emit('second', n);
     if (min !== lastMin) {
       lastMin = min;
-      $('#railClock').innerHTML = '<b>' + App.fmt.time(n, false) + '</b><span>' + App.fmt.ampm(n) + '</span>';
+      railClock = railClock || $('#railClock');
+      railClock.innerHTML = '<b>' + App.fmt.time(n, false) + '</b><span>' + App.fmt.ampm(n) + '</span>';
       App.emit('minute', n);
     }
     onIdleTick();
@@ -654,8 +692,6 @@ import { assetKey, decide, markApplied } from './update.js';
     if (App.handheld) document.addEventListener('visibilitychange', resumeUpdate);
     if (SIM) document.body.insertAdjacentHTML('beforeend', '<div class="sim-status' + (SIM === 'ipad' ? ' is-ipad' : '') + '"><span>9:41</span><i></i><span>5G ▮</span></div><div class="sim-home"></div>');
     App.emit('ready');
-    refreshStale(1500);
-    if (!App.handheld) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
     // Tablets have no gear: settings are behind the rail clock, as on the frame. Say so once.
     if (App.tablet) {
       var TIP = 'tablet-settings-tip', seen = '1';

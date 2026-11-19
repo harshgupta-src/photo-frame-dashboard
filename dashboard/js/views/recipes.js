@@ -32,9 +32,10 @@
       .catch(function (e) { R.error = e.message; console.warn('Recipes sync failed', e); })
       .then(function () {
         R.busy = false;
-        // Redraw even when hidden: the view is pre-built at startup, and the router only resumes it
-        // (no rebuild) when the tab is opened, so a stale "Loading…" would otherwise stick.
-        if (changed || !R.data) render(); else syncLine();
+        // Left the tab meanwhile: redraw when it's next opened (the router rebuilds dirty views), so a
+        // stale "Loading…" can't stick.
+        if (!App.onScreen('recipes')) { if (App.views.recipes._built) App.views.recipes._dirty = true; }
+        else if (changed || !R.data) render(); else syncLine();
       });
   }
 
@@ -253,5 +254,5 @@
     resume: function () { if (wanted()) wake(true); if (R.on && !R.busy && Date.now() - (R.updated || 0) > 5 * 60e3) refresh(); },
     hide: function () { wake(false); }
   });
-  App.on('orient', function () { if (V.el && V.el.firstChild) render(); });
+  App.on('orient', function () { if (V.el && V.el.firstChild && App.onScreen('recipes')) render(); });
 })();

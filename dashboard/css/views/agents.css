@@ -73,8 +73,11 @@ i.cp-auto, .cp-auto i { background: var(--auto); }
 .cp-tag { font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; color: #fff; }
 .cp-tag--development { background: var(--dev); }
 .cp-tag--automation { background: var(--auto); }
-.cp-live { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; box-shadow: 0 0 0 0 rgb(0 163 108 / .5); animation: cp-pulse 2s infinite; }
-@keyframes cp-pulse { 70% { box-shadow: 0 0 0 8px rgb(0 163 108 / 0); } 100% { box-shadow: 0 0 0 0 rgb(0 163 108 / 0); } }
+/* The "running" ring grows and fades with transform + opacity (compositor only: no repaints), not an
+   animated box-shadow. */
+.cp-live { position: relative; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+.cp-live::after { content: ''; position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 50%; background: rgb(0 163 108 / .5); animation: cp-pulse 2s infinite; }
+@keyframes cp-pulse { 0% { transform: scale(1); opacity: 1; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
 .cp-empty { color: var(--mute); font-size: 16px; padding: 18px 4px; }
 
 .cp-detail { background: var(--card); border-radius: var(--r); min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
