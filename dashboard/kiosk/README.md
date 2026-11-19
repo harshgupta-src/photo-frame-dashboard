@@ -113,7 +113,9 @@ loads `get_states` once, subscribes to `state_changed`, and pushes only the watc
     screen comes back on or the kiosk returns to the front;
   - `{"live":true,"states":[…],"removed":["entity_id",…]}` for changes, batched: at most every
     250 ms, latest state per entity. `sensor` and `binary_sensor` are only sent when their `state`
-    changes (attribute-only updates are skipped);
+    changes (attribute-only updates are skipped). From kiosk 1.5, a `media_player` update where only
+    `media_position` / `media_position_updated_at` moved (about once a second while playing) isn't
+    sent either; the cached copy still gets it, so the next snapshot is current;
   - `{"live":false}` when the link drops.
 
   State objects are as in `/api/states` without `context`. Nothing is pushed while the screen is off
@@ -125,6 +127,10 @@ The Today screen's Home card then shows `VITE_HA_ROOM` (for example
 `Living room:light.living_room_*`) and All lights as buttons, plus the thermostat's inside
 temperature. A tap turns those lights off if any are on, otherwise on. Bulbs inside an HA light
 group count as the group.
+
+The Home tab (`js/views/control.js`, devices listed in `js/homecfg.js`) controls lights, the
+bedroom fan, the TV, the thermostat and the speaker through the same bridge (`/api/services/…`
+for light, fan, climate and media_player), and watches `fan`, `media_player` and `person` as well.
 
 ## Home Assistant device (MQTT)
 

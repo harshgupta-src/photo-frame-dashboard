@@ -9,7 +9,7 @@ const byId = (list) => Object.fromEntries(list.map((e) => [e.entity_id, e]));
 const T1 = '2026-11-19T15:00:00.000000+00:00', T2 = '2026-11-19T15:05:00.000000+00:00';
 
 test('the dashboard watches the domains it reads', () => {
-  assert.deepEqual([...WATCH_DOMAINS].sort(), ['climate', 'light', 'todo']);
+  assert.deepEqual([...WATCH_DOMAINS].sort(), ['climate', 'fan', 'light', 'media_player', 'person', 'todo']);
 });
 
 test('a poll reports only entities that changed, appeared or disappeared', () => {

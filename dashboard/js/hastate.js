@@ -3,9 +3,10 @@
 // entity ids that actually changed, so ha.js only emits 'ha' (and views only repaint) when needed.
 
 // The domains the dashboard reads (views/home.js: light buttons and the thermostat's inside
-// temperature; live.js: the grocery / pinned to-do lists). The kiosk streams just these
-// (HomeHQ.haWatch); everything else comes from the /api/states poll.
-export var WATCH_DOMAINS = ['light', 'climate', 'todo'];
+// temperature; live.js: the grocery / pinned to-do lists; views/control.js, the Home tab: fan,
+// TV/speakers and who's home). The kiosk streams just these (HomeHQ.haWatch; 1.5+ drops media
+// players' playback-position ticks); everything else comes from the /api/states poll.
+export var WATCH_DOMAINS = ['light', 'climate', 'todo', 'fan', 'media_player', 'person'];
 
 export function domainOf(id) {
   var s = String(id), i = s.indexOf('.');

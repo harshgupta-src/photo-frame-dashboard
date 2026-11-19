@@ -17,6 +17,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -47,6 +48,8 @@ final class HaLive {
   static final long PING_MS = 30000, PONG_TIMEOUT_MS = 10000, BACKOFF_MIN_MS = 2000, BACKOFF_MAX_MS = 60000;
   // Domains whose attributes change all the time (power, signal, ...): only a new state is sent.
   static final Set<String> STATE_ONLY = new HashSet<>(Arrays.asList("sensor", "binary_sensor"));
+  // A playing media player updates its position about once a second; those alone aren't sent.
+  static final Set<String> POSITION_KEYS = new HashSet<>(Arrays.asList("media_position", "media_position_updated_at"));
   static final int SUB_ID = 1, STATES_ID = 2;
   // HA writes events as {"type":"event","event":{...},"id":1}; older versions put the id first.
   // The only subscription is SUB_ID, so either prefix is one of its events.
@@ -334,12 +337,35 @@ final class HaLive {
         now.remove("context");
         String json = now.toString();
         states.put(id, json);
-        if (STATE_ONLY.contains(domain) && before != null && before.optString("state").equals(now.optString("state"))) return;
+        boolean quiet = before != null && (STATE_ONLY.contains(domain)
+            ? before.optString("state").equals(now.optString("state"))
+            : "media_player".equals(domain) && onlyPositionMoved(before, now));
+        if (quiet) {
+          // Not worth a push, but a change already waiting goes out with the latest copy.
+          if (changed.containsKey(id)) changed.put(id, json);
+          return;
+        }
         removed.remove(id);
         changed.put(id, json);
       }
     }
     listener.onChanges(this);
+  }
+
+  /** Same state and attributes apart from the playback position (media_position*). */
+  static boolean onlyPositionMoved(JSONObject before, JSONObject now) {
+    if (!before.optString("state").equals(now.optString("state"))) return false;
+    JSONObject a = before.optJSONObject("attributes"), b = now.optJSONObject("attributes");
+    if (a == null || b == null || a.length() != b.length()) return false;
+    boolean moved = false;
+    for (Iterator<String> it = b.keys(); it.hasNext(); ) {
+      String k = it.next();
+      if (!a.has(k)) return false;
+      boolean same = String.valueOf(a.opt(k)).equals(String.valueOf(b.opt(k)));
+      if (POSITION_KEYS.contains(k)) moved |= !same;
+      else if (!same) return false;
+    }
+    return moved;
   }
 
   static String domainOf(String entityId) {
