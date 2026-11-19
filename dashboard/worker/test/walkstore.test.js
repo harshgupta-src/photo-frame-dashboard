@@ -1,6 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { WalkStore } from '../src/walkstore.js';
+import { encodeGraph } from '../src/snap.js';
 
 const LL = 'https://lifelog.test', CAL = 'https://caldav.test/cal/', HCAL = 'https://caldav.test/harsh/', HA = 'https://ha.test/hook';
 let events, ical, env, kv, hooks;
@@ -202,11 +203,11 @@ test('Home Assistant polls the active walk and stores its route, which goes with
   assert.equal((await call('active')).body.active.id, id);
   const t = Date.now() / 1000;
   const points = [
-    { who: 'harsh', lat: 42.3043, lon: -71.1109, acc: 10, t: t - 600 },
-    { who: 'harsh', lat: 42.3052, lon: -71.1109, acc: 12, t: t - 500 }, // 100 m north
-    { who: 'harsh', lat: 42.3300, lon: -71.1109, acc: 900, t: t - 450 }, // bad fix, skipped
-    { who: 'harsh', lat: 42.3052, lon: -71.1109, acc: 12, t: t - 400 },
-    { who: 'harsh', lat: 42.3052, lon: -71.1109, acc: 8, t: t - 300 }, // same spot again, dropped
+    { who: 'harsh', lat: 40.7043, lon: -74.0109, acc: 10, t: t - 600 },
+    { who: 'harsh', lat: 40.7052, lon: -74.0109, acc: 12, t: t - 500 }, // 100 m north
+    { who: 'harsh', lat: 42.3300, lon: -74.0109, acc: 900, t: t - 450 }, // bad fix, skipped
+    { who: 'harsh', lat: 40.7052, lon: -74.0109, acc: 12, t: t - 400 },
+    { who: 'harsh', lat: 40.7052, lon: -74.0109, acc: 8, t: t - 300 }, // same spot again, dropped
   ];
   const r = await call('putRoute', id, { points, source: 'ha' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -217,6 +218,36 @@ test('Home Assistant polls the active walk and stores its route, which goes with
   assert.equal((await call('putRoute', 'walk-nonexist', { points })).status, 404);
   await call('remove', id);
   assert.ok(events.get(id + '-route').deleted_at);
+});
+
+test('with the walk graph the route is also snapped; late points re-snap it', async () => {
+  // A street 5 m east of the fixes, with a bend 120 m up.
+  env.WALK_GRAPH = encodeGraph([[40.7040, -74.01084], [40.7050, -74.01084], [40.7060, -74.01084], [40.7060, -74.0100]], [[0, 1], [1, 2], [2, 3]]).buffer;
+  const id = (await call('start', { by: 'harsh' })).body.id, t = Date.now() / 1000;
+  const points = [
+    { who: 'harsh', lat: 40.7043, lon: -74.0109, acc: 10, t: t - 600 },
+    { who: 'harsh', lat: 40.7052, lon: -74.0109, acc: 12, t: t - 500 },
+  ];
+  const r = await call('putRoute', id, { points, source: 'ha' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  let d = events.get(id + '-route').data;
+  assert.equal(d.paths.harsh.length, 2, 'raw fixes kept');
+  assert.ok(d.snapped.harsh.every((p) => p[1] === -74.01084), JSON.stringify(d.snapped));
+  assert.ok(Math.abs(d.snapped_m - 100) < 3, String(d.snapped_m));
+  assert.deepEqual([r.body.snappedM, r.body.snapped], [d.snapped_m, ['harsh']]);
+  // Points that arrive after the walk: merged with the stored ones and snapped again (round the bend).
+  const late = await call('resnapRoute', id, { harsh: [[40.7060, -74.0101, 8, Math.round(t - 400)]] });
+  assert.equal(late.status, 200, JSON.stringify(late.body));
+  d = events.get(id + '-route').data;
+  assert.equal(d.paths.harsh.length, 3);
+  assert.ok(d.snapped.harsh.some((p) => p[0] === 40.706 && p[1] === -74.01084), 'turns the corner');
+  assert.ok(d.snapped_m > 170, String(d.snapped_m));
+  const all = await call('resnapRoutes', { days: 2, dry: true });
+  assert.deepEqual(all.body.routes.map((x) => x.walkId), [id]);
+  delete env.WALK_GRAPH;
+  assert.equal((await call('resnapRoutes', { days: 2 })).status, 503);
+  await call('resnapRoute', id);
+  assert.equal(events.get(id + '-route').data.snapped, undefined, 'no graph: no snapped line');
 });
 
 test('a plan walk carries its expect; a Shortcut stop without pee/poop uses it', async () => {

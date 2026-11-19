@@ -13,15 +13,17 @@
 import { listCalendars, putEvent, deleteEvent, calKey } from './icloud.js';
 import {
   normalize, summarize, walkJSON, walkICS, renderLog, validId, WalkError, UID_PREFIX, PLAN_PREFIX,
-  toEvent, fromEvent, calRev, needsSync, pottyTimes, pottyType, pottyICS, localDate, normalizeRoute,
+  toEvent, fromEvent, calRev, needsSync, pottyTimes, pottyType, pottyICS, localDate, normalizeRoute, routeFromPaths,
 } from './walks.js';
+import { loadGraph, snapRoute } from './snap.js';
+import { owntracksPoints, mergePaths } from './owntracks.js';
 import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
 import { expectPotty } from './walkexpect.js';
 
 const DAY = 864e5;
 const RECENT_DAYS = 14;
 const MAX_TRIES = 10;
-const OPS = ['state', 'list', 'summary', 'log', 'upsert', 'remove', 'start', 'stop', 'resync', 'getPlan', 'putPlan', 'deletePlan', 'active', 'putRoute'];
+const OPS = ['state', 'list', 'summary', 'log', 'upsert', 'remove', 'start', 'stop', 'resync', 'getPlan', 'putPlan', 'deletePlan', 'active', 'putRoute', 'resnapRoute', 'resnapRoutes'];
 const POTTY = ['pee', 'poop'];
 const sibling = (href, kind) => href.replace(/\.ics$/, '-' + kind + '.ics');
 const iso = (ms) => new Date(ms).toISOString();
@@ -293,20 +295,72 @@ export class WalkStore {
   }
 
   // The walk's route from the walkers' phones (Home Assistant) → Lifelog event <walk id>-route, type
-  // <walk type>_route; removed with the walk.
+  // <walk type>_route; removed with the walk. The raw fixes stay in data.paths; data.snapped is the
+  // same walk matched to the footpaths (snap.js) when the Worker has the walk graph.
   async putRoute(id, body) {
+    const w = await this.routeWalk(id), r = normalizeRoute(body);
+    return this.saveRoute(w, r.paths, String((body && body.source) || 'api').slice(0, 20));
+  }
+
+  // Re-save a walk's route: the stored fixes plus `extra` ({who: [[lat, lon, acc, t_s]]}, e.g. points
+  // that arrived after the walk ended), merged with the other sources and snapped again.
+  async resnapRoute(id, extra) {
+    const w = await this.routeWalk(id);
+    const old = await this.ll.req('GET', '/events/' + encodeURIComponent(id + '-route'));
+    const live = old && old.type === this.ll.type + '_route' && !old.deleted_at;
+    if (!live && !extra) throw new WalkError('no route for this walk', 404);
+    const paths = {};
+    for (const src of [live ? (old.data || {}).paths : null, extra]) {
+      for (const [who, list] of Object.entries(src || {})) if (Array.isArray(list)) paths[who] = (paths[who] || []).concat(list);
+    }
+    return this.saveRoute(w, paths, (live && old.source) || 'api');
+  }
+
+  // Snap the routes of the last `days` days again (after a graph rebuild or a matcher change).
+  // dry: only report what would change.
+  async resnapRoutes({ days = 14, dry = false } = {}) {
+    if (!loadGraph(this.env)) throw new WalkError('no walk graph (WALK_GRAPH) on this Worker', 503);
+    const q = new URLSearchParams({ type: this.ll.type + '_route', limit: '1000', since: iso(Date.now() - days * DAY) });
+    const routes = (await this.ll.req('GET', '/events?' + q)) || [], out = [];
+    for (const e of routes) {
+      const d = e.data || {};
+      if (e.deleted_at || !d.walk_id || !d.paths) continue;
+      try {
+        const r = dry ? { distanceM: d.distance_m, ...snapRoute(loadGraph(this.env), d.paths) } : await this.resnapRoute(d.walk_id);
+        out.push({ walkId: d.walk_id, distanceM: r.distanceM, snappedM: dry ? r.snapped_m : r.snappedM, before: d.snapped_m == null ? null : d.snapped_m });
+      } catch (err) { out.push({ walkId: d.walk_id, error: String(err.message || err) }); }
+    }
+    return { ok: true, dry: !!dry, days, routes: out };
+  }
+
+  async routeWalk(id) {
     if (!validId(id)) throw new WalkError('bad walk id');
     const e = await this.ll.get(id);
     if (!e || e.deleted_at) throw new WalkError('no such walk', 404);
-    const w = fromEvent(e), r = normalizeRoute(body);
+    return fromEvent(e);
+  }
+
+  // Other sources of the walk's points join the phones' here, before snapping (the one call site).
+  async mergeSources(id, paths) {
+    try { return mergePaths(paths, await owntracksPoints(this.env, id)); } catch (e) { console.warn('owntracks merge:', e.message || e); return paths; }
+  }
+
+  async saveRoute(w, input, source) {
+    const r = routeFromPaths(await this.mergeSources(w.id, input));
+    const s = snapRoute(loadGraph(this.env), r.paths) || {};
     const last = Math.max(0, ...Object.values(r.paths).flat().map((x) => x[3] * 1000));
-    const saved = await this.ll.put(id + '-route', {
+    const saved = await this.ll.put(w.id + '-route', {
       type: this.ll.type + '_route', person: w.walkers.length === 1 ? w.walkers[0].name : null,
-      started_at: iso(w.startedAt), ended_at: iso(w.endedAt != null ? w.endedAt : Math.max(w.startedAt, last)),
-      source: String((body && body.source) || 'api').slice(0, 20),
-      data: { walk_id: id, dog: w.dog || null, walkers: w.walkers.map((x) => x.name), walker_ids: w.walkers.map((x) => x.id), ...r, points: Object.values(r.paths).reduce((n, l) => n + l.length, 0) },
+      started_at: iso(w.startedAt), ended_at: iso(w.endedAt != null ? w.endedAt : Math.max(w.startedAt, last)), source,
+      data: {
+        walk_id: w.id, dog: w.dog || null, walkers: w.walkers.map((x) => x.name), walker_ids: w.walkers.map((x) => x.id), ...r, ...s,
+        points: Object.values(r.paths).reduce((n, l) => n + l.length, 0),
+      },
     });
-    return { ok: true, id: saved.id, walkId: id, distanceM: r.distance_m, points: saved.data.points };
+    return {
+      ok: true, id: saved.id, walkId: w.id, distanceM: r.distance_m, snappedM: s.snapped_m == null ? null : s.snapped_m,
+      snapped: Object.keys(s.snapped || {}), points: saved.data.points,
+    };
   }
 
   // ---------------------------------------------------------------- Home Assistant

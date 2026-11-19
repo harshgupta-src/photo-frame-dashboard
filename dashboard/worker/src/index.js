@@ -19,6 +19,9 @@
 //        gateway (agentcal.js; Bearer AGENT_CAL_KEY, calendars in secret AGENT_CALENDARS)
 //   /copilot, /copilot/session, POST /copilot/push  Copilot sessions and usage for the Agents tab,
 //        pushed by the Mac and the HA Copilot Agent add-on (copilot.js, ../../COPILOT.md; Bearer COPILOT_KEY)
+//   POST /owntracks  the phones' OwnTracks app (Basic auth, secret OWNTRACKS_USERS): GPS fixes kept only
+//        during walks, and the reply switches the phone to move mode while its person is on a walk
+//   GET  /owntracks/setup/<user>  ?key=READ_KEY  the "Install in OwnTracks" page (owntracks.js, ../../WALKS.md)
 //   GET  anything else: the dashboard itself (../dist, Workers static assets), for the frame and the
 //        household's phones (../IPHONE.md). The kiosk opens /?key=READ_KEY once; that sets a cookie
 //        that covers the page's own files. /manifest.webmanifest gets start_url /?key=READ_KEY so a
@@ -31,7 +34,8 @@
 // most people), WALK_PLAN_CALENDARS (planned walks: {"id+id": "Calendar name"}; default: the CALENDARS
 // entry with exactly those walkers), HA_WALK_WEBHOOK_URL (pinged on walk changes), WALK_KEY (default:
 // derived from PUSH_TOKEN, see walkapi.js), LIFELOG_WALK_TYPE, DOG_BIRTHDAY (YYYY-MM-DD, for the food check in food.js), AGENT_CAL_KEY (default: derived from PUSH_TOKEN), AGENT_CALENDARS,
-// COPILOT_KEY (default: derived from PUSH_TOKEN), VAULT_MCP_URL + VAULT_MCP_TOKEN (recipes), RECIPES_PATH.
+// COPILOT_KEY (default: derived from PUSH_TOKEN), VAULT_MCP_URL + VAULT_MCP_TOKEN (recipes), RECIPES_PATH,
+// OWNTRACKS_USERS ({"<user>": {"password", "walker"}}), OWNTRACKS_HOME ("lat,lon").
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum, attachPlaces, GEO_MAX_LOOKUPS } from './photos.js';
@@ -42,6 +46,7 @@ import { agentCalAccess, agentCalRoute } from './agentcal.js';
 import { dogRoute, mapTile } from './dogapi.js';
 import { mealRoute } from './meals.js';
 import { recipesRoute } from './recipes.js';
+import { owntracksPost, setupPage, forgetWalks, keepHaRoute } from './owntracks.js';
 
 const DAY = 864e5;
 const EVENTS_TTL = 300;
@@ -236,9 +241,20 @@ export default {
       return canPush(req, env) ? pushReminders(req, env) : json({ error: 'unauthorized' }, 401);
     }
     if (url.pathname === '/reminders/ops') return reminderOps(req, env);
+    if (url.pathname === '/owntracks' && req.method === 'POST') {
+      try { return await owntracksPost(req, env, ctx, same); } catch (e) { return json({ error: e.message }, 500); }
+    }
+    const otSetup = /^\/owntracks\/setup\/([a-z0-9_-]{1,32})$/.exec(url.pathname);
+    if (otSetup && req.method === 'GET') return canRead(req, url, env) ? setupPage(req, url, env, otSetup[1]) : json({ error: 'unauthorized' }, 401);
     if (url.pathname === '/walk' || url.pathname.startsWith('/walks')) {
       try {
+        // HA's own route, kept for re-saving it when late OwnTracks fixes arrive (owntracks.js).
+        const haRoute = req.method === 'PUT' && /^\/walks\/[A-Za-z0-9_-]{6,64}\/route$/.test(url.pathname) ? await req.clone().text() : null;
         const r = await walkRoute(req, url, env, ctx, await walkAccess(req, env, same));
+        if (req.method !== 'GET' && !(r instanceof Response) && r.status < 300) {
+          if (haRoute != null) ctx.waitUntil(keepHaRoute(env, url.pathname.split('/')[2], haRoute).catch(() => {}));
+          else if (!url.pathname.startsWith('/walks/plan')) await forgetWalks(env).catch(() => {});
+        }
         if (r instanceof Response) { for (const [k, v] of Object.entries(CORS)) r.headers.set(k, v); return r; }
         return r.body === null ? new Response(null, { status: r.status, headers: CORS }) : json(r.body, r.status);
       } catch (e) {

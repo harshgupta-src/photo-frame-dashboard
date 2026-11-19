@@ -409,9 +409,15 @@ export function normalizeRoute(body) {
     if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && Number.isFinite(t))) continue;
     (paths[who] = paths[who] || []).push([+lat.toFixed(6), +lon.toFixed(6), Number.isFinite(acc) ? acc : null, Math.round(t)]);
   }
-  const distances = {};
-  for (const [who, list] of Object.entries(paths)) {
-    list.sort((a, b) => a[3] - b[3]);
+  return routeFromPaths(paths);
+}
+
+// {who: [[lat, lon, acc, t_s]]} (any order, maybe from several sources) → sorted, without repeats,
+// with distances, as normalizeRoute returns it.
+export function routeFromPaths(input) {
+  const paths = {}, distances = {};
+  for (const [who, raw] of Object.entries(input || {})) {
+    const list = (raw || []).filter((x) => Array.isArray(x) && x.length >= 4).slice().sort((a, b) => a[3] - b[3]);
     paths[who] = list.filter((x, i) => !i || x[0] !== list[i - 1][0] || x[1] !== list[i - 1][1]);
     let d = 0, prev = null;
     for (const x of paths[who]) {

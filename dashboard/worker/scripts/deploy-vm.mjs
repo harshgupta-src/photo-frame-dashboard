@@ -32,6 +32,8 @@ try {
   execFileSync('npx', ['wrangler', 'deploy', '--dry-run', '--outdir', join(stage, 'worker'), '--config', 'worker/wrangler.jsonc'], { stdio: ['ignore', 'ignore', 'inherit'] });
   cpSync('dist', join(stage, 'dist'), { recursive: true });
   for (const f of ['server.mjs', 'package.json', 'package-lock.json']) cpSync(join('worker/vm', f), join(stage, f));
+  // The walk graph (scripts/walk-graph.mjs) when this checkout has one; the VM keeps the last one it got.
+  if (existsSync('worker/data/walk-graph.bin')) { cpSync('worker/data/walk-graph.bin', join(stage, 'walk-graph.bin')); console.log('Shipping the walk graph'); }
   writeFileSync(join(stage, 'secrets.env'), Object.entries(secrets).map(([k, v]) => quote(k, v)).join('\n') + '\n', { mode: 0o600 });
   console.log('Worker secrets from .env.local/.dev.vars:', Object.keys(secrets).join(', '));
 

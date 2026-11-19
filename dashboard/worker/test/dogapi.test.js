@@ -92,6 +92,11 @@ test('lastRoute takes the newest walk and the walker with the most accurate fixe
   ]);
   assert.deepEqual([out.walkId, out.m, out.path], ['new', 900, [[1, 1], [2, 2]]]);
   assert.equal(lastRoute([r('x', '2026-11-12T10:00:00Z', { harsh: [[1, 1, 5, 0]] })]), null);
+  const s = r('s', '2026-11-13T10:00:00Z', { harsh: [[1, 1, 5, 0], [2, 2, 5, 1]] });
+  Object.assign(s.data, { snapped: { harsh: [[1, 1.1], [1.5, 1.5], [2, 2.1]] }, snapped_m: 1100 });
+  const out2 = lastRoute([s]);
+  assert.deepEqual([out2.m, out2.path, out2.snapped], [1100, [[1, 1], [2, 2]], [[1, 1.1], [1.5, 1.5], [2, 2.1]]]);
+  assert.equal(out.snapped, null);
 });
 
 test('weightJSON reads kg, lb and estimated ranges', async () => {

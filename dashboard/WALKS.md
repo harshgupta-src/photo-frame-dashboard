@@ -130,6 +130,8 @@ the home time zone (sent by the frame).
 | `POST /walks/resync` | retry calendar writes |
 | `GET /walks/active` | just the walk in progress, or `active: null` (Home Assistant polls it) |
 | `PUT /walks/:id/route` | `{points: [{who, lat, lon, acc, t}]}` the route (404 if the walk is gone) |
+| `POST /walks/:id/route` | `{points?}` add late points to the stored route and [snap](#snapped-routes) it again |
+| `POST /walks/routes/snap?days=14` | snap the routes of the last `days` days again (`dry=1`: only report; 503 without the walk graph) |
 | `GET /walks/plan?date=` | the day's plan (default today) with each walk's status and `expect` |
 | `PUT /walks/plan/:date` | replace it `{walks: [{start: "HH:MM", durationMin?\|end?, walkers: ["<id>"], expect?: {pee, poop}, note?, id?}], notes?, source?, lateUntil?: "HH:MM"}` |
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
@@ -137,7 +139,7 @@ the home time zone (sent by the frame).
 | `PUT /meals/plan/:date` | move or reassign meals `{meals: [{kind, start: "HH:MM", people: ["<id>"], note?}], reason?}` → `{changed, unchanged, skipped}` |
 | `POST /meals/log` | a meal was given `{id, person, at, planned_at?, delta_min?, cups?, purina_pct?, fortiflora?, ate?, source?}`: writes it to the Life Log calendar and removes the planned event (re-POST merges, e.g. `{id, ate: "some"}`) |
 | `DELETE /meals/log/:id` | undo: delete the Life Log entry and restore the planned event |
-| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]]}, the newest walk's path (≤ 300 points), and `food` (below) |
+| `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]], snapped}, the newest walk's raw path (≤ 300 points) and its [snapped](#snapped-routes) line (≤ 600 points, or null; `m` is then the snapped distance, as in `routes`), and `food` (below) |
 | `GET /dog/food` | the food advice `{advice, history}` |
 | `POST /dog/food/facts` | `{plan: [{date, meals, cups, mixed}]}` → the facts the decision uses |
 | `PUT /dog/food` | store advice `{decision: "bump"\|"hold", date?, fromCups?, toCups?, meal?, healthy, reason, projection?, nextCheck?}` (422 with `error` when the rules refuse it) |
@@ -188,7 +190,44 @@ The Worker writes them with the walk and soft-deletes them when unticked; edit t
 The route is `<walk id>-route`, type `<dog>_walk_route` (start to end of the walk), with `data`
 `{walk_id, dog, walkers, walker_ids, paths: {"<who>": [[lat, lon, accuracy m, unix s], ...]},
 distances: {"<who>": m}, distance_m, points}`. Distances skip fixes worse than 50 m and jumps faster
-than 4 m/s.
+than 4 m/s. When the Worker has the walk graph it adds the [snapped](#snapped-routes) route:
+`snapped: {"<who>": [[lat, lon], ...]}`, `snapped_distances`, `snapped_m` and `snap: {v, graph}`.
+
+### Snapped routes
+
+The phones report a fix every few minutes at best, so straight lines between them cut through
+buildings. The Worker matches each walker's fixes to the footpaths and streets (`worker/src/snap.js`)
+and stores that line next to the raw fixes. The dog tab draws it when it's there, else the raw fixes,
+and shows its distance. It all runs on the Worker: **no walk coordinates go to any outside service.**
+
+- **Matching:** a hidden Markov model. Fixes worse than 60 m, jumps nobody could walk (over 3 m/s
+  beyond both fixes' accuracy) and fixes within 8 m of the last one are dropped. A dense track is
+  thinned to 400 fixes. Each fix's candidates are the nearest points on paths within max(2 ×
+  accuracy, 25 m). Viterbi weighs the distance to the path against how much the route between two
+  candidates (bounded A*) differs from the straight line. Consecutive matches are joined by the
+  shortest path, so long gaps follow the footpaths too, and out-and-back spurs under 30 m are dropped.
+  A walk mostly off the graph (e.g. away from home) isn't snapped. It takes a few ms per walk, and the
+  graph about 5 MB of memory.
+- **The graph:** walkable OpenStreetMap ways in a square around home: footways, paths, steps,
+  pedestrian streets, residential and service roads (not parking aisles or driveways), tertiary to
+  primary roads unless they have no sidewalk, and trunk roads only with one. No motorways, and
+  nothing tagged `foot=no` or private. It's a small binary file (about 550 KB for 6 km) that stays
+  out of git because it says where home is. The Worker gets it as the `WALK_GRAPH` binding
+  (`worker/vm/server.mjs`). Without it, routes simply aren't snapped (the Cloudflare fallback has none).
+- **Rebuilding it** (new paths in OSM, a move, a bigger area), on the Mac from `dashboard/`:
+  ```
+  brew install osmium-tool
+  node worker/scripts/walk-graph.mjs --center <home lat>,<home lon> --km 6
+  npm run deploy
+  ```
+  The script downloads Geofabrik's Massachusetts extract into `worker/data/` (gitignored, refreshed
+  after 30 days; `--pbf` uses another one) and writes `worker/data/walk-graph.bin`. Only the
+  extract is downloaded; no location is sent. A deploy from the Mac ships the file, and the VM keeps
+  it in `/var/lib/frame-data/walk-graph.bin`, so CI deploys keep using it. Then snap the recent
+  routes again: `POST /walks/routes/snap?days=14` (add `dry=1` to only compare).
+- **Late points:** `POST /walks/:id/route` with `{points}` adds them to the stored fixes and snaps the
+  route again (without a body it just re-snaps). Other point sources join the phones' in
+  `WalkStore.mergeSources` before snapping.
 
 A deleted walk is soft-deleted in Lifelog. To log a missed
 walk, an agent logs one event of that type with `data.pee`/`data.poop`/`data.walkers` (names); the
@@ -292,3 +331,55 @@ back. The meal sensor reads the Life Log too, so a second tap is still caught as
 runs the Worker against the Lifelog in `worker/.dev.vars` (`LIFELOG_URL`, `LIFELOG_TOKEN`) with a
 separate event type (use the calendar's name instead of `none` to test the mirror against iCloud).
 Tests: `node --test worker/test/*.test.js`.
+
+## OwnTracks
+
+The Home Assistant app reports only sparse, coarse fixes in the background. For an accurate route, both
+iPhones also run the free [OwnTracks](https://owntracks.org) app in HTTP mode, posting straight to the
+Worker's `POST /owntracks` (`worker/src/owntracks.js`). Nothing goes to a third party.
+
+**Setup (once per phone).** Open the person's setup page in Safari on their iPhone:
+`https://frame-data.<account>.workers.dev/owntracks/setup/harsh?key=<READ_KEY>` (or `/setup/ambuja`).
+1. Install OwnTracks from the App Store (27.1.2 or later; earlier versions can't switch modes
+   remotely). Allow location **Always** with Precise Location, and Motion & Fitness.
+2. In OwnTracks Settings, turn on configuration by URL/file (it asks you to confirm).
+3. Tap **Install in OwnTracks** on the page and accept the changes.
+
+The link is `owntracks:///config?inline=<base64 JSON, URL-encoded>`. It sets HTTP mode with this Worker's
+URL and the person's username and password, device `iphone`, significant-changes monitoring,
+`locatorDisplacement`/`locatorInterval` 10, remote commands and remote configuration on (`cmd`,
+`remoteConfiguration`), no beacon ranging, downgrade or adapt, and a 120 m **Home** region at Home
+Assistant's `zone.home`. The page holds that person's password, so it needs READ_KEY and isn't cached.
+
+Worker secrets (in `/etc/frame-data/secrets.env` on the VM and `worker/.dev.vars`; see
+`worker/vm/README.md`): `OWNTRACKS_USERS` = `{"harsh": {"password": "…", "walker": "harsh"}, "ambuja": {…}}`
+(`walker` is the person id used in walks), `OWNTRACKS_HOME` = `"lat,lon"` (4 decimals), and optionally
+`OWNTRACKS_URL`, the public URL of `POST /owntracks` (by default the `workers.dev` host the proxy
+forwards for).
+
+**Mode switching.** OwnTracks over HTTP can't be pushed to, so the Worker answers each post with a
+`setConfiguration` command when needed:
+- **move** (2: continuous GPS, a post every 10 m or 10 s) while a walk with that person is out;
+- **significant changes** (1: low power, a post every few hundred metres) otherwise.
+
+The command is sent only when the wanted mode differs from the one last sent to that phone (KV
+`ot:mode:<user>:<device>`), or when a location post's `m` shows the phone is in the other mode. Otherwise
+the answer is `[]`. Leaving the Home region makes the phone post at once, so a walk started on the frame
+before leaving switches it to move mode within ~120 m. A walk started after leaving waits for the next
+significant-change post. Once the walk is stopped, the next post (at most 10 s later) switches it back.
+Walk writes through the Worker clear its cached walk list (`ot:walks`, otherwise 2 minutes), so changes
+apply right away.
+
+**Privacy.** A fix is stored only if its person is on a walk at the fix's time (from 1 minute before the
+start to 1 minute after the end; queued fixes the phone sends late count by their own time). Stored under
+`ot:pts:<walk id>:<walker>` (at most 2000 fixes, accuracy ≤ 100 m), they expire after 3 days. All other
+fixes and messages (transitions, waypoints, status) are dropped, so there is no all-day location history.
+
+**Into the route.** `owntracksPoints(env, walkId)` returns `{walker: [[lat, lon, acc, unix s], ...]}`.
+`mergePaths(haPaths, otPaths)` combines them with Home Assistant's points per walker. With 5 or more
+OwnTracks fixes it keeps those plus the HA points outside their time span; with fewer it uses the union.
+Either way the result is sorted by time, one fix per second. `withOwntracks(env, walkId, body)` applies
+this to a `PUT /walks/:id/route` body. The Worker keeps HA's own route body (`ot:ha:<walk id>`, 3 days).
+When fixes arrive for a walk that has already ended, it waits 20 s for the rest of the queue, then saves
+the route again: HA's points (or the stored route's, if HA's body wasn't kept) merged with the OwnTracks
+fixes, via `putRoute`.

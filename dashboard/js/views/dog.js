@@ -158,10 +158,12 @@
     var s = 256 * Math.pow(2, z), sin = Math.sin(p[0] * Math.PI / 180);
     return [(p[1] + 180) / 360 * s, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * s];
   }
+  // The route matched to the footpaths when the Worker could (snapped), else the phones' raw fixes.
+  function routeLine(r) { return r.snapped && r.snapped.length > 1 ? r.snapped : r.path; }
   function mapHTML(r, w, h) {
-    var z, xy, x0, x1, y0, y1;
+    var z, xy, x0, x1, y0, y1, line = routeLine(r);
     for (z = 17; z > 10; z--) {
-      xy = r.path.map(function (p) { return merc(p, z); });
+      xy = line.map(function (p) { return merc(p, z); });
       x0 = Math.min.apply(null, xy.map(function (p) { return p[0]; })); x1 = Math.max.apply(null, xy.map(function (p) { return p[0]; }));
       y0 = Math.min.apply(null, xy.map(function (p) { return p[1]; })); y1 = Math.max.apply(null, xy.map(function (p) { return p[1]; }));
       if (x1 - x0 <= w * 0.8 && y1 - y0 <= h * 0.8) break;
@@ -196,7 +198,7 @@
   function placeMap() {
     var slot = V.el.querySelector('[data-map]'), r = App.dog.lastRoute();
     if (!slot || !r) return;
-    var w = slot.clientWidth, h = slot.clientHeight, key = r.walkId + ':' + r.path.length + ':' + w + 'x' + h + ':' + App.theme;
+    var w = slot.clientWidth, h = slot.clientHeight, key = r.walkId + ':' + routeLine(r).length + ':' + (r.snapped ? 's' : 'r') + ':' + w + 'x' + h + ':' + App.theme;
     if (!w || !h) return;
     if (!V.map || V.mapKey !== key) {
       V.map = document.createElement('div');

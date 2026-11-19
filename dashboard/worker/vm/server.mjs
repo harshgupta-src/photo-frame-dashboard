@@ -3,7 +3,7 @@
 // served from dist/ like the Workers assets binding, and the secrets come from an env file.
 // The Cloudflare Worker (vm/proxy.js) forwards to it. See vm/README.md.
 import { Miniflare, Log, LogLevel } from 'miniflare';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, copyFileSync, renameSync } from 'node:fs';
 import { parseEnv } from 'node:util';
 
 const APP = process.env.FRAME_DATA_APP || '/opt/frame-data/current';
@@ -15,6 +15,18 @@ const PORT = +(process.env.FRAME_DATA_PORT || 8791);
 // the same way Cloudflare keeps Worker secrets that a deploy doesn't mention.
 const envFile = (f) => (existsSync(f) ? parseEnv(readFileSync(f, 'utf8')) : {});
 const bindings = { ...envFile(SECRETS), ...envFile(APP + '/secrets.env') };
+
+// The walk graph for snapping routes (src/snap.js; built on a Mac by scripts/walk-graph.mjs, not in git).
+// A deploy from the Mac brings it; it's kept in the state dir so CI deploys (which don't have it) keep it.
+// Without it routes just aren't snapped.
+const GRAPH = STATE + '/walk-graph.bin';
+try {
+  if (existsSync(APP + '/walk-graph.bin') && !readFileSync(APP + '/walk-graph.bin').equals(existsSync(GRAPH) ? readFileSync(GRAPH) : Buffer.alloc(0))) {
+    copyFileSync(APP + '/walk-graph.bin', GRAPH + '.new');
+    renameSync(GRAPH + '.new', GRAPH);
+  }
+} catch (e) { console.error('walk graph: ' + e.message); }
+const dataBlobBindings = existsSync(GRAPH) ? { WALK_GRAPH: GRAPH } : {};
 
 const mf = new Miniflare({
   host: '127.0.0.1',
@@ -33,10 +45,11 @@ const mf = new Miniflare({
     routerConfig: { has_user_worker: true, invoke_user_worker_ahead_of_assets: true },
   },
   bindings,
+  dataBlobBindings,
 });
 
 const url = await mf.ready;
-console.log('frame-data listening on ' + url.href);
+console.log('frame-data listening on ' + url.href + (dataBlobBindings.WALK_GRAPH ? ' (walk graph)' : ''));
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, async () => {

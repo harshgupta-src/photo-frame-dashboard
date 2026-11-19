@@ -10,6 +10,8 @@
 //   POST   /walks/resync    retry calendar writes that gave up
 //   GET    /walks/active    just the walk in progress (Home Assistant polls it)
 //   PUT    /walks/:id/route {points: [{who, lat, lon, acc, t}]}  the route from the walkers' phones
+//   POST   /walks/:id/route {points?}  add late points to the stored route and snap it again
+//   POST   /walks/routes/snap?days=14&dry=1  snap recent routes again (after a walk graph rebuild)
 //   GET    /walks/plan?date=YYYY-MM-DD   the day's walk plan (default today) with each walk's status
 //   PUT    /walks/plan/:date {walks: [{start, end?|durationMin?, walkers, expect?, note?, id?}], lateUntil?}  replace it
 //   DELETE /walks/plan/:date             drop it (and its calendar events)
@@ -17,6 +19,7 @@
 // Worker secret if set, else derived from PUSH_TOKEN (HMAC-SHA256), so it needs no setup;
 // scripts/walk-keys.mjs prints it. Agents read and log walks in Lifelog directly.
 import { WalkStore } from './walkstore.js';
+import { normalizeRoute } from './walks.js';
 
 const enc = new TextEncoder();
 const derived = new Map();
@@ -68,12 +71,19 @@ export async function walkRoute(req, url, env, ctx, access) {
     return new Response(r.body, { headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store' } });
   }
   if (p === '/walks/active' && m === 'GET') return need('read') || s.run('active');
+  if (p === '/walks/routes/snap' && m === 'POST') {
+    return need('write') || s.run('resnapRoutes', { days: clampInt(url.searchParams.get('days'), 14, 1, 365), dry: url.searchParams.get('dry') === '1' });
+  }
   const route = /^\/walks\/([A-Za-z0-9_-]{6,64})\/route$/.exec(p);
-  if (route && m === 'PUT') {
+  if (route && (m === 'PUT' || m === 'POST')) {
     const denied = need('write');
     if (denied) return denied;
     const b = await body(req);
-    return b ? s.run('putRoute', route[1], b) : { status: 400, body: { error: 'body must be JSON' } };
+    if (!b) return { status: 400, body: { error: 'body must be JSON' } };
+    if (m === 'PUT') return s.run('putRoute', route[1], b);
+    let extra = null;
+    if (b.points) { try { extra = normalizeRoute(b).paths; } catch (e) { return { status: 400, body: { error: e.message } }; } }
+    return s.run('resnapRoute', route[1], extra);
   }
   if (p === '/walks/plan' && m === 'GET') return need('read') || s.run('getPlan', url.searchParams.get('date'));
   const plan = /^\/walks\/plan\/([0-9-]{10})$/.exec(p);

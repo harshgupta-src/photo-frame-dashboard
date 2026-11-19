@@ -46,6 +46,10 @@ Tailscale IP, `100.115.4.49`.
 - To change a base secret, edit that file with sudo and run `sudo systemctl restart frame-data`.
 - Values can't contain `'` or newlines.
 
+**Walk graph:** `server.mjs` binds `/var/lib/frame-data/walk-graph.bin` as `WALK_GRAPH` for snapping walk
+routes. A deploy from the Mac that has `worker/data/walk-graph.bin` replaces it; CI deploys keep the
+last one. See [WALKS.md](../../WALKS.md#snapped-routes).
+
 ## Operating it
 
 - Logs: `journalctl -u frame-data -f`.

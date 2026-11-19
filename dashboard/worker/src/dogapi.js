@@ -4,7 +4,7 @@
 //   <dog>_meal        one per meal fed (Home Assistant's NFC tap, ../../WALKS.md "Lifelog"); data
 //                     {meal, cups, planned_at, delta_min, ate, purina_pct, fortiflora, calendar}
 //   <dog>_weight      a weigh-in; data {kg} or {lb}, or a range {kg_low, kg_high}; optional {estimate, where, note}
-//   <dog>_walk_route  a walk's route; only {walk_id, distance_m} is sent
+//   <dog>_walk_route  a walk's route; only {walk_id, distance (snapped_m, else distance_m)} is sent
 //   <dog>_pee, <dog>_poop  potty breaks: the walk's own (id <walk id>-pee) and any logged on their own
 // Plus `log`: the events in the Life Log calendar (LOG_CALENDAR, default WALK_CALENDAR), where what
 // actually happened ends up (walks, pee/poop, and planned meals moved there once they're done), so
@@ -93,7 +93,7 @@ export async function dogData(env, days, now = Date.now()) {
     potty: pees.map(potty('pee')).concat(poops.map(potty('poop'))),
     meals: meals.map(mealJSON),
     weights: weights.map(weightJSON).filter(Boolean),
-    routes: routes.map((e) => ({ walkId: (e.data || {}).walk_id || null, m: num((e.data || {}).distance_m) }))
+    routes: routes.map((e) => ({ walkId: (e.data || {}).walk_id || null, m: routeM(e.data || {}) }))
       .filter((r) => r.walkId && r.m != null),
     lastRoute: lastRoute(routes),
     food: await foodAdvice(env),
@@ -112,21 +112,26 @@ async function foodFactsFor(env, plan, history, now = Date.now()) {
 }
 
 // The newest walk's path for the route map: the walker with the most good fixes (≤ 50 m), at most
-// 300 points as [lat, lon].
+// 300 points as [lat, lon], and the same walk matched to the footpaths (snapped, ≤ 600 points; null
+// when it wasn't). m is the snapped distance when there is one.
 export function lastRoute(routes) {
   const e = routes.filter((r) => r.data && r.data.paths && r.data.walk_id)
     .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))[0];
   if (!e) return null;
-  let best = [];
-  for (const list of Object.values(e.data.paths)) {
+  let best = [], who = null;
+  for (const [k, list] of Object.entries(e.data.paths)) {
     const good = (list || []).filter((x) => Array.isArray(x) && (x[2] == null || x[2] <= 50));
-    if (good.length > best.length) best = good;
+    if (good.length > best.length) { best = good; who = k; }
   }
   if (best.length < 2) return null;
-  const step = Math.ceil(best.length / 300);
-  const path = best.filter((x, i) => i % step === 0 || i === best.length - 1).map((x) => [x[0], x[1]]);
-  return { walkId: e.data.walk_id, start: e.started_at, end: e.ended_at, m: num(e.data.distance_m), path };
+  const thin = (l, max) => { const step = Math.ceil(l.length / max); return l.filter((x, i) => i % step === 0 || i === l.length - 1).map((x) => [x[0], x[1]]); };
+  const sn = e.data.snapped || {}, line = Array.isArray(sn[who]) && sn[who].length > 1 ? sn[who] : null;
+  return {
+    walkId: e.data.walk_id, start: e.started_at, end: e.ended_at, m: routeM(e.data), path: thin(best, 300),
+    snapped: line ? thin(line, 600) : null,
+  };
 }
+const routeM = (d) => (num(d.snapped_m) != null ? num(d.snapped_m) : num(d.distance_m));
 
 export async function dogRoute(req, url, env, access) {
   if (url.pathname.startsWith('/dog/food')) {

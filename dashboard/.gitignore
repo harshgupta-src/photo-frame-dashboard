@@ -4,3 +4,5 @@ dist
 kiosk/build
 .env.local
 worker/.deploy-secrets.json
+# The walk graph (worker/scripts/walk-graph.mjs) and its OSM extracts: they say where home is.
+worker/data/
