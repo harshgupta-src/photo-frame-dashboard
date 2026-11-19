@@ -277,11 +277,20 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
   // The calendar says when she's at a sitter; HA's input_select.maya_away_override lets anyone
   // correct it (home early, or an unplanned stay). A change made here shows straight away and holds
   // until HA reports it back (or a minute passes, if HA never does).
-  var OVR = 'input_select.maya_away_override', pendingOv = null, lastAway = null;
+  // HA's binary_sensor.maya_away carries the override (the kiosk streams binary_sensor live, not
+  // input_select). A "home" override cancels the stay only if it turned the sensor off.
+  var OVR = 'input_select.maya_away_override', SENSOR = 'binary_sensor.maya_away', pendingOv = null, lastAway = null;
+  function haOverride() {
+    var S = (App.ha && App.ha.states) || {}, b = S[SENSOR], st = S[OVR];
+    if (b && b.attributes && b.attributes.override) {
+      var o = b.attributes.override;
+      return { state: o, changed: o === 'home' ? (b.state === 'off' && b.attributes.event ? Date.parse(b.last_changed) || 0 : 0) : Date.parse(b.last_changed) || 0 };
+    }
+    return st ? { state: st.state, changed: Date.parse(st.last_changed) || 0 } : null;
+  }
   function override() {
-    var st = App.ha && App.ha.states && App.ha.states[OVR];
-    var ha = st ? { state: st.state, changed: Date.parse(st.last_changed) || 0 } : null;
-    if (pendingOv && ((ha && ha.state === pendingOv.state) || Date.now() - pendingOv.changed > 60e3)) pendingOv = null;
+    var ha = haOverride();
+    if (pendingOv && ((ha && ha.state === pendingOv.state) || Date.now() - pendingOv.changed > 5 * 60e3)) pendingOv = null;
     return pendingOv || ha;
   }
   G.away = function () { return awayState(window.DATA.events || [], override(), +App.now(), dogName); };
@@ -305,7 +314,7 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
     var a = G.away(), k = a.away + ':' + a.source + ':' + a.cancelled + ':' + (a.until ? +a.until : '');
     if (k !== lastAway || force) { lastAway = k; App.emit('away', a); }
   }
-  App.on('ha', function (ids) { if (!ids || !ids.length || ids.indexOf(OVR) > -1) checkAway(); });
+  App.on('ha', function (ids) { if (!ids || !ids.length || ids.indexOf(SENSOR) > -1 || ids.indexOf(OVR) > -1) checkAway(); });
   App.on('data', function () { checkAway(); });
   App.on('minute', function () { checkAway(); });
 

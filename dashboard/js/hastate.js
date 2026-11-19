@@ -4,10 +4,11 @@
 
 // The domains the dashboard reads (views/home.js: light buttons and the thermostat's inside
 // temperature; live.js: the grocery / pinned to-do lists; views/control.js, the Home tab: fan,
-// TV/speakers and who's home; dog.js: the dog's away override). The kiosk streams just these
+// TV/speakers and who's home; dog.js: binary_sensor.maya_away, the dog's away state; the
+// kiosk doesn't stream input_select, so watching it would only drop it from the poll's copy). The kiosk streams just these
 // (HomeHQ.haWatch; 1.5+ drops media players' playback-position ticks); everything else comes from
 // the /api/states poll.
-export var WATCH_DOMAINS = ['light', 'climate', 'todo', 'fan', 'media_player', 'person', 'input_select'];
+export var WATCH_DOMAINS = ['light', 'climate', 'todo', 'fan', 'media_player', 'person', 'binary_sensor'];
 
 export function domainOf(id) {
   var s = String(id), i = s.indexOf('.');

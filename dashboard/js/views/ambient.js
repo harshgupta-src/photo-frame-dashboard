@@ -43,4 +43,5 @@
   App.on('release', function () { if (App.mode !== 'ambient' && amb.show) amb.show.clear(); });
   App.on('minute', paint);
   App.on('walk', paint);
+  App.on('away', paint);
 })();
