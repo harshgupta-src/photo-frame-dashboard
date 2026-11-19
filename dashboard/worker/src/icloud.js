@@ -86,11 +86,19 @@ const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').rep
 
 // Objects whose VEVENT UID contains `uid`: [{href, ics}]. Events made on a phone or Mac are not
 // necessarily stored at <uid>.ics, so the href comes from the server. Callers check the UID exactly.
+// iCloud answers a UID prop-filter with 412, so then every event's data is fetched and matched here.
 export async function eventsByUid(env, url, uid) {
-  const rows = await dav(env, 'REPORT', url,
-    `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:prop-filter name="UID"><c:text-match collation="i;octet">${xmlEsc(uid)}</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`, 1);
+  const query = (filter) => dav(env, 'REPORT', url,
+    `<c:calendar-query ${NS}><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"${filter}</c:comp-filter></c:filter></c:calendar-query>`, 1);
+  let rows;
+  try {
+    rows = await query(`><c:prop-filter name="UID"><c:text-match collation="i;octet">${xmlEsc(uid)}</c:text-match></c:prop-filter></c:comp-filter>`);
+  } catch (e) {
+    if (!(e instanceof ICloudError) || !/ 412 /.test(e.message)) throw e;
+    rows = await query('/>');
+  }
   return rows.map((r) => ({ href: new URL(r.href, url).href, ics: String(text(r.prop['calendar-data']) ?? '') }))
-    .filter((r) => r.ics.includes('BEGIN:VEVENT'));
+    .filter((r) => r.ics.includes('BEGIN:VEVENT') && r.ics.replace(/\r?\n[ \t]/g, '').includes(uid));
 }
 
 const basic = (env) => 'Basic ' + btoa(env.ICLOUD_APPLE_ID + ':' + env.ICLOUD_APP_PASSWORD);

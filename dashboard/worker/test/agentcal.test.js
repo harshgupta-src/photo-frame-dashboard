@@ -42,7 +42,8 @@ test('canWrite: true, false or a person list', () => {
 
 // Fake iCloud: principal → home → three calendars; records PUT/DELETE. `objects` (href → ics) are
 // served by REPORT (a UID search or a time range) and removed by DELETE.
-function fakeICloud(objects) {
+// `noUidFilter` answers UID searches with 412, as iCloud does.
+function fakeICloud(objects, { noUidFilter = false } = {}) {
   const calls = [], tracked = !!objects;
   objects = objects || new Map();
   const ms = (inner) => new Response(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">${inner}</d:multistatus>`, { status: 207 });
@@ -56,6 +57,7 @@ function fakeICloud(objects) {
       return new Response(null, { status: u.includes('/h/') ? 204 : 404 });
     }
     if (m === 'REPORT') {
+      if (noUidFilter && init.body.includes('name="UID"')) return new Response('', { status: 412 });
       const want = /<c:text-match[^>]*>([^<]*)</.exec(init.body);
       const rows = [...objects].filter(([h, ics]) => h.startsWith(u) && (!want || ics.includes('UID:' + want[1])));
       return ms(rows.map(([h, ics]) => `<d:response><d:href>${new URL(h).pathname}</d:href><d:propstat><d:prop><c:calendar-data>${ics.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join(''));
@@ -130,6 +132,18 @@ test('route: delete removes any event by exact uid from where the server keeps i
   assert.equal((await agentCalRoute(...req('DELETE', '/agent/events/JORDAN-1?calendar=jordan'), env, ctx, true)).status, 403);
   assert.equal((await agentCalRoute(...req('DELETE', '/agent/events/JORDAN-1'), env, ctx, true)).status, 404);
   assert.ok(objects.has(C + 'a/jordan.ics'));
+});
+
+test('route: delete finds a phone event when iCloud refuses UID searches (412)', async () => {
+  const objects = new Map([
+    [C + 'h/0F3A-phone-file.ics', phoneEvent('Test-Phone-UID-1234@example', 'Dentist', '20261112T090000', '20261112T100000')],
+    [C + 'h/other.ics', phoneEvent('Test-Phone-UID-1234@example-2', 'Not this one', '20261112T110000', '20261112T120000')],
+  ]);
+  const calls = fakeICloud(objects, { noUidFilter: true });
+  const r = await agentCalRoute(...req('DELETE', '/agent/events/' + encodeURIComponent('Test-Phone-UID-1234@example') + '?calendar=alex'), env, ctx, true);
+  assert.equal(r.status, 200);
+  assert.deepEqual(calls, ['DELETE ' + C + 'h/0F3A-phone-file.ics']);
+  assert.ok(objects.has(C + 'h/other.ics'));
 });
 
 test('route: /agent/events lists local times with offsets, in time order', async () => {
