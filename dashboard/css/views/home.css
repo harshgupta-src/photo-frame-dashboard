@@ -55,6 +55,8 @@
 }
 .h-walk--2 .h-walk-go { background: rgb(0 0 0 / .1); }
 .h-walk-last { font-size: 16px; font-weight: 700; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-walk-last.is-warn, .h-walk-last.is-alert { opacity: 1; align-self: flex-start; max-width: 100%; padding: 2px 10px; border-radius: 999px; background: #fff; color: #8a5a00; }
+.h-walk-last.is-alert { color: var(--alert); }
 .h-walk-plan { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .h-walk-when { font-family: var(--serif); font-size: 20px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-walk-who { flex: none; display: flex; gap: 4px; }

@@ -7,28 +7,33 @@
   var MODES = [['day', 'Today'], ['3day', '3 Day'], ['week', 'Week'], ['month', 'Month']];
 
   function y(d) { return ((d.getHours() + d.getMinutes() / 60) - START) * PX; }
-  function clampTop(e, day) {
+  // Narrow portrait 3-day columns give short events room for a two-line title.
+  function minPx(narrow) { return narrow && App.portrait ? 34 : 24; }
+  function clampTop(e, day, narrow) {
     // setHours, not midnight + N hours: DST days are 23 or 25 hours long.
     var s = App.dayStart(day), dayTop = new Date(s), endOfDay = new Date(s);
     dayTop.setHours(START); endOfDay.setHours(END);
     var a = e.start < s ? dayTop : e.start;
     var b = e.end > endOfDay ? endOfDay : e.end;
-    return { top: Math.max(0, y(a)), h: Math.max(24, y(b) - Math.max(0, y(a)) - 3) };
+    return { top: Math.max(0, y(a)), h: Math.max(minPx(narrow), y(b) - Math.max(0, y(a)) - 3) };
   }
 
   // Overlap layout → [{e, col, cols}] (cols capped at 2, extra returned as overflow groups)
-  function layout(evs) {
+  // Blocks have a minimum height, so a 10-minute event reaches further down than its end time.
+  function layout(evs, narrow) {
+    var minMs = (minPx(narrow) / PX) * 3600000;
+    function vEnd(e) { return Math.max(+e.end, +e.start + minMs); }
     var out = [], clusters = [], cur = null, curEnd = 0;
     evs.forEach(function (e) {
       if (!cur || +e.start >= curEnd) { cur = []; clusters.push(cur); curEnd = 0; }
-      cur.push(e); curEnd = Math.max(curEnd, +e.end);
+      cur.push(e); curEnd = Math.max(curEnd, vEnd(e));
     });
     clusters.forEach(function (c) {
       var cols = [], placed = [];
       c.forEach(function (e) {
         var i = cols.findIndex(function (end) { return end <= +e.start; });
         if (i < 0) { i = cols.length; cols.push(0); }
-        cols[i] = +e.end;
+        cols[i] = vEnd(e);
         placed.push({ e: e, col: i });
       });
       var n = cols.length;
@@ -47,9 +52,11 @@
     var now = App.now();
     var p = opts.color || App.evColor(e);
     var mins = (e.end - e.start) / 60000;
-    var cls = 'ev' + (e.end <= now ? ' is-past' : '') + (e.start <= now && e.end > now ? ' is-now' : '') + (mins < 45 ? ' is-short' : '') + (App.isFamily(e) ? ' is-family' : '') + (opts.half ? ' is-half' : '');
+    var cls = 'ev' + (e.end <= now ? ' is-past' : '') + (e.start <= now && e.end > now ? ' is-now' : '') + (mins < 45 ? ' is-short' : '') + (mins < 45 && (mins >= 30 || (opts.narrow && App.portrait)) ? ' is-2l' : '') + (App.isFamily(e) ? ' is-family' : '') + (opts.half ? ' is-half' : '');
     var others = opts.lane ? e.people.filter(function (id) { return id !== opts.lane; }) : (e.people.length > 1 && !App.isFamily(e) ? e.people : []);
-    var lines = mins < 45 ? 1 : Math.max(1, Math.min(4, Math.floor((mins * PX / 60 - 14 - 20) / 20)));
+    // Narrow portrait 3-day columns use a 16px title (see portrait.css), so lines are ~18px apart.
+    var pitch = opts.narrow && App.portrait ? 18 : 20;
+    var lines = mins < 45 ? 1 : Math.max(1, Math.min(5, Math.floor((mins * PX / 60 - 14 - 20) / pitch)));
     var travel = e.travel ? '<span class="ev-travel" style="height:' + (e.travel * PX / 60) + 'px"></span>' : '';
     return '<button class="' + cls + '" data-ev="' + e.id + '" style="' + App.pstyle(p) + ';' + style + '">' + travel +
       '<span class="ev-title" style="-webkit-line-clamp:' + lines + '">' + App.esc(e.title) + '</span>' +
@@ -59,15 +66,15 @@
       '</button>';
   }
 
-  function placeBlocks(list, colorFn, laneId) {
-    return layout(list).map(function (it) {
+  function placeBlocks(list, colorFn, laneId, narrow) {
+    return layout(list, narrow).map(function (it) {
       var w = 100 / it.cols, left = it.col * w;
       if (it.more) {
         var t = y(it.start), h = Math.max(30, y(it.end) - t - 3);
         return '<button class="ev ev--more" data-more="' + it.more.map(function (e) { return e.id; }).join(',') + '" style="top:' + t + 'px;height:' + h + 'px;left:calc(' + left + '% + 2px);width:calc(' + w + '% - 4px)">+' + it.more.length + '<small>more</small></button>';
       }
-      var b = clampTop(it.e, V.date);
-      return evBlock(it.e, 'top:' + b.top + 'px;height:' + b.h + 'px;left:calc(' + left + '% + 2px);width:calc(' + w + '% - 4px)', { lane: laneId, color: colorFn ? colorFn(it.e) : null, half: it.cols > 1 });
+      var b = clampTop(it.e, V.date, narrow);
+      return evBlock(it.e, 'top:' + b.top + 'px;height:' + b.h + 'px;left:calc(' + left + '% + 2px);width:calc(' + w + '% - 4px)', { lane: laneId, color: colorFn ? colorFn(it.e) : null, half: it.cols > 1, narrow: narrow });
     }).join('');
   }
 
@@ -137,7 +144,7 @@
       '<div class="hours">' + hoursCol() + '</div>' +
       '<div class="lanes lanes--3">' + days.map(function (d) {
         var save = V.date; V.date = d;
-        var html = '<div class="lane' + (App.sameDay(d, now) ? ' is-today' : '') + '">' + placeBlocks(App.timedOn(d)) + '</div>';
+        var html = '<div class="lane' + (App.sameDay(d, now) ? ' is-today' : '') + '">' + placeBlocks(App.timedOn(d), null, null, true) + '</div>';
         V.date = save;
         return html;
       }).join('') + '</div>' +

@@ -55,6 +55,16 @@ import { createHold } from '../todo.js';
   }
   function potty(w) { return (w.pee ? '💧' : '') + (w.poop ? '💩' : '') || 'no potty'; }
   function walkers(w) { return (w.walkers || []).map(function (p) { return p.name; }).join(' & '); }
+  // Maya's real limit is how long she can hold her pee, so the tile counts from her last pee
+  // (walks and Life Log entries), not from when the last walk ended.
+  function lastPee() {
+    return App.dog.potty(Date.now() - 3 * 864e5).filter(function (p) { return p.kind === 'pee'; })[0] || null;
+  }
+  function peeState(p) {
+    var gap = App.dog.gap('pee'), since = Date.now() - p.at, h = new Date().getHours();
+    if (!gap || h < 7 || h >= 22) return '';
+    return since > gap * 1.5 ? ' is-alert' : since > gap ? ' is-warn' : '';
+  }
   function sync() { return App.walk.pending ? '<i class="h-walk-sync" title="Not synced yet"></i>' : ''; }
 
   function walk() {
@@ -67,13 +77,15 @@ import { createHold } from '../todo.js';
         (stale ? '<div class="h-walk-stale">Still out? Tap to fix</div>' : '') +
         '<div class="h-walk-back">' + App.icon('check', 22) + 'I’m back</div>';
     }
-    var w = App.weatherNow(), m = walkPlan(w), last = W.recent[0];
+    var w = App.weatherNow(), m = walkPlan(w), last = W.recent[0], pee = lastPee();
     return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '’s walk' + sync() + '</div>' +
       '<span class="h-walk-go">' + App.icon('play', 16) + 'Start</span></div>' +
       '<div class="h-walk-title">' + m.title + '</div>' +
       (W.next() ? planRow(W.next()) : '<div class="h-walk-sub">' + m.sub + '</div>') +
-      (last
-        ? '<div class="h-walk-last" data-walk="history">Walked ' + ago(last.endedAt) + ' · ' + potty(last) + '</div>'
+      (pee
+        ? '<div class="h-walk-last' + peeState(pee) + '" data-walk="history">💧 Peed ' + ago(pee.at) + '</div>'
+        : last
+        ? '<div class="h-walk-last" data-walk="history">Walked ' + ago(last.endedAt) + ' · no pee logged</div>'
         : '<div class="h-walk-now">' + App.icon(w.cond, 20) + '<b class="num">' + w.temp + '°</b><span>' + w.label + '</span></div>');
   }
   // The next planned walk (HA agent) and who walks it: tap an avatar to add or remove someone.
@@ -202,7 +214,9 @@ import { createHold } from '../todo.js';
     var list = App.walk.recent, dog = App.esc(window.CONFIG.dog), today = new Date().toDateString();
     var tw = list.filter(function (w) { return new Date(w.startedAt).toDateString() === today; });
     var mins = tw.reduce(function (s, w) { return s + (w.endedAt - w.startedAt) / 60000; }, 0);
-    var lastPee = list.filter(function (w) { return w.pee; })[0], lastPoop = list.filter(function (w) { return w.poop; })[0];
+    var since = Date.now() - 3 * 864e5;
+    var lastPee = App.dog.potty(since).filter(function (p) { return p.kind === 'pee'; })[0];
+    var lastPoop = App.dog.potty(since).filter(function (p) { return p.kind === 'poop'; })[0];
     var day = null, rows = list.map(function (w) {
       var d = dayName(w.startedAt), head = d !== day ? '<li class="wl-day">' + d + '</li>' : '';
       day = d;
@@ -213,8 +227,8 @@ import { createHold } from '../todo.js';
     }).join('');
     App.sheet('<div class="sheet-pad"><div class="label">' + dog + '’s walks · last 14 days</div>' +
       '<h2 class="sheet-h serif">Today: ' + tw.length + (tw.length === 1 ? ' walk' : ' walks') + (tw.length ? ', ' + App.fmt.mins(mins) : '') + '</h2>' +
-      '<p class="sheet-p">' + (lastPee ? 'Last pee ' + ago(lastPee.endedAt) : 'No pee logged') + ' · ' +
-      (lastPoop ? 'last poop ' + ago(lastPoop.endedAt) : 'no poop logged') + '. Tap a walk to fix it.</p>' +
+      '<p class="sheet-p">' + (lastPee ? 'Last pee ' + ago(lastPee.at) : 'No pee logged') + ' · ' +
+      (lastPoop ? 'last poop ' + ago(lastPoop.at) : 'no poop logged') + '. Tap a walk to fix it.</p>' +
       (rows ? '<ul class="walk-list">' + rows + '</ul>' : '<p class="sheet-p">No walks yet.</p>') + '</div>', {
       onMount: function (el) {
         el.addEventListener('click', function (e) {
