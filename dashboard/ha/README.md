@@ -120,23 +120,29 @@ reminders, so the push that follows already reflects the frame's edits:
    It looks like `{"ack": 17, "count": 2, "ops": [{"seq": 16, "op": "add", "list": "Grocery list",
    "title": "Oat milk", "old_title": "", "notes": "", "assignee": ""}, …]}`, oldest first.
 2. **Get Dictionary Value** `ack` from `Ops` → set variable `Ack`.
-3. **Get Dictionary Value** `ops` from `Ops` → **Repeat with Each** item. Inside, read `op`, `list`,
-   `title`, `old_title` and `notes` from **Repeat Item**, then **If** `op` is:
-   - `add` → **Add New Reminder** `title` to the list named `list` (notes = `apple_notes` if any).
-   - `rename` → **Find Reminders** where List is `list`, Title is `old_title`, Is Not Completed,
-     limit 1 → **Set** Title of the reminder to `title`.
-   - `edit` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Set** Notes to
-     `apple_notes` (`notes` plus an `Assigned: Name` line when the item is assigned; see "Assignees").
-   - `complete` → **Find Reminders** (List `list`, Title `title`, Is Not Completed, limit 1) →
-     **Set** Is Completed to on.
-   - `reopen` → **Find Reminders** (List `list`, Title `title`, Is Completed, limit 1) → **Set** Is
-     Completed to off. If none is found (it was cleared), **Add New Reminder** `title` instead.
-   - `delete` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Remove Reminders**
-     (turn off "Confirm Before Deleting").
+3. **Get Dictionary Value** `ops` from `Ops` → **Repeat with Each** item. Each op also carries
+   ready-made flags, because Shortcuts' **If** on text is unreliable when pasted: `in_grocery` /
+   `in_loml` and one of `is_add`, `is_complete`, `is_reopen`, `is_rename`, `is_edit`, `is_delete`
+   (each `"yes"` or absent). Read them, plus `title`, `old_title` and `apple_notes`, into variables,
+   then per list (**If** `InGrocery` / `InLOML` *has any value*) and per op flag:
+   - `add` → **Text** with the list name → **Add New Reminder** `title` to that Text (notes =
+     `apple_notes`). Pass the list through a Text action: a fixed list in **Add New Reminder** only
+     applies on the first loop pass, and later adds land in the default "Reminders" list.
+   - `rename` → **Find Reminders** where List is the list, Title is `old_title`, limit 1 → **Set**
+     Title to `title`.
+   - `edit` → **Find Reminders** (List, Title `title`, limit 1) → **Set** Notes to `apple_notes`
+     (`notes` plus an `Assigned: Name` line when the item is assigned; see "Assignees").
+   - `complete` → **Find Reminders** (List, Title, Is Not Completed, limit 1) → **Set** Is Completed on.
+   - `reopen` → **Find Reminders** (List, Title, Is Completed, limit 1) → **Set** Is Completed off.
+   - `delete` → **Find Reminders** (List, Title, Is Not Completed, limit 1) → **Set** Is Completed on.
+     (Marked done rather than removed: **Remove Reminders** asks for confirmation and stalls an
+     unattended run.)
 
-   An op whose reminder isn't found (already changed on the phone) is simply skipped.
+   Put a throwaway **Text** action before each **Find Reminders**, or it takes the previous action's
+   output as its input. An op whose reminder isn't found (already changed on the phone) is skipped.
+   The first run on each device asks to allow the Worker URL and Reminders: choose **Always Allow**.
 4. Gather and push the lists as before, but make the body `{"lists": {…the lists as now…},
-   "ack": Ack}` (a Dictionary with keys `lists` and `ack`, Number). The Worker forwards `ack` to HA,
+   "ack": Ack}` (a Dictionary with keys `lists` and `ack`; Text is fine, the Worker parses it). The Worker forwards `ack` to HA,
    which forgets those ops.
 
 Run it as an automation (e.g. hourly and when leaving/arriving home) as now. If the Shortcut stops
