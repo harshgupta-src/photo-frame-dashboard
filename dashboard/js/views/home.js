@@ -307,14 +307,19 @@ import { createHold } from '../todo.js';
     if (!t || !t.clientWidth) return;
     var sizes = App.phone ? [34, 31, 28, 26, 24, 22] : [72, 64, 56, 50, 46, 42], lineH;
     function lines() { return Math.round(t.scrollHeight / lineH); }
+    // The title shares a fixed-height card (portrait especially), and emoji make lines taller than
+    // the font size, so also check the clamped text really fits the box it was given.
+    // Emoji overhang the line box a little, so allow a quarter line before calling it clipped.
+    function fits() { return t.scrollHeight <= t.clientHeight + lineH / 4; }
+    function size(px) { t.style.fontSize = px + 'px'; lineH = px * 0.98; }
     t.style.maxWidth = '';
     for (var i = 0; i < sizes.length; i++) {
-      t.style.fontSize = sizes[i] + 'px';
-      lineH = sizes[i] * 0.98;
+      size(sizes[i]);
       var n = lines();
-      if (n <= 1) return;
-      if (i >= 3 && n <= 2) break;
+      if (n <= 1 && fits()) return;
+      if (i >= 3 && n <= 2 && fits()) break;
     }
+    for (var px = sizes[sizes.length - 1] - 3; !fits() && px >= 24; px -= 3) size(px);
     // Two lines: narrow the box until just before a third line appears, so the lines come out
     // even instead of leaving one word alone (text-wrap: balance needs Chromium 114).
     if (lines() !== 2) return;
@@ -327,6 +332,21 @@ import { createHold } from '../todo.js';
     t.style.maxWidth = Math.ceil(hi) + 'px';
   }
 
+  // A lane shows up to three events; where the tile is shorter (portrait), drop events until the
+  // rest fit and count them in "+N more" rather than letting the button get clipped.
+  function fitLanes(box) {
+    if (!box || App.phone) return;
+    Array.prototype.forEach.call(box.querySelectorAll('.h-lane'), function (lane) {
+      var evs = lane.querySelectorAll('.h-ev');
+      for (var i = evs.length - 1; i > 0 && lane.scrollHeight > lane.clientHeight + 1; i--) {
+        var more = lane.querySelector('.h-more');
+        if (!more) { more = document.createElement('button'); more.className = 'h-more'; more.dataset.go = 'calendar'; more.dataset.n = '0'; lane.appendChild(more); }
+        var n = (parseInt(more.dataset.n || (more.textContent.match(/\d+/) || [0])[0], 10) || 0) + 1;
+        more.dataset.n = n; more.textContent = '+' + n + ' more';
+        lane.removeChild(evs[i]);
+      }
+    });
+  }
   function lanes() {
     var now = App.now();
     return D.people.map(function (p) {
@@ -398,7 +418,7 @@ import { createHold } from '../todo.js';
   // shopping.js). Ticked items wait under "Done" until the phone drops them. Updated in place while
   // open, except for 1.5 s after a tick or untick (or until a tap outside the list), so rows don't
   // move under the finger.
-  var PS = { el: null, done: false, query: '' };
+  var PS = { el: null, done: false, query: '', added: null };
   PS.hold = createHold(function () { paintPinnedSheet(); }, 1500);
   document.addEventListener('pointerdown', function (e) {
     if (!PS.hold.held()) return;
@@ -432,6 +452,13 @@ import { createHold } from '../todo.js';
     var can = App.todo && App.todo.can('pinned');
     var body = PS.el.querySelector('.pl-body-wrap'), h;
     if (!PS.hold.held() && body._h !== (h = pinnedListHTML())) { body._h = h; body.innerHTML = h; }
+    // Just added: new items go to the bottom, so bring that row into view once it's drawn.
+    if (PS.added) {
+      var rows = body.querySelectorAll('.pl-row:not(.is-done) .pl-body b');
+      for (var i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].textContent.trim().toLowerCase() === PS.added) { rows[i].closest('.pl-row').scrollIntoView({ block: 'nearest' }); PS.added = null; break; }
+      }
+    }
     var s = PS.el.querySelector('.pl-sync');
     s.textContent = pinnedSync();
     PS.el.querySelector('.pl').classList.toggle('is-ro', !can);
@@ -459,6 +486,7 @@ import { createHold } from '../todo.js';
           var title = input.value.trim();
           if (!title || !App.todo.can('pinned')) return;
           input.value = PS.query = '';
+          PS.added = title.toLowerCase();
           var who = App.assigneeOf && App.assigneeOf(el.querySelector('.pl-who'));
           // Back to "None" for the next one: an assignment is a choice each time.
           var none = el.querySelector('.pl-who [data-who=""]');
@@ -536,6 +564,7 @@ import { createHold } from '../todo.js';
     el.querySelector('.h-hero-slot').innerHTML = hero();
     fitHero(el);
     el.querySelector('.h-lanes').innerHTML = lanes();
+    fitLanes(el.querySelector('.h-lanes'));
     var side = el.querySelector('.h-chores');
     if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side._h = null; paintTodos(); }
     else { side.innerHTML = chores(); el.querySelector('.h-shop').innerHTML = shopping(); }

@@ -29,7 +29,7 @@
    weather it's based on) / schedule (hero + lanes) / photo beside the list, with shopping + home under the list.
    .h-side's tiles join the .home grid so they can be placed with the walk tile (a .home child).
    The last row fits the Home tile's two light buttons + inside temperature (192px). */
-[data-orient="portrait"] .home { grid-template-rows: 172px 76px 452px minmax(0, 1fr) 192px; }
+[data-orient="portrait"] .home { grid-template-rows: 172px 112px 452px minmax(0, 1fr) 192px; }
 [data-orient="portrait"] .h-clock { grid-column: 1 / 6; grid-row: 1; }
 [data-orient="portrait"] .h-time { font-size: 128px; }
 [data-orient="portrait"] .h-ampm { font-size: 24px; margin-left: 6px; }
@@ -52,6 +52,17 @@
 [data-orient="portrait"] .h-walk-go { order: 9; margin-left: auto; }
 [data-orient="portrait"] .h-walk-last { order: 8; margin-left: auto; font-size: 16px; }
 [data-orient="portrait"] .h-walk-last + .h-walk-go, [data-orient="portrait"] .h-walk-last ~ .h-walk-go { margin-left: 0; }
+/* Resting strip is two rows so nothing has to squeeze: label · verdict · Start, then next walk · last pee. */
+[data-orient="portrait"] .h-walk:not(.h-walk--out) {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "label title go" "plan plan last";
+  align-items: center; column-gap: 14px; row-gap: 10px; padding: 12px 18px;
+}
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .label { grid-area: label; width: auto; white-space: nowrap; }
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-title { grid-area: title; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-go { grid-area: go; margin: 0; justify-self: end; }
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-plan,
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-sub { grid-area: plan; min-width: 0; justify-content: flex-start; }
+[data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-last { grid-area: last; margin: 0; justify-self: end; }
 [data-orient="portrait"] .h-walk--out .label { width: 120px; }
 [data-orient="portrait"] .h-walk-timer { font-size: 54px; }
 [data-orient="portrait"] .h-walk-stale { max-width: 150px; }
@@ -60,7 +71,9 @@
 
 [data-orient="portrait"] .h-main { grid-column: 1 / 13; grid-row: 3; grid-template-rows: 190px minmax(0, 1fr); }
 [data-orient="portrait"] .h-lane { overflow: hidden; }
-[data-orient="portrait"] .h-ev { min-height: 56px; }
+[data-orient="portrait"] .h-ev { min-height: 46px; flex-direction: row; align-items: baseline; gap: 10px; padding: 10px 12px; }
+[data-orient="portrait"] .h-ev-t { flex: none; min-width: 36px; }
+[data-orient="portrait"] .h-lane .h-more { min-height: 28px; }
 
 [data-orient="portrait"] .h-side { display: contents; }
 /* The photo spans both bottom rows so it's portrait-shaped; the list and shopping + home stack beside it. */
@@ -155,3 +168,9 @@
 [data-orient="portrait"] .dg { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto minmax(0, 1fr) 250px; grid-template-areas: "top top" "now now" "today route" "week weight"; }
 [data-orient="portrait"] .dg-now { grid-template-columns: 1fr 1fr; }
 [data-orient="portrait"] .dg-week .dg-bars { gap: 6px; }
+
+/* Next-up card: the label already names who, so the people dots go and the title gets their room.
+   A leave-by pill still shows. */
+[data-orient="portrait"] .h-hero-foot .dots { display: none; }
+[data-orient="portrait"] .h-hero-foot:empty { display: none; }
+[data-orient="portrait"] .h-hero-title { margin: 6px 0; }
