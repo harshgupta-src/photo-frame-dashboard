@@ -9,8 +9,8 @@ dashboard (`../IPHONE.md`) reach HA over its public URL instead, each signed in 
 
 ```
 iCloud calendars ──CalDAV──▶ HA calendar.*  ──▶ frame (Worker /events as fallback)
-iPhone Shortcut ──POST──▶ HA webhook ──▶ HA todo.* ──▶ frame (Worker /reminders as fallback)
-   (or POST Worker /reminders, which stores it and forwards it)   ▲ ticks from the frame
+iPhone Shortcut ──POST──▶ Worker /reminders ──▶ HA webhook ──▶ HA todo.* ◀──▶ frame (edits via script.frame_todo)
+               ◀──GET /reminders/ops── frame's edits, to make in Reminders
 ```
 
 ## Calendars
@@ -33,35 +33,102 @@ VITE_HA_CALENDARS=calendar.alexs_calendar:alex,calendar.jordans_calendar:jordan,
 
 Apple Reminders lists aren't reachable over CalDAV, so an iPhone Shortcut sends them, as JSON:
 `{"Grocery list": "milk\neggs", "LOML": [{"title": "...", "notes": "...", "assignee": "Name"}]}`
-(or the same wrapped in `{"lists": {...}}`; items are newline text, strings or
-`{title, notes, assignee, done}`).
+(or the same wrapped in `{"lists": {...}}`, optionally with `"ack": N`; items are newline text,
+strings or `{title, notes, assignee, done}`). The frame and the phones edit the same lists in HA
+(add, rename, notes, tick, untick, delete, clear ticked), and the Shortcut copies those edits back
+into Reminders.
+
+```
+iPhone Shortcut ──POST /reminders {lists, ack}──▶ Worker ──webhook──▶ automation frame_reminders_sync ──▶ todo.*
+frame / phones ──script.frame_todo──▶ todo.* + sensor.frame_reminders_ledger ──rest_command──▶ Worker /reminders/ops
+iPhone Shortcut ──GET /reminders/ops──▶ makes those changes in Reminders, then pushes with "ack"
+```
+
+### Install (`reminders-sync.yaml`, a package)
 
 1. Add two **Local To-do** lists (Settings → Devices & services → Add integration), named after the
    Reminders lists, e.g. "Grocery list" and "LOML" → `todo.grocery_list`, `todo.loml`.
-2. `reminders-sync.yaml`: set `lists_map` (Reminders list name, lower case → to-do entity) and replace
-   `WEBHOOK_ID` with a long random id (`echo "frame_reminders_$(openssl rand -hex 16)"`), then add
-   it to `/config/automations.yaml` and reload automations. Anyone with the id can rewrite the
-   lists, so keep it private.
-3. Point the Shortcut's **Get Contents of URL** at `https://<ha external url>/api/webhook/<id>`:
-   method POST, request body JSON with the lists as above (Content-Type `application/json`), no
-   Authorization header. HA updates the lists within seconds.
-4. In the dashboard's `.env.local`: `VITE_HA_GROCERY=todo.grocery_list`, `VITE_HA_PINNED=todo.loml`.
+2. Make sure `configuration.yaml` has `homeassistant: packages: !include_dir_named packages`, then
+   copy `reminders-sync.yaml` to `/config/packages/reminders_sync.yaml`. Edit `lists_map` (Reminders
+   list name, lower case → to-do entity, in the script (reversed) and the sync automation) and
+   the Worker URL in `rest_command.frame_reminders_ops`.
+3. `/config/secrets.yaml`:
+   - `frame_reminders_webhook_id: "frame_reminders_<random>"` (`openssl rand -hex 16`). Anyone with
+     the id can rewrite the lists, so keep it private.
+   - `frame_walk_auth: "Bearer <WALK_KEY>"` (already there for the walk packages; the Worker accepts
+     it on `POST /reminders/ops`).
+4. Remove any older "Reminders sync from iPhone" automation from `automations.yaml`, run
+   `ha core check`, then restart HA (new script, sensor and rest_command need a restart the first
+   time; later edits only need YAML reloads).
+5. Worker secret `HA_REMINDERS_WEBHOOK_URL` = `https://<ha external url>/api/webhook/<id>` (add it to
+   `.env.local`, `npm run deploy` uploads it).
+6. In the dashboard's `.env.local`: `VITE_HA_GROCERY=todo.grocery_list`, `VITE_HA_PINNED=todo.loml`.
 
-Each list is mirrored from the phone: new items are added, items done or deleted on the phone are
-removed, and items ticked on the frame (or in HA) stay ticked until the phone drops them. Items may
-carry `notes` and `assignee` (a person's name, shown in their colour on the frame); both go into
-the to-do item's description, the assignee as an `Assigned: Name` last line. Lists missing from a
-push are left alone. Ticks made on the frame don't reach Apple Reminders by themselves: a Shortcut
-has to read the completed items from HA and complete them in Reminders.
+What you get:
 
-**Through the Worker instead.** A Shortcut can also POST the same body to the Worker's
-`/reminders` (header `Authorization: Bearer <PUSH_TOKEN>`). The Worker keeps the last push in KV,
-which the frame reads when it can't reach HA, and forwards it to HA's webhook straight away when
-the Worker secret `HA_REMINDERS_WEBHOOK_URL` is set (the webhook URL above; add
-`HA_REMINDERS_WEBHOOK_URL=...` to `.env.local` and `npm run deploy` uploads it, or
-`npx wrangler secret put HA_REMINDERS_WEBHOOK_URL`). The response says `"ha": "ok"`, `"failed"`
-or `"off"`. With the Shortcut posting to HA directly, the Worker's copy stops updating, so the
-frame's fallback shows the last list sent through the Worker.
+- **`script.frame_todo`** — fields `op` (`add`, `rename`, `edit`, `complete`, `reopen`, `delete`,
+  `clear_completed`), `entity_id`, `uid` (all but add and clear_completed), `title` (add),
+  `rename`, `description` (notes, with an `Assigned: Name` last line for the assignee). It makes the
+  change and notes it in the ledger. The frame calls it as `POST /api/services/script/frame_todo`
+  (allowed by the kiosk bridge; the "Photo Frame" HA user isn't an admin and doesn't need to be).
+  Adding a title that's already open is a no-op, as is changing an item that's gone.
+- **`sensor.frame_reminders_ledger`** — state: the last op number; attributes `seq` and `ops`
+  (`{seq, op, list, title, old_title, notes, assignee, at}`): the changes the phone hasn't made yet.
+  Restored across restarts, compacted (add then delete cancels out, untick cancels tick, …), capped
+  at 300 ops, and ops expire after 14 days.
+- **Automation `frame_reminders_sync`** ("Reminders sync from iPhone") — mirrors each pushed list by
+  title (case-insensitive), except where a pending op says otherwise: titles added or renamed-to on
+  the frame aren't removed, titles deleted or renamed-from aren't re-added, ticked items stay ticked
+  (and aren't re-added after "clear ticked"), and notes edited on the frame aren't reverted. A push
+  with `"ack": N` drops ops up to N first; after that the phone wins again (e.g. an item ticked on
+  the frame that the phone still lists open is reopened: it was re-added there). Lists missing from
+  a push are left alone. Items done on the phone simply drop out of the push and are removed.
+- **Automation `frame_reminders_ops_publish`** ("Reminders ops to the Worker") — sends the ledger
+  to the Worker's `/reminders/ops` on every change, so the Shortcut can read it with the token it
+  already has. Until the Worker has that route, HA logs a warning per change and nothing else breaks.
+
+Without the Shortcut changes below, the frame's edits still stick in HA (the ledger keeps them from
+being undone for 14 days), but they don't reach Apple Reminders.
+
+### The iPhone Shortcut (once, on the iPhone that pushes)
+
+The Shortcut already gets the "Grocery list" and "LOML" reminders and posts them to the Worker's
+`/reminders` with `Authorization: Bearer <PUSH_TOKEN>`. Add these steps **before** it gathers the
+reminders, so the push that follows already reflects the frame's edits:
+
+1. **Get Contents of URL** `https://frame-data.<subdomain>.workers.dev/reminders/ops`, method GET,
+   header `Authorization` = `Bearer <PUSH_TOKEN>` (same as the push). Name the result `Ops`.
+   It looks like `{"ack": 17, "count": 2, "ops": [{"seq": 16, "op": "add", "list": "Grocery list",
+   "title": "Oat milk", "old_title": "", "notes": "", "assignee": ""}, …]}`, oldest first.
+2. **Get Dictionary Value** `ack` from `Ops` → set variable `Ack`.
+3. **Get Dictionary Value** `ops` from `Ops` → **Repeat with Each** item. Inside, read `op`, `list`,
+   `title`, `old_title` and `notes` from **Repeat Item**, then **If** `op` is:
+   - `add` → **Add New Reminder** `title` to the list named `list` (notes = `notes` if any).
+   - `rename` → **Find Reminders** where List is `list`, Title is `old_title`, Is Not Completed,
+     limit 1 → **Set** Title of the reminder to `title`.
+   - `edit` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Set** Notes to `notes`.
+   - `complete` → **Find Reminders** (List `list`, Title `title`, Is Not Completed, limit 1) →
+     **Set** Is Completed to on.
+   - `reopen` → **Find Reminders** (List `list`, Title `title`, Is Completed, limit 1) → **Set** Is
+     Completed to off. If none is found (it was cleared), **Add New Reminder** `title` instead.
+   - `delete` → **Find Reminders** (List `list`, Title `title`, limit 1) → **Remove Reminders**
+     (turn off "Confirm Before Deleting").
+
+   An op whose reminder isn't found (already changed on the phone) is simply skipped.
+4. Gather and push the lists as before, but make the body `{"lists": {…the lists as now…},
+   "ack": Ack}` (a Dictionary with keys `lists` and `ack`, Number). The Worker forwards `ack` to HA,
+   which forgets those ops.
+
+Run it as an automation (e.g. hourly and when leaving/arriving home) as now. If the Shortcut stops
+part-way, it doesn't send `ack`, and the same ops come back next time; each step is safe to repeat
+(a second `add` of the same title is the only thing to watch, so check **Find Reminders** first if
+you want to be strict).
+
+**Through the Worker, or straight to HA.** The Shortcut can also POST the push straight to HA's
+webhook (`https://<ha external url>/api/webhook/<id>`, no Authorization header). Through the Worker
+(`POST /reminders`, `Authorization: Bearer <PUSH_TOKEN>`), the Worker also keeps the last push in
+KV, which the frame reads when it can't reach HA, and forwards it (with `ack`) to the webhook; the
+response says `"ha": "ok"`, `"failed"` or `"off"` (no `HA_REMINDERS_WEBHOOK_URL`).
 
 ## Dog walk log in the Obsidian vault
 

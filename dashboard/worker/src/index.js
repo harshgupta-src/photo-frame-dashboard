@@ -9,7 +9,9 @@
 //   GET  /recipes    ?key=READ_KEY  the vault's recipe notes for the phones' Recipes tab, read through the Home
 //        Brain gateway (recipes.js, ../../RECIPES.md; secrets VAULT_MCP_URL, VAULT_MCP_TOKEN)
 //   POST /reminders  Authorization: Bearer PUSH_TOKEN; stored, then forwarded to Home Assistant's
-//        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md)
+//        reminders webhook (secret HA_REMINDERS_WEBHOOK_URL; reminders.js, ../ha/README.md), with "ack"
+//   POST /reminders/ops  Bearer WALK_KEY (or PUSH_TOKEN): HA's ledger of to-do changes made on the frame
+//   GET  /reminders/ops  Bearer PUSH_TOKEN: those changes, for the iPhone Shortcut to make in Reminders
 //   /walk, /walks*  the dog walk log (walkapi.js, ../../WALKS.md): an adapter over the walks kept in
 //        Lifelog (secrets LIFELOG_URL, LIFELOG_TOKEN), mirrored to the family calendar
 //   GET  /dog        the dog tab's meals, weigh-ins and walk distances from Lifelog (dogapi.js)
@@ -33,7 +35,7 @@
 import { listCalendars, calendarObjects, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { readAlbum } from './photos.js';
-import { parseReminders, forwardToHA } from './reminders.js';
+import { parseReminders, forwardToHA, cleanOps, opsForPhone } from './reminders.js';
 import { walkAccess, walkRoute, walkKey } from './walkapi.js';
 import { copilotRoute } from './copilot.js';
 import { agentCalAccess, agentCalRoute } from './agentcal.js';
@@ -109,9 +111,28 @@ async function pushReminders(req, env) {
   try { body = await req.json(); } catch { return json({ error: 'body must be JSON' }, 400); }
   const out = parseReminders(body);
   if (!out) return json({ error: 'expected {"List name": "item\\nitem"} or {"lists": {"List name": [...]}}' }, 400);
-  await env.DATA.put('reminders', JSON.stringify(out));
-  const ha = await forwardToHA(env, out.lists);
-  return json({ ok: true, ha, counts: Object.fromEntries(Object.entries(out.lists).map(([k, v]) => [k, v.length])) });
+  const { ack, ...stored } = out;
+  await env.DATA.put('reminders', JSON.stringify(stored));
+  const ha = await forwardToHA(env, out.lists, fetch, ack);
+  return json({ ok: true, ha, ack, counts: Object.fromEntries(Object.entries(out.lists).map(([k, v]) => [k, v.length])) });
+}
+
+// HA posts its ledger here (WALK_KEY, the key it already holds as secret frame_walk_auth); the
+// Shortcut reads it with PUSH_TOKEN.
+async function reminderOps(req, env) {
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (req.method === 'GET') {
+    if (!canPush(req, env)) return json({ error: 'unauthorized' }, 401);
+    return json(opsForPhone(await env.DATA.get('reminder-ops', 'json')));
+  }
+  if (req.method !== 'POST') return json({ error: 'not found' }, 404);
+  if (!canPush(req, env) && !same(bearer, await walkKey(env, 'WALK_KEY'))) return json({ error: 'unauthorized' }, 401);
+  let body;
+  try { body = await req.json(); } catch { return json({ error: 'body must be JSON' }, 400); }
+  const out = cleanOps(body);
+  if (!out) return json({ error: 'expected {"seq": n, "ops": [...]}' }, 400);
+  await env.DATA.put('reminder-ops', JSON.stringify(out));
+  return json({ ok: true, seq: out.seq, count: out.ops.length });
 }
 
 // PHOTO_ALBUM: one or more shared album links, separated by spaces, commas or new lines.
@@ -190,6 +211,7 @@ export default {
     if (req.method === 'POST' && url.pathname === '/reminders') {
       return canPush(req, env) ? pushReminders(req, env) : json({ error: 'unauthorized' }, 401);
     }
+    if (url.pathname === '/reminders/ops') return reminderOps(req, env);
     if (url.pathname === '/walk' || url.pathname.startsWith('/walks')) {
       try {
         const r = await walkRoute(req, url, env, ctx, await walkAccess(req, env, same));

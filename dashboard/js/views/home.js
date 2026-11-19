@@ -374,14 +374,86 @@
     if (App.phone) { while (ul.children.length > 8) ul.removeChild(ul.lastChild); label(); return; }
     while (ul.children.length > 1 && tile.scrollHeight > tile.clientHeight + 1) { ul.removeChild(ul.lastChild); label(); }
   }
+  // The whole list, editable (App.todo, live.js): add at the top, tick the box, tap an item to rename,
+  // add notes or delete it (App.todoEditSheet, shopping.js). Ticked items wait under "Done" until the
+  // phone drops them. Updated in place while open.
+  var PS = { el: null, done: false, query: '' };
+  function pinnedRow(it) {
+    var p = who(it), id = App.esc(it.id), busy = it.pending || !it.uid;
+    return '<li class="pl-row' + (it.done ? ' is-done' : '') + (it.pending ? ' is-pending' : '') + '" data-id="' + id + '">' +
+      '<button class="pl-box" data-pl-tick="' + id + '"' + (busy ? ' disabled' : '') + ' aria-label="' + (it.done ? 'Not done' : 'Done') + '"><span class="pl-chk">' + App.icon('check', 22) + '</span></button>' +
+      '<button class="pl-body" data-pl-edit="' + id + '"' + (busy ? ' disabled' : '') + '><b>' + App.esc(it.title) + '</b>' +
+      (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') +
+      (p ? '<small class="pinned-who" style="' + App.pstyle(p) + '">' + App.esc(p.name) + '</small>'
+        : it.assignee ? '<small class="pinned-who">' + App.esc(it.assignee) + '</small>' : '') + '</button></li>';
+  }
+  function pinnedSync() {
+    var t = App.todo, st = t ? t.status() : 'readonly';
+    if (st === 'ok') return t.pending() ? 'Syncing…' : '';
+    if (st === 'loading') return 'Connecting…';
+    if (st === 'offline') return 'Can’t reach Home Assistant · read-only';
+    return App.ha && App.ha.web && !App.ha.web.signedIn ? 'Sign in to Home Assistant to edit' : 'Read-only';
+  }
+  function pinnedListHTML() {
+    var items = App.reminders.pinned, done = App.reminders.pinnedDone || [];
+    return (items.length ? '<ul class="pinned-list">' + items.map(pinnedRow).join('') + '</ul>' : '<p class="sheet-p pl-empty">Nothing on the list.</p>') +
+      (done.length ? '<button class="pl-done-h" data-pl-done>' + App.icon('check', 20) + ' Done <b class="num">(' + done.length + ')</b><span class="label">' + (PS.done ? 'Hide' : 'Show') + '</span></button>' +
+        (PS.done ? '<ul class="pinned-list pinned-list--done">' + done.map(pinnedRow).join('') + '</ul>' : '') : '');
+  }
+  function paintPinnedSheet() {
+    if (!PS.el || !PS.el.isConnected) { PS.el = null; return; }
+    var can = App.todo && App.todo.can('pinned');
+    var body = PS.el.querySelector('.pl-body-wrap'), h = pinnedListHTML();
+    if (body._h !== h) { body._h = h; body.innerHTML = h; }
+    var s = PS.el.querySelector('.pl-sync');
+    s.textContent = pinnedSync();
+    PS.el.querySelector('.pl').classList.toggle('is-ro', !can);
+    var input = PS.el.querySelector('.pl-input');
+    input.disabled = !can;
+    input.placeholder = can ? 'Add to ' + window.CONFIG.pinnedList + '…' : 'Adding needs Home Assistant';
+  }
   function pinnedSheet() {
-    var items = App.reminders.pinned;
-    App.sheet('<div class="sheet-pad"><div class="label">Apple Reminders</div><h2 class="sheet-h serif">' + App.esc(window.CONFIG.pinnedList) + '</h2>' +
-      (items.length ? '<ul class="pinned-list">' + items.map(function (it) {
-        var p = who(it);
-        return '<li><b>' + App.esc(it.title) + '</b>' + (it.notes ? '<small>' + App.esc(it.notes) + '</small>' : '') +
-          (p ? '<small class="pinned-who" style="' + App.pstyle(p) + '">' + App.esc(p.name) + '</small>' : '') + '</li>';
-      }).join('') + '</ul>' : '<p class="sheet-p">Nothing on the list.</p>') + '</div>');
+    App.sheet('<div class="sheet-pad pl"><div class="label">Apple Reminders <span class="pl-sync"></span></div><h2 class="sheet-h serif">' + App.esc(window.CONFIG.pinnedList) + '</h2>' +
+      '<form class="pl-add" action="#"><input class="pl-input" maxlength="120" autocomplete="off" autocapitalize="sentences" enterkeyhint="done" aria-label="New item">' +
+      '<button class="pl-add-btn" type="submit" aria-label="Add">' + App.icon('plus', 28) + '</button></form>' +
+      '<div class="pl-body-wrap"></div></div>', {
+      cls: App.phone ? '' : 'sheet--top',
+      onClose: function () { PS.el = null; },
+      onMount: function (el) {
+        PS.el = el;
+        var input = el.querySelector('.pl-input');
+        input.value = PS.query;
+        input.addEventListener('input', function () { PS.query = input.value; });
+        el.querySelector('.pl-add').addEventListener('submit', function (e) {
+          e.preventDefault();
+          var title = input.value.trim();
+          if (!title || !App.todo.can('pinned')) return;
+          input.value = PS.query = '';
+          App.todo.add('pinned', title).then(function (r) {
+            if (r && r.dup) App.toast('<b>' + App.esc(r.dup.title) + '</b> is already on the list', { icon: 'check', ms: 2500 });
+            // Failed (live.js said why): give back what was typed.
+            else if (!r && !PS.query) { PS.query = title; if (PS.el) PS.el.querySelector('.pl-input').value = title; }
+          });
+        });
+        el.addEventListener('click', function (e) {
+          var t;
+          if ((t = e.target.closest('[data-pl-done]'))) { PS.done = !PS.done; return paintPinnedSheet(); }
+          if ((t = e.target.closest('[data-pl-tick]'))) {
+            var id = t.dataset.plTick, it = App.todo.find('pinned', id);
+            if (!it || !App.todo.can('pinned')) return;
+            App.todo.toggle('pinned', id, !it.done);
+            if (!it.done) App.toast('<b>' + App.esc(it.title) + '</b> done', { icon: 'check', undo: function () { App.todo.toggle('pinned', id, false); } });
+            return;
+          }
+          if ((t = e.target.closest('[data-pl-edit]'))) {
+            if (!App.todo.can('pinned') || !App.todoEditSheet) return;
+            // Back to the list afterwards, unless the frame went idle (home, ambient) meanwhile.
+            App.todoEditSheet('pinned', t.dataset.plEdit, { onClose: function () { setTimeout(function () { if (App.mode === 'day' && App.current === 'home') pinnedSheet(); }, 0); } });
+          }
+        });
+        paintPinnedSheet();
+      }
+    });
   }
 
   function shopping() {
@@ -427,10 +499,15 @@
     fitHero(el);
     el.querySelector('.h-lanes').innerHTML = lanes();
     var side = el.querySelector('.h-chores');
-    if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side.innerHTML = pinned(); fitPinned(side); }
-    else side.innerHTML = chores();
-    el.querySelector('.h-shop').innerHTML = shopping();
+    if (App.reminders) { side.className = 'h-chores h-pinned-tile card'; side.dataset.go = 'pinned'; side._h = null; paintTodos(); }
+    else { side.innerHTML = chores(); el.querySelector('.h-shop').innerHTML = shopping(); }
     el.querySelector('.h-status').innerHTML = status();
+  }
+  // The to-do lists changed: just the pinned and shopping tiles, and only if their text did.
+  function paintTodos() {
+    var side = V.el.querySelector('.h-pinned-tile'), shop = V.el.querySelector('.h-shop'), h;
+    if (side && (h = pinned()) !== side._h) { side._h = h; side.innerHTML = h; fitPinned(side); }
+    if (shop && (h = shopping()) !== shop._h) { shop._h = h; shop.innerHTML = h; }
   }
 
   function photoCaption(s) {
@@ -495,7 +572,15 @@
     if (t) t.textContent = dur(Date.now() - App.walk.active.startedAt);
   });
   App.on('walk', function () { if (shown()) paintWalk(); else later(); });
-  App.on('data', function () { if (shown()) paint(); });
+  App.on('data', function (what) {
+    if (what === 'reminders') {
+      paintPinnedSheet();
+      if (!shown()) return later();
+      return App.reminders ? paintTodos() : paint();
+    }
+    if (shown()) paint(); else later();
+  });
+  App.on('todo', paintPinnedSheet);
   App.on('ha', function () {
     if (!shown()) return later();
     var el = V.el.querySelector('.h-status'), h = el && status();

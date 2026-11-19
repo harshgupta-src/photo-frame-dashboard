@@ -191,3 +191,36 @@
 .h-st-btn.is-on b, .h-st-btn.is-on span { color: var(--ink); }
 .h-st-btn:active { transform: scale(.97); }
 .h-st-btn:disabled { opacity: .5; }
+
+/* Pinned list sheet: add, tick, tap to edit */
+.pl-sync { margin-left: 10px; color: var(--alert); }
+html[data-phone] .pl-sync { display: block; margin: 2px 0 0; }
+.pl-add { display: flex; gap: 12px; margin: -6px 64px 12px 0; }
+.pl-input {
+  flex: 1; min-width: 0; height: 72px; padding: 0 20px; border-radius: 14px; border: 2px solid var(--line);
+  background: var(--card); color: var(--ink); font-family: inherit; font-size: 24px; font-weight: 600; outline: none;
+}
+.pl-input:focus { border-color: var(--ink); }
+.pl-add-btn { flex: none; width: 72px; height: 72px; border-radius: 14px; display: grid; place-items: center; background: var(--ink); color: var(--paper); }
+.pl-add-btn:active { transform: scale(.94); }
+.pinned-list .pl-row { flex-direction: row; align-items: stretch; gap: 0; padding: 0; }
+.pl-box { flex: none; width: 68px; display: grid; place-items: center; }
+.pl-chk { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; color: transparent; box-shadow: inset 0 0 0 3px var(--line); }
+.pl-body { flex: 1; min-width: 0; min-height: 68px; padding: 12px 4px; display: flex; flex-direction: column; justify-content: center; gap: 2px; text-align: left; font-size: 24px; }
+.pl-body b { font-weight: 600; }
+.pl-body:active, .pl-box:active { background: var(--paper-2); }
+.pl-row.is-done .pl-chk { background: var(--ink); color: var(--paper); box-shadow: none; }
+.pl-row.is-done .pl-body b { color: var(--mute); text-decoration: line-through; }
+.pl-row.is-pending { opacity: .6; }
+.pl-done-h { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--line); font-size: 19px; font-weight: 700; }
+.pl-done-h .label { margin-left: auto; }
+.pinned-list--done { max-height: 320px; }
+.pl.is-ro .pl-add-btn, .pl.is-ro .pl-box, .pl.is-ro .pl-body { pointer-events: none; opacity: .55; }
+
+html[data-phone] .pl-add { margin-right: 0; }
+html[data-phone] .pl-input { height: 48px; font-size: 17px; padding: 0 14px; }
+html[data-phone] .pl-add-btn { width: 48px; height: 48px; }
+html[data-phone] .pl-box { width: 48px; }
+html[data-phone] .pl-chk { width: 26px; height: 26px; border-radius: 50%; }
+html[data-phone] .pl-body { min-height: 52px; font-size: 17px; }
+html[data-phone] .pl-done-h { min-height: 48px; font-size: 15px; }

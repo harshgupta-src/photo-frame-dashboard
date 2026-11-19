@@ -11,13 +11,20 @@
 //   VITE_HA_CALENDARS  "calendar.entity:person+person,..." (CalDAV calendars; person ids as in VITE_PEOPLE)
 //   VITE_HA_GROCERY    to-do entity for the grocery list, e.g. todo.grocery_list
 //   VITE_HA_PINNED     to-do entity for CONFIG.pinnedList, e.g. todo.loml
-// HA's lists are filled from the iPhone Shortcut by ha/reminders-sync.yaml. Ticking a grocery item
-// on the frame completes it in HA. An item's assignee is the "Assigned: Name" line of its description.
-// When one of those to-do entities changes in HA (its state is the open-item count; the kiosk streams
-// it, ha.js), the lists are reloaded about a second later instead of at the next 5-min poll.
+// HA's lists are filled from the iPhone Shortcut by ha/reminders-sync.yaml. An item's assignee is the
+// "Assigned: Name" line of its description. When one of those to-do entities changes in HA (its state
+// is the open-item count; the kiosk streams it, ha.js), the lists are reloaded about a second later
+// instead of at the next 5-min poll.
+// App.todo (todo.js) edits both lists: add, tick/untick, rename and notes, delete, clear completed.
+// Each change goes through HA's script.frame_todo, which also notes it for the iPhone Shortcut so the
+// next push from the phone doesn't undo it (ha/README.md, "Reminders"). Changes show at once and
+// HA's state wins once a reload shows it. Without HA (the Worker fallback) the lists are read-only.
+// Views get 'data' with 'reminders' when the items change, and 'todo' when App.todo.status() or
+// App.todo.pending() does (the "Syncing…" note); they update those parts themselves.
 // Polls pause while the page is hidden and catch up once when it's shown (poll.js).
 // 'data' is emitted only when something changed, with what changed: 'events', 'reminders', 'photos'.
 import { every } from './poll.js';
+import { createTodos, scriptData, splitDesc } from './todo.js';
 
 (function () {
   'use strict';
@@ -64,33 +71,63 @@ import { every } from './poll.js';
     for (var k in lists) if (k.trim().toLowerCase() === name) return lists[k];
     return [];
   }
-  // Re-apply only when the phone pushed something new, so ticks made on the frame stick until then.
-  function applyReminders(j) {
-    if (App.reminders.updated === j.updated) return false;
-    var lists = j.lists || {};
-    // From HA, ticked items stay (done) until the phone drops them; the Worker only sends open ones.
-    D.groceries = list(lists, GROCERY_LIST).filter(function (it) { return !it.done || it.uid; }).map(function (it, i) {
-      return {
-        id: 'r' + i, name: it.title, cat: App.categorize(it.title), qty: 1, store: 'grocer', done: !!it.done, note: it.notes || '',
-        ha: it.uid ? { uid: it.uid, entity: it.entity } : undefined
-      };
+  // The lists as the views see them: HA's (or the Worker's) items with App.todo's pending changes on
+  // top. D.groceries and App.reminders.pinned are rebuilt from App.todo on every change; 'data'
+  // goes out only when what's shown changed.
+  var LISTS = { grocery: HA_GROCERY, pinned: HA_PINNED }, cats = {}, shown = '', shownTodo = '';
+  function cat(t) { return cats[t] || (cats[t] = App.categorize(t)); }
+  function publish() {
+    var t = App.todo;
+    D.groceries = t.items('grocery').map(function (it) {
+      return { id: it.id, uid: it.uid, name: it.title, cat: cat(it.title), qty: 1, store: 'grocer', done: it.done, note: it.notes, assignee: it.assignee, pending: it.pending };
     });
-    App.reminders = {
-      updated: j.updated,
-      pinned: list(lists, PINNED_LIST).filter(function (it) { return !it.done; }).map(function (it) {
-        return { title: it.title, notes: it.notes, assignee: it.assignee, who: it.assignee ? personFromName(it.assignee) : null };
-      })
-    };
-    return true;
+    var pinned = t.items('pinned').map(function (it) {
+      return { id: it.id, uid: it.uid, title: it.title, notes: it.notes, assignee: it.assignee, who: it.assignee ? personFromName(it.assignee) : null, done: it.done, pending: it.pending };
+    });
+    App.reminders.pinned = pinned.filter(function (it) { return !it.done; });
+    App.reminders.pinnedDone = pinned.filter(function (it) { return it.done; });
+    var key = JSON.stringify([D.groceries, pinned]), tkey = t.status() + '|' + t.pending();
+    if (key !== shown) { shown = key; App.emit('data', 'reminders'); }
+    if (tkey !== shownTodo) { shownTodo = tkey; App.emit('todo'); }
   }
-  // "notes\nAssigned: Name" → { notes, assignee }
-  function splitDesc(d) {
-    var lines = String(d || '').split('\n'), m = /^Assigned:\s*(.+)$/.exec(lines[lines.length - 1] || '');
-    if (m) lines.pop();
-    return { notes: lines.join('\n').trim() || undefined, assignee: m ? m[1].trim() : undefined };
+  var status = HA_GROCERY || HA_PINNED ? 'loading' : 'readonly', applied = -1;
+  App.todo = createTodos({
+    send: function (op) { return App.ha.call('POST', '/api/services/script/frame_todo', scriptData(op, LISTS[op.list])); },
+    onChange: function () { if (App.reminders) publish(); },
+    // Renames and notes don't change the entity's state (no 'ha' push), so look again shortly.
+    onSent: function () { reloadSoon(700); },
+    onError: function (op, e) {
+      App.toast('Couldn’t save' + (op.title ? ' <b>' + App.esc(op.title) + '</b>' : '') + ' · ' + App.esc(e.message), { tone: 'error', icon: 'bolt', ms: 6000 });
+      if (op.kind === 'add') App.emit('todo-add-failed', op);
+      reloadSoon(300); // see whether HA is still there (status → 'offline' if not)
+    },
+    onMismatch: function (op) {
+      App.toast('Home Assistant didn’t take the change to <b>' + App.esc(op.title || '') + '</b>', { tone: 'error', icon: 'bolt', ms: 6000 });
+    }
+  });
+  App.todo.online = false;
+  // 'ok' (editable), 'loading', 'offline' (HA configured but not answering) or 'readonly' (no HA).
+  App.todo.status = function () { return App.todo.online ? 'ok' : status; };
+  App.todo.can = function (list) { return App.todo.online && !!LISTS[list]; };
+  // Reloads can land out of order; only the newest one counts.
+  function applyReminders(j, startedAt) {
+    if (startedAt < applied) return;
+    applied = startedAt;
+    var lists = j.lists || {}, ha = j.source === 'ha';
+    function items(name) {
+      // From HA, ticked items stay (done) until the phone drops them; the Worker only sends open ones.
+      return list(lists, name).filter(function (it) { return !it.done || it.uid; }).map(function (it, i) {
+        return { uid: it.uid || 'w' + i, title: it.title, notes: it.notes || '', assignee: it.assignee || '', done: !!it.done };
+      });
+    }
+    App.todo.online = ha && haOn();
+    if (!ha) status = haOn() && (HA_GROCERY || HA_PINNED) ? 'offline' : 'readonly';
+    App.reminders.updated = j.updated;
+    App.todo.setBase('grocery', items(GROCERY_LIST), startedAt);
+    App.todo.setBase('pinned', items(PINNED_LIST), startedAt);
+    publish();
   }
-  // HA to-do lists in the Worker's /reminders shape. updated is a fingerprint of the lists, so the
-  // frame re-applies them only when something changed.
+  // HA to-do lists in the Worker's /reminders shape.
   function haReminders() {
     var ids = [HA_GROCERY, HA_PINNED].filter(Boolean);
     return App.ha.call('POST', '/api/services/todo/get_items?return_response', { entity_id: ids, status: ['needs_action', 'completed'] })
@@ -100,40 +137,40 @@ import { every } from './poll.js';
           if (!res[id]) throw new Error('no to-do list ' + id);
           return res[id].items.map(function (it) {
             var d = splitDesc(it.description);
-            return { title: it.summary, notes: d.notes, assignee: d.assignee, done: it.status === 'completed', uid: it.uid, entity: id };
+            return { title: it.summary, notes: d.notes || undefined, assignee: d.assignee || undefined, done: it.status === 'completed', uid: it.uid, entity: id };
           });
         }
         if (HA_GROCERY) lists[GROCERY_LIST] = items(HA_GROCERY);
         if (HA_PINNED) lists[PINNED_LIST] = items(HA_PINNED);
-        return { updated: 'ha:' + JSON.stringify(lists), lists: lists, source: 'ha' };
+        return { updated: new Date().toISOString(), lists: lists, source: 'ha' };
       });
   }
   function workerReminders() {
     return fetch(API + '/reminders', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
   }
-  // A grocery item ticked (or un-ticked) on the frame; HA keeps it until the phone drops it.
-  var lastLocal = 0;
-  App.reminderDone = function (g, done) {
-    if (!g.ha || !haOn()) return;
-    lastLocal = Date.now();
-    App.ha.call('POST', '/api/services/todo/update_item', { entity_id: g.ha.entity, item: g.ha.uid, status: done ? 'completed' : 'needs_action' })
-      .catch(function (e) { App.toast('Couldn’t update Home Assistant · ' + App.esc(e.message), { tone: 'error', icon: 'bolt' }); });
-  };
+  var reloadTimer = null;
+  function reloadSoon(ms) { clearTimeout(reloadTimer); reloadTimer = setTimeout(loadReminders, ms); }
   function loadReminders() {
+    clearTimeout(reloadTimer);
+    var startedAt = Date.now();
     (haOn() && (HA_GROCERY || HA_PINNED) ? haReminders().catch(function (e) {
       console.warn('HA to-do lists failed, using the Worker', e);
+      if (App.todo.online || status !== 'offline') { App.todo.online = false; status = 'offline'; publish(); }
+      reloadSoon(60000); // try HA again soon rather than at the next 5-minute load
       return workerReminders();
     }) : workerReminders())
       .then(function (j) {
         if (!j.lists) throw new Error(j.error || 'no lists');
-        if (!applyReminders(j)) return; // unchanged: no storage write, no redraw
+        var cachedKey = JSON.stringify(j.lists);
+        applyReminders(j, startedAt);
+        if (cachedKey === lastCached) return; // unchanged: no storage write
+        lastCached = cachedKey;
         try { localStorage.setItem(RCACHE, JSON.stringify(j)); } catch (e) { /* storage full or disabled */ }
-        App.emit('data', 'reminders');
-        App.rerender();
       })
       .catch(function (e) { console.warn('Reminders fetch failed', e); });
   }
+  var lastCached = '';
   function favs() { try { return JSON.parse(localStorage.getItem(FAVS) || '{}'); } catch (e) { return {}; } }
   App.saveFavs = function () {
     var f = {};
@@ -228,10 +265,11 @@ import { every } from './poll.js';
 
   D.stores = [{ id: 'grocer', name: 'Groceries' }];
   D.groceries = [];
-  App.reminders = { updated: undefined, pinned: [] };
+  App.reminders = { updated: undefined, pinned: [], pinnedDone: [] };
   try {
     var rcached = JSON.parse(localStorage.getItem(RCACHE) || 'null');
-    if (rcached && rcached.lists) applyReminders(rcached);
+    // Shown until the first load; read-only until HA answers.
+    if (rcached && rcached.lists) { applyReminders(rcached, 0); applied = -1; App.todo.online = false; publish(); }
   } catch (e) { /* ignore a bad cache */ }
 
   try {
@@ -240,8 +278,8 @@ import { every } from './poll.js';
   } catch (e) { /* ignore a bad cache */ }
 
   // A to-do list changed in HA (an item ticked or added on a phone, or on the frame): reload the lists
-  // shortly, waiting a little longer after a tick here so quick successive ticks land together.
-  var HA_TODOS = [HA_GROCERY, HA_PINNED].filter(Boolean), todoSeen = {}, todoTimer = null;
+  // shortly.
+  var HA_TODOS = [HA_GROCERY, HA_PINNED].filter(Boolean), todoSeen = {};
   function todoKey(id) {
     var st = App.ha.states[id];
     return st ? st.state + '|' + st.last_changed + '|' + st.last_updated : '';
@@ -256,8 +294,7 @@ import { every } from './poll.js';
       if (k) todoSeen[id] = k;
     });
     if (!hit) return;
-    clearTimeout(todoTimer);
-    todoTimer = setTimeout(loadReminders, Math.max(1000, lastLocal + 3000 - Date.now()));
+    reloadSoon(1000);
   });
 
   App.startCalendar = function () {
