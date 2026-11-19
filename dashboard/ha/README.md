@@ -191,6 +191,32 @@ whether to raise the daily food by ¼ cup (one change at a time; see `../WALKS.m
 answer on the Worker. On the bump day both phones are notified 30 min before breakfast, with a Done
 action. Run `script.maya_food_check` as an admin (the agent call needs one) to check now.
 
+## Maya away (sitter)
+
+`maya-away.yaml` (copy to `/config/packages/maya_away.yaml`) tells HA and the frame when the dog is
+away at a sitter or boarding.
+
+- **Rule:** a sitter event is one in Harsh's, Ambuja's or A&H Life whose title matches `/maya|🐕/i`
+  and `/\b(sitter|boarding|boarder|boarded|kennel)\b/i` and is in progress (start ≤ now < end,
+  all-day events too), e.g. "🐕 Maya at the sitter (Andreas)". The frame uses the same regexes.
+- **`input_select.maya_away_override`** (`auto` | `away` | `home`, restored across restarts):
+  - `auto` follows the calendar.
+  - `away` forces away until it's changed.
+  - `home` cancels the sitter events in progress that started before it was set.
+  - `automation.maya_away_reset_a_stale_home_override` puts `home` back to `auto` once no sitter
+    event is in progress, so it doesn't cancel the next stay.
+- **`script.maya_away_set`** (field `mode`) sets the override.
+- **`binary_sensor.maya_away`** checks the calendars every 5 min and when the override changes.
+  - Attributes: `source` (manual/calendar/none), `title`, `start`, `until`, `event` (a sitter event
+    is in progress, regardless of the override) and `override`.
+  - While it's on, there are no 15-min walk heads-ups, `script.maya_meal_notify` (`maya_meal.yaml`)
+    sends only error notices, and there's no food-bump notification.
+- **Walk planner:** it gets the stays that overlap the day and the override. It plans no walks
+  during a stay, and it drops any it returns. After a pickup, it plans the first walk shortly after.
+- **Replans:** when the override changes the state, today's walks are replanned a minute later.
+- **Install:** copy the file, run `ha core check`, then restart. `walk_plan.yaml`, `maya_food.yaml`
+  and `maya_meal.yaml` reference `binary_sensor.maya_away`.
+
 ## The frame as a device (MQTT)
 
 The kiosk can register the frame as a Home Assistant device over MQTT discovery: screen on/off,

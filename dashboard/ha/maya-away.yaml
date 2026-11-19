@@ -1,0 +1,166 @@
+# Maya away at the sitter. Copy to /config/packages/maya_away.yaml.
+#
+# binary_sensor.maya_away is on while Maya is away (boarding/sitter). It follows the calendars: an event
+# in Harsh's, Ambuja's or A&H Life whose title matches /maya|🐕/i and
+# /\b(sitter|boarding|boarder|boarded|kennel)\b/i and is in progress (start <= now < end, all-day too),
+# e.g. "🐕 Maya at the sitter (Andreas)". input_select.maya_away_override (script.maya_away_set, the frame's
+# buttons) overrides it: auto follows the calendar, away forces it on until changed, home cancels the
+# sitter event(s) in progress (only those that started before the override was set) and goes back to auto
+# once no sitter event is in progress. While she is away there are no walk or meal heads-ups
+# (walk_plan.yaml, maya_meal.yaml, maya_food.yaml) and the walk planner plans no walks.
+
+input_select:
+  maya_away_override:
+    name: Maya away override
+    icon: mdi:dog-side
+    options:
+      - auto
+      - away
+      - home
+
+script:
+  maya_away_set:
+    alias: "Maya away: set override"
+    description: "auto follows the calendar; away forces Maya away; home cancels the sitter stay in progress."
+    mode: single
+    fields:
+      mode:
+        description: auto | away | home
+        example: away
+        required: true
+        selector:
+          select:
+            options: [auto, away, home]
+    sequence:
+      - condition: template
+        value_template: "{{ mode in ['auto', 'away', 'home'] }}"
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.maya_away_override
+        data:
+          option: "{{ mode }}"
+
+template:
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: state
+        entity_id: input_select.maya_away_override
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id:
+            - calendar.harshs_calendar
+            - calendar.ambujas_calendar
+            - calendar.a_h_life
+        data:
+          start_date_time: "{{ (now() - timedelta(minutes=1)).isoformat() }}"
+          end_date_time: "{{ (now() + timedelta(minutes=1)).isoformat() }}"
+        response_variable: cal
+        continue_on_error: true
+      - variables:
+          ovr: "{{ states('input_select.maya_away_override') }}"
+          ovr_since: "{{ as_timestamp(states.input_select.maya_away_override.last_changed, 0) if states.input_select.maya_away_override else 0 }}"
+          # Sitter events in progress: {t, s, e} (timestamps). On a calendar error, the last known one.
+          current: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- set nowts = now().timestamp() -%}
+            {%- if cal is defined -%}
+              {%- for ent, v in cal.items() -%}
+                {%- for e in v.events | default([]) -%}
+                  {%- set t = e.summary | default('') -%}
+                  {%- if t is search('maya|🐕', ignorecase=True) and t is search('\\b(sitter|boarding|boarder|boarded|kennel)\\b', ignorecase=True) -%}
+                    {%- set s = e.start | string -%}{%- set en = e.end | string -%}
+                    {%- set st = as_timestamp(s, 0) if 'T' in s else as_timestamp(strptime(s[:10] ~ ' 00:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
+                    {%- set et = as_timestamp(en, 0) if 'T' in en else as_timestamp(strptime(en[:10] ~ ' 00:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
+                    {%- if st <= nowts < et -%}
+                      {%- set ns.out = ns.out + [{'t': t, 's': st, 'e': et}] -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endfor -%}
+            {%- elif this is defined and this.attributes.event | default(false) and this.attributes.until and this.attributes.start
+                 and as_timestamp(this.attributes.start, 0) <= nowts < as_timestamp(this.attributes.until, 0) -%}
+              {%- set ns.out = [{'t': this.attributes.title, 's': as_timestamp(this.attributes.start), 'e': as_timestamp(this.attributes.until)}] -%}
+            {%- endif -%}
+            {{ ns.out | sort(attribute='e') }}
+          # The ones not cancelled by "home" (home only cancels events that started before it was set).
+          active: >-
+            {{ current | rejectattr('s', 'le', ovr_since) | list if ovr == 'home' else current }}
+          source: "{{ 'manual' if ovr == 'away' else ('calendar' if active else 'none') }}"
+          shown: >-
+            {{ (active | last) if active else ((current | last) if current and source == 'manual' else none) }}
+    binary_sensor:
+      - name: Maya away
+        unique_id: maya_away
+        icon: >-
+          {{ 'mdi:home-export-outline' if source != 'none' else 'mdi:home-heart' }}
+        state: "{{ source != 'none' }}"
+        attributes:
+          source: "{{ source }}"
+          title: "{{ shown.t if shown else none }}"
+          start: "{{ (shown.s | timestamp_local) if shown else none }}"
+          until: "{{ (shown.e | timestamp_local) if shown else none }}"
+          event: "{{ current | count > 0 }}"
+          override: "{{ ovr }}"
+
+automation:
+  - id: maya_away_override_reset
+    alias: "Maya away: reset a stale home override"
+    description: >-
+      "home" cancels the sitter stay in progress; once no sitter event is in progress, go back to auto so
+      it doesn't cancel the next stay.
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.maya_away
+        attribute: event
+      - trigger: time_pattern
+        minutes: "/10"
+    conditions:
+      - condition: state
+        entity_id: input_select.maya_away_override
+        state: home
+      - condition: template
+        value_template: >-
+          {{ states('binary_sensor.maya_away') in ['on', 'off'] and state_attr('binary_sensor.maya_away', 'event') == false }}
+    actions:
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.maya_away_override
+        data:
+          option: auto
+
+  - id: maya_away_replan
+    alias: "Maya away: replan today when set by hand"
+    description: >-
+      When Maya is marked away or home by hand (the override, not a calendar stay starting or ending, which
+      the plan already knows), replan the rest of today's walks a minute later.
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.maya_away
+        from: ["on", "off"]
+        to: ["on", "off"]
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ 'manual' in [trigger.from_state.attributes.source, trigger.to_state.attributes.source]
+             or trigger.to_state.attributes.override == 'home' }}
+      - condition: template
+        value_template: "{{ now().hour * 60 + now().minute >= 4 * 60 + 30 }}"
+    actions:
+      - delay: "00:01:00"
+      - action: script.turn_on
+        target:
+          entity_id: script.maya_walk_plan
+        data:
+          variables:
+            replan: true
+            reason: >-
+              {{ 'Maya was just marked away at the sitter by hand' if is_state('binary_sensor.maya_away', 'on')
+                 else 'Maya was just marked home by hand (back from the sitter)' }}

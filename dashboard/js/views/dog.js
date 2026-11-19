@@ -37,12 +37,15 @@
   function walkButton() {
     var a = App.walk.active;
     if (a && !a.endedAt) return '<button class="dg-walk is-on" data-walk="back"><i class="pulse"></i><b>I’m back</b></button>';
-    return '<button class="dg-walk" data-walk="start">' + App.icon('paw', 26) + '<b>Start walk</b></button>';
+    if (App.dog.away().away) return ''; // the away banner below has "She's home"
+    return '<button class="dg-away-btn" data-walk="away">Away</button>' +
+      '<button class="dg-walk" data-walk="start">' + App.icon('paw', 26) + '<b>Start walk</b></button>';
   }
   function top() {
     var age = App.dog.age(), meta = [];
     if (age) meta.push(age.weeks < 52 ? age.weeks + ' weeks old' : age.months + ' months old');
-    var up = App.dog.upcoming(1)[0];
+    var st = App.dog.away(), up = App.dog.upcoming(6).filter(function (e) { return !App.dog.hidden(e, st); })[0];
+    if (st.cancelled) meta.push('Home early from the sitter');
     if (up) meta.push('Next: ' + esc(up.title.replace(new RegExp('^\\s*' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:’s|\'s)?\\s*', 'i'), '') || up.title) + ' ' + dayLabel(+up.start) + ' ' + App.fmt.hour(up.start));
     return '<header class="dg-top"><div class="dg-id"><h1 class="serif">' + esc(name) + '</h1>' +
       '<div class="dg-meta">' + (meta.join(' · ') || 'Care dashboard') + (App.dog.demo ? ' · <b>demo data</b>' : '') + '</div></div>' +
@@ -261,11 +264,25 @@
     if (slot && w.length > 1 && slot.clientWidth && slot.clientHeight) slot.innerHTML = weightChart(w, slot.clientWidth, slot.clientHeight);
   }
 
+  // At the sitter: one banner instead of the potty / meal / walk tiles, which would only nag.
+  function awayCard(st) {
+    var u = st.until, back = u ? 'Back ' + dayLabel(+u) + ' ' + App.fmt.hour(u) : 'Until you mark her home';
+    return '<div class="dg-now dg-away" data-walk="away" role="button">' + App.icon('paw', 34) +
+      '<div><b>' + (st.stay ? esc(name) + ' is at the sitter' : esc(name) + ' is away') + '</b>' +
+      '<span>' + back + ' · walks and meal alerts paused</span></div>' +
+      '<span class="dg-away-go">She’s home</span></div>';
+  }
+  function pausedToday() {
+    return '<section class="dg-card dg-today"><header class="dg-head"><span class="label">Meals today</span></header>' +
+      '<p class="dg-empty">Paused while ' + esc(name) + ' is away.</p></section>';
+  }
+
   function render() {
     if (!V.el) return;
+    var away = App.dog.away();
     V.el.innerHTML = '<div class="dg"><div class="dg-topbox">' + top() + foodNote() + '</div>' +
-      '<div class="dg-now">' + pottyTile('pee') + pottyTile('poop') + mealTile() + walkTile() + '</div>' +
-      today() + route() + week() + weight() + '</div>';
+      (away.away ? awayCard(away) : '<div class="dg-now">' + pottyTile('pee') + pottyTile('poop') + mealTile() + walkTile() + '</div>') +
+      (away.away ? pausedToday() : today()) + route() + week() + weight() + '</div>';
     placeMap();
     placeWeight();
   }
@@ -303,5 +320,6 @@
   App.on('dog', update);
   App.on('walk', update);
   App.on('data', update);
+  App.on('away', update);
   App.on('minute', function () { if (App.onScreen('dog')) render(); });
 })();

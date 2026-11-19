@@ -12,10 +12,15 @@
 //   App.dog.upcoming(n)      the next n other "Maya …" events (training, vet, …)
 //   App.dog.lastRoute()      the newest walk's GPS path, for the route map
 //   App.dog.ensureFresh(ms)  fetches GET /dog if the copy is older than ms (views/dog.js on show)
+//   App.dog.away()           {away, source, stay, until, cancelled}: at the sitter? (js/awaystate.js)
+//   App.dog.setAway(mode)    'auto'|'away'|'home' → HA's input_select.maya_away_override; App.dog.toggleAway()
+//   App.dog.hidden(e)        a dog event (meal, walk) that doesn't apply because she's away
+// Emits 'away' when the away state flips.
 // Emits 'dog' when the Worker's data changes. GET /dog (~70 kB) is fetched every 5 min while the dog
 // tab is shown and every 15 min otherwise (only the dog tab reads it), never while the page is hidden;
 // an unchanged answer is neither parsed nor stored again.
 import { every } from './poll.js';
+import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
 
 (function () {
   'use strict';
@@ -268,6 +273,42 @@ import { every } from './poll.js';
     return fetch(API + '/dog/food/done', { method: 'POST', headers: { 'X-Frame-Key': KEY, 'Content-Type': 'application/json' }, body: '{"by":"frame"}' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return G.refresh(); });
   };
+  // ---------------------------------------------------------------- away (sitter / boarding)
+  // The calendar says when she's at a sitter; HA's input_select.maya_away_override lets anyone
+  // correct it (home early, or an unplanned stay). A change made here shows straight away and holds
+  // until HA reports it back (or a minute passes, if HA never does).
+  var OVR = 'input_select.maya_away_override', pendingOv = null, lastAway = null;
+  function override() {
+    var st = App.ha && App.ha.states && App.ha.states[OVR];
+    var ha = st ? { state: st.state, changed: Date.parse(st.last_changed) || 0 } : null;
+    if (pendingOv && ((ha && ha.state === pendingOv.state) || Date.now() - pendingOv.changed > 60e3)) pendingOv = null;
+    return pendingOv || ha;
+  }
+  G.away = function () { return awayState(window.DATA.events || [], override(), +App.now(), dogName); };
+  G.nextStay = function (withinMs) { return nextStay(window.DATA.events || [], +App.now(), dogName, withinMs || 864e5); };
+  G.canSetAway = function () { return !!(App.ha && App.ha.ready && App.ha.call); };
+  G.setAway = function (mode) {
+    if (!G.canSetAway()) return Promise.reject(new Error('Home Assistant is not connected'));
+    pendingOv = { state: mode, changed: Date.now() };
+    checkAway(true);
+    return App.ha.call('POST', '/api/services/script/maya_away_set', { mode: mode }).catch(function (err) {
+      pendingOv = null; checkAway(true); throw err;
+    });
+  };
+  G.toggleAway = function () { return G.setAway(toggleMode(G.away())); };
+  G.hidden = function (e, a) {
+    a = a || G.away();
+    if (!a.away || !(isDog(e) || /^\s*\uD83D\uDC15/.test(e.title || '')) || isSitterEvent(e, dogName)) return false;
+    return !a.until || +e.start < +a.until;
+  };
+  function checkAway(force) {
+    var a = G.away(), k = a.away + ':' + a.source + ':' + a.cancelled + ':' + (a.until ? +a.until : '');
+    if (k !== lastAway || force) { lastAway = k; App.emit('away', a); }
+  }
+  App.on('ha', function (ids) { if (!ids || !ids.length || ids.indexOf(OVR) > -1) checkAway(); });
+  App.on('data', function () { checkAway(); });
+  App.on('minute', function () { checkAway(); });
+
   G.fedOnDay = function (day) { return meals(day).filter(function (m) { return m.status === 'fed'; }); };
   G.plannedOnDay = plannedMeals;
   G.MEALS = MEALS;

@@ -67,8 +67,55 @@ import { createHold } from '../todo.js';
   }
   function sync() { return App.walk.pending ? '<i class="h-walk-sync" title="Not synced yet"></i>' : ''; }
 
+  // At the sitter: no walk timer or plan, just where she is and a way to say she's back.
+  function awayWalk(st) {
+    var dog = App.esc(window.CONFIG.dog);
+    return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '</div>' +
+      '<span class="h-walk-go">' + App.icon('check', 16) + 'She’s home</span></div>' +
+      '<div class="h-walk-title">' + (st.stay ? 'At the sitter' : 'Away') + '</div>' +
+      '<div class="h-walk-sub">' + awayWhen(st) + '</div>';
+  }
+  function awayWhen(st) {
+    if (!st.until) return 'Until you mark her home';
+    var u = st.until;
+    return 'Back ' + (App.sameDay(u, App.now()) ? 'today' : App.fmt.dayShort(u)) + ' ' + App.fmt.hour(u);
+  }
+  // "She's home" / "Mark away": one sheet for the walk strip and the Maya tab.
+  function awaySheet() {
+    var st = App.dog.away(), dog = App.esc(window.CONFIG.dog);
+    var ok = App.dog.canSetAway(), head, p, btn;
+    if (st.away) {
+      head = dog + ' is ' + (st.stay ? 'at the sitter' : 'away');
+      p = (st.stay ? App.esc(st.stay.title) + '. ' + awayWhen(st) + '. ' : 'Marked away by hand. ') +
+        'Walks, walk reminders and meal alerts are paused until she’s back.';
+      btn = 'She’s home';
+    } else {
+      head = st.cancelled ? dog + ' came home early' : 'Is ' + dog + ' away?';
+      p = st.cancelled
+        ? 'The sitter stay on the calendar is ignored. Undo this if she’s actually still there.'
+        : 'Pauses walks, walk reminders and meal alerts here and in Home Assistant until you mark her home.';
+      btn = st.cancelled ? 'She’s still at the sitter' : 'Mark ' + dog + ' away';
+    }
+    App.sheet('<div class="sheet-pad"><div class="label">' + dog + '</div><h2 class="sheet-h serif">' + head + '</h2>' +
+      '<p class="sheet-p">' + p + '</p>' +
+      (ok ? '' : '<p class="sheet-p">Home Assistant isn’t connected, so this can’t be changed right now.</p>') +
+      '<div class="sheet-actions"><button class="btn btn--ghost" data-close>Cancel</button>' +
+      '<button class="btn btn--solid" data-away' + (ok ? '' : ' disabled') + '>' + btn + '</button></div></div>', {
+      onMount: function (el, close) {
+        el.querySelector('[data-away]').addEventListener('click', function () {
+          close();
+          App.dog.toggleAway().catch(function () {
+            App.toast('Couldn’t reach Home Assistant. Try again.', { icon: 'x' });
+          });
+        });
+      }
+    });
+  }
+  App.awaySheet = awaySheet;
+
   function walk() {
     var W = App.walk, dog = App.esc(window.CONFIG.dog), a = W.active;
+    if (!(a && !a.endedAt)) { var st = App.dog.away(); if (st.away) return awayWalk(st); }
     if (a && !a.endedAt) {
       var stale = Date.now() - a.startedAt > STALE;
       return '<div class="h-walk-head"><div class="label">' + App.icon('paw', 18, 'h-walk-paw') + dog + '’s out · ' + App.fmt.time(new Date(a.startedAt)) + sync() + '</div>' +
@@ -102,9 +149,9 @@ import { createHold } from '../todo.js';
   function paintWalk() {
     var mel = V.el && V.el.querySelector('.h-walk');
     if (!mel) return;
-    var a = App.walk.active, out = a && !a.endedAt;
-    mel.className = 'h-walk ' + (out ? 'h-walk--out' : 'h-walk--' + walkPlan(App.weatherNow()).level);
-    mel.dataset.walk = out ? 'back' : 'start';
+    var a = App.walk.active, out = a && !a.endedAt, away = !out && App.dog.away().away;
+    mel.className = 'h-walk ' + (out ? 'h-walk--out' : away ? 'h-walk--away' : 'h-walk--' + walkPlan(App.weatherNow()).level);
+    mel.dataset.walk = out ? 'back' : away ? 'away' : 'start';
     mel.innerHTML = walk();
   }
 
@@ -243,6 +290,7 @@ import { createHold } from '../todo.js';
   function walkTap(kind) {
     var W = App.walk;
     if (kind === 'history') { historySheet(); return; }
+    if (kind === 'away') { awaySheet(); return; }
     if (kind.indexOf('who:') === 0) { W.toggleWalker(kind.slice(4)); return; }
     if (kind === 'cancel') {
       var a = W.active;
@@ -270,7 +318,8 @@ import { createHold } from '../todo.js';
   function hero() {
     var e = App.nextEvent(), now = App.now();
     if (!e) {
-      var tomorrow = App.timedOn(App.addDays(now, 1))[0];
+      var t0 = App.addDays(App.dayStart(now), 1), away = App.dog.away();
+      var tomorrow = App.timedOn(t0).filter(function (x) { return x.start >= t0 && !App.dog.hidden(x, away); })[0];
       return '<div class="h-hero h-hero--empty" data-go="calendar">' +
         '<div class="label label--light">Rest of today</div>' +
         '<div class="h-hero-title serif">Nothing else scheduled.<br><i>Enjoy the quiet.</i></div>' +
@@ -348,9 +397,9 @@ import { createHold } from '../todo.js';
     });
   }
   function lanes() {
-    var now = App.now();
+    var now = App.now(), away = App.dog.away();
     return D.people.map(function (p) {
-      var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now; });
+      var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now && !App.dog.hidden(e, away); });
       var shown = list.slice(0, 3), more = list.length - shown.length;
       return '<div class="h-lane" style="' + App.pstyle(p) + '">' +
         '<div class="h-lane-head">' + App.avatar(p, 30) + '<b>' + p.name + '</b></div>' +
@@ -648,6 +697,7 @@ import { createHold } from '../todo.js';
     if (shown()) paint(); else later();
   });
   App.on('todo', paintPinnedSheet);
+  App.on('away', function () { if (shown()) paint(); else later(); });
   App.on('ha', function () {
     if (!shown()) return later();
     var el = V.el.querySelector('.h-status'), h = el && status();

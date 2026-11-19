@@ -10,7 +10,8 @@
 # label's band, healthy, one change at a time: never mid-transition or within 7 days of another
 # change) before storing it (PUT /dog/food); a blocked bump is stored as a hold with the reason.
 # The frame's Maya tab shows a stored bump. On its day, both phones get it 30 min before breakfast,
-# with a "Done" button (POST /dog/food/done; the frame has one too).
+# with a "Done" button (POST /dog/food/done; the frame has one too), unless Maya is away at the sitter
+# (binary_sensor.maya_away, maya_away.yaml; maya_meal.yaml's script.maya_meal_notify is quiet then too).
 
 rest_command:
   frame_dog_food_facts:
@@ -292,7 +293,7 @@ automation:
     alias: "Maya food: bump day, before breakfast"
     description: >-
       On a bump's day, 30 min before her first planned breakfast (06:15 without a plan), tell Harsh and
-      Ambuja on their phones, with a Done button.
+      Ambuja on their phones, with a Done button. Not while Maya is away at the sitter (maya_away.yaml).
     mode: single
     triggers:
       - trigger: time_pattern
@@ -308,6 +309,11 @@ automation:
         value_template: >-
           {{ a is mapping and a.decision == 'bump' and not a.doneAt and a.date == now().date().isoformat()
              and now().strftime('%H:%M') == (as_datetime(breakfast) - timedelta(minutes=30)).strftime('%H:%M') }}
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.maya_away
+            state: "on"
     actions:
       - variables:
           fr: "{{ {0: '', 25: '¼', 33: '⅓', 50: '½', 67: '⅔', 75: '¾'} }}"

@@ -66,6 +66,7 @@
 .h-walk-p .avatar { box-shadow: 0 0 0 2px rgb(255 255 255 / .85); }
 .h-walk-sync { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: currentColor; opacity: .7; vertical-align: middle; }
 .h-walk--out { --c: #0E7C86; --c-ink: #fff; gap: 2px; }
+.h-walk--away { --c: #5B5F7A; --c-ink: #fff; }
 .h-walk-x { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin: -8px -10px -8px 0; border-radius: 50%; color: inherit; opacity: .75; }
 .h-walk-x:active { background: rgb(255 255 255 / .2); }
 .h-walk-timer { font-size: 64px; line-height: 1; font-weight: 800; font-stretch: 75%; letter-spacing: -.01em; }
@@ -126,7 +127,7 @@
 .h-hero--empty { background: var(--solid); color: var(--on-solid); flex-direction: column; justify-content: center; }
 /* Everyone's colour is cream in the dark theme; keep the big card calm instead of bright. */
 [data-theme="dark"] .h-hero.is-family { --c: var(--solid) !important; --c-ink: var(--on-solid) !important; }
-.h-hero--empty .h-hero-title { display: block; font-size: 56px; }
+.h-hero--empty .h-hero-title { display: block; flex: none; font-size: 44px; margin: 6px 0; }
 
 .h-lanes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; min-height: 0; }
 .h-lane { display: flex; flex-direction: column; gap: 6px; min-width: 0; border-top: 6px solid var(--c); padding-top: 10px; }

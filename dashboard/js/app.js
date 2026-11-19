@@ -157,10 +157,12 @@ import { assetKey, decide, markApplied } from './update.js';
     });
   };
   App.leaveBy = function (e) { return e.travel ? new Date(+e.start - e.travel * 60000) : e.start; };
-  // The next thing someone needs to act on: earliest upcoming "leave by" today.
+  // The next thing someone needs to act on: earliest upcoming "leave by" today (skipping the dog's
+  // meals and walks while she's at a sitter).
   App.nextEvent = function () {
     var now = App.now();
-    var list = App.timedOn(now).filter(function (e) { return e.start > now; });
+    var away = App.dog && App.dog.away();
+    var list = App.timedOn(now).filter(function (e) { return e.start > now && !(away && App.dog.hidden(e, away)); });
     list.sort(function (a, b) { return App.leaveBy(a) - App.leaveBy(b); });
     return list[0] || null;
   };

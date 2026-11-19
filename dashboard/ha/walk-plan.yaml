@@ -8,6 +8,8 @@
 # writes each planned walk to its walkers' calendar, moves or removes events when the plan changes,
 # and removes a walk's event once it is logged. The frame shows the next one. 15 min before each
 # planned walk, its walkers get a heads-up on their phones (sensor.maya_walk_plan caches the plan).
+# Sitter stays (maya_away.yaml's rule) are passed to the agent: no walks during a stay, the first one
+# shortly after pickup; walks inside a stay are dropped, and there are no heads-ups while she is away.
 #
 # Meals: the same agent call also places Maya's meals still to come that day (GET /meals: the meal events
 # on the calendars, with their usual times). It keeps each at its usual time unless nobody who could feed
@@ -107,7 +109,7 @@ template:
             {%- endif -%}
 
   # Everyone's calendar events from now to the end of tomorrow (except Maya's own: the planner's 🐕 walks and
-  # her meals, which the planner moves itself), for
+  # her meals, which the planner moves itself; her sitter stays do count), for
   # maya_walk_plan_on_calendar_change. Polled every 5 min, so it sees events added anywhere (Apple Calendar,
   # HA, agents); refreshed sooner after HA itself writes a calendar. On an error it keeps the last list.
   - triggers:
@@ -141,7 +143,8 @@ template:
             {%- else -%}
               {%- set ns = namespace(out=[]) -%}
               {%- for ent, v in cal.items() -%}
-                {%- for e in v.events if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
+                {%- for e in v.events if (not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b'))
+                      or ((e.summary | default('')) is search('maya|🐕', ignorecase=True) and (e.summary | default('')) is search('\\b(sitter|boarding|boarder|boarded|kennel)\\b', ignorecase=True)) -%}
                   {%- set ns.out = ns.out + [{'c': ent.split('.')[1], 's': e.start, 'e': e.end, 't': (e.summary | default(''))[:80]}] -%}
                 {%- endfor -%}
               {%- endfor -%}
@@ -246,6 +249,35 @@ script:
             {%- endfor -%}
             {{ [ns.t, eod] | min }}
           late_until: "{{ late_ts | timestamp_custom('%H:%M') }}"
+          # Maya at the sitter (maya_away.yaml's rule, same as the frame): sitter events overlapping the day, and the
+          # manual override (input_select.maya_away_override). "home" cancels a stay in progress that started before it was set.
+          today: "{{ now().date().isoformat() }}"
+          ovr: "{{ states('input_select.maya_away_override') }}"
+          ovr_since: "{{ as_timestamp(states.input_select.maya_away_override.last_changed, 0) if states.input_select.maya_away_override else 0 }}"
+          sitter: >-
+            {%- set ns = namespace(out=[], seen=[]) -%}
+            {%- set nowts = now().timestamp() -%}
+            {%- for ent in calendars.keys() -%}
+              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) -%}
+                {%- set t = e.summary | default('') -%}
+                {%- if t is search('maya|🐕', ignorecase=True) and t is search('\\b(sitter|boarding|boarder|boarded|kennel)\\b', ignorecase=True) -%}
+                  {%- set s = e.start | string -%}{%- set en = e.end | string -%}
+                  {%- set st = as_timestamp(s, 0) if 'T' in s else as_timestamp(strptime(s[:10] ~ ' 00:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
+                  {%- set et = as_timestamp(en, 0) if 'T' in en else as_timestamp(strptime(en[:10] ~ ' 00:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
+                  {%- if st < start_ts + 24 * 3600 and et > start_ts and (t ~ st) not in ns.seen -%}
+                    {%- set ns.seen = ns.seen + [t ~ st] -%}
+                    {%- set ns.out = ns.out + [{'t': t, 's': st, 'e': et, 'cancelled': ovr == 'home' and st <= ovr_since and st <= nowts < et}] -%}
+                  {%- endif -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {{ ns.out | sort(attribute='s') }}
+          # When no walk may happen: the stays not cancelled, and the rest of today if she's marked away by hand.
+          away_ranges: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for x in sitter if not x.cancelled -%}{%- set ns.out = ns.out + [{'s': x.s, 'e': x.e}] -%}{%- endfor -%}
+            {%- if ovr == 'away' and day == today -%}{%- set ns.out = ns.out + [{'s': now().timestamp(), 'e': start_ts + 24 * 3600}] -%}{%- endif -%}
+            {{ ns.out }}
           # The rest of the current plan, which a replan may keep or change.
           ahead: >-
             {%- set ns = namespace(out=[]) -%}
@@ -330,6 +362,17 @@ script:
             The current plan{{ ' for the rest of the day' if rest else '' }} is below. Keep a walk as it is (same time, length and walkers) unless Maya's rhythm or the calendars now call for a change; move only what needs to move:
             {{ ahead | join('\n') }}
             {% endif %}
+            {%- if sitter or ovr in ['away', 'home'] %}
+            Maya at the sitter (this overrides her rhythm and everything below):
+            {%- for x in sitter %}
+            - {{ x.t }}: {{ x.s | timestamp_custom('%a %m-%d %H:%M') }} → {{ x.e | timestamp_custom('%a %m-%d %H:%M') }}{{ ' (cancelled by hand: she is home, plan as normal)' if x.cancelled else '' }}{% endfor %}
+            {%- if ovr == 'away' %}
+            - Manual override: Harsh or Ambuja marked her away at the sitter by hand at {{ ovr_since | timestamp_custom('%a %m-%d %H:%M') }}, with no end time{{ ': plan no walks for the rest of today' if day == today else '; plan this day as normal unless a stay above covers it' }}.
+            {%- elif ovr == 'home' %}
+            - Manual override: Harsh or Ambuja marked her home by hand at {{ ovr_since | timestamp_custom('%a %m-%d %H:%M') }}{{ ' (the stay marked cancelled above is over for her)' if sitter | selectattr('cancelled') | list else '' }}.
+            {%- endif %}
+            No walks while she is at the sitter: none may start or run during a stay that isn't cancelled. If she is picked up that day, plan her first walk shortly after the pickup (within ~30 min, or as soon as a walker is free; she will likely need to pee and poop) and continue her rhythm from there, counting from the pickup rather than her last logged pee/poop. If she is dropped off that day, a short walk just before the drop-off is good.{{ ' Leave meals that fall during a stay as they are (the sitter feeds her).' if meals else '' }}
+            {% endif %}
             Maya only pees and poops on walks, so the walks must fit her bladder and bowel rhythm. Learn it from her history below and her note: how long she usually goes between pees and how long she can hold it at most (daytime and overnight), when she usually poops (e.g. after which meals and how long after), and how her meals and walk snack fall. Then:
             - Time each walk before she would need to go: no longer between pee walks than her usual daytime gap (never past her longest comfortable hold), and a poop opportunity around when she usually poops (counting from her last poop and her meals). Count from her last pee and poop below, not from the plan.
             - Only plan a walk when the chosen walkers are free: not in a calendar event and not travelling to or from one (allow ~30 min for anything away from home). Harsh's calendar blocks Harsh, Ambuja's blocks Ambuja, A&H Life blocks both. All-day events usually don't block unless they are travel or away from home. If her timing clashes with both people's commitments, move the walk just before the clash rather than after.
@@ -402,7 +445,9 @@ script:
             {%- for w in (plan.walks if ok else []) if w is mapping -%}
               {%- set s = w.start | default('') | string -%}
               {%- set ts = as_timestamp(strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none).replace(tzinfo=now().tzinfo)) if strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none) else none -%}
-              {%- if (ts is none or ts >= from_ts - 60) and (ts is none or ts <= late_ts) -%}
+              {%- set dur = (w.durationMin | default(30) | int(30)) * 60 -%}
+              {%- set away = ts is not none and away_ranges | selectattr('s', 'lt', ts + dur) | selectattr('e', 'gt', ts) | list | count > 0 -%}
+              {%- if (ts is none or ts >= from_ts - 60) and (ts is none or ts <= late_ts) and not away -%}
                 {%- set ns.out = ns.out + [{'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none),
                      'expect': w.expect if w.expect is defined and w.expect is mapping else none}] -%}
               {%- endif -%}
@@ -515,7 +560,7 @@ automation:
     alias: "Maya walk: 15-min heads-up"
     description: >-
       15 min before each planned walk (not yet started), tell its walkers on their phones to get ready.
-      Skipped if Maya is already out on a walk.
+      Skipped if Maya is already out on a walk or away at the sitter (binary_sensor.maya_away).
     mode: single
     triggers:
       - trigger: time_pattern
@@ -531,6 +576,11 @@ automation:
     conditions:
       - condition: template
         value_template: "{{ due | count > 0 and not is_state('sensor.maya_walk', 'out') }}"
+      - condition: not
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.maya_away
+            state: "on"
     actions:
       - repeat:
           for_each: "{{ due }}"
