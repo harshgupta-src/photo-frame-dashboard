@@ -4,7 +4,8 @@
 # below on every change, and HA also polls GET /walks/active once a minute, so a missed ping only
 # delays things by a minute.
 #   start → track the walkers' phones; 1 min later, if nobody else is home, snapshot and turn off the
-#           lights, fans and TVs that are on
+#           lights, fans and TVs that are on (a person whose phone isn't reporting, unknown or
+#           unavailable, counts as possibly home)
 #   end   → turn those back on and PUT the route to the Worker (it stores it in Lifelog with the walk)
 #
 # secrets.yaml:
@@ -107,9 +108,12 @@ script:
       - condition: template
         value_template: "{{ is_state('sensor.maya_walk', 'out') and state_attr('sensor.maya_walk', 'walk_id') == walk.id }}"
       - variables:
+          # Non-walkers who are, or may be, home. Only not_home or another zone counts as away; a phone
+          # that isn't reporting (unknown/unavailable) may be at home, so the house is left on.
           others_home: >-
             {%- set ns = namespace(out=[]) -%}
-            {%- for p in states.person if p.name.split(' ')[0] | lower not in walkers and p.state in home_zones -%}
+            {%- for p in states.person if p.name.split(' ')[0] | lower not in walkers
+                 and (p.state in home_zones or p.state in ['unknown', 'unavailable', '']) -%}
               {%- set ns.out = ns.out + [p.entity_id] -%}
             {%- endfor -%}
             {{ ns.out }}

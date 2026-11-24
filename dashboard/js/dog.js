@@ -283,8 +283,9 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
   function haOverride() {
     var S = (App.ha && App.ha.states) || {}, b = S[SENSOR], st = S[OVR];
     if (b && b.attributes && b.attributes.override) {
-      var o = b.attributes.override;
-      return { state: o, changed: o === 'home' ? (b.state === 'off' && b.attributes.event ? Date.parse(b.last_changed) || 0 : 0) : Date.parse(b.last_changed) || 0 };
+      // override_since survives HA restarts; last_changed resets to the restart time.
+      var o = b.attributes.override, since = Date.parse(b.attributes.override_since) || Date.parse(b.last_changed) || 0;
+      return { state: o, changed: o === 'home' ? (b.state === 'off' && b.attributes.event ? since : 0) : since };
     }
     return st ? { state: st.state, changed: Date.parse(st.last_changed) || 0 } : null;
   }

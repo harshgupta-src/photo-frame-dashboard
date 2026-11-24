@@ -212,12 +212,21 @@ script:
           - condition: template
             value_template: "{{ job is defined and job is mapping and job.job_id | default('') != '' }}"
         then:
+          # The job may finish before the wait starts (its event would be missed): check first. Terminal
+          # statuses are the integration's TERMINAL set. If it's already over, wait only a few seconds, so
+          # its persistent notification exists before it is dismissed below.
+          - action: ha_copilot_agent.get_job
+            data:
+              job_id: "{{ job.job_id }}"
+            response_variable: pre
+            continue_on_error: true
           - wait_for_trigger:
               - trigger: event
                 event_type: ha_copilot_agent_job_finished
                 event_data:
                   job_id: "{{ job.job_id }}"
-            timeout: "00:15:00"
+            timeout: >-
+              {{ '00:00:05' if pre is defined and pre is mapping and pre.status | default('') in ['completed', 'failed', 'cancelled', 'interrupted'] else '00:15:00' }}
             continue_on_timeout: true
           - action: ha_copilot_agent.get_job
             data:

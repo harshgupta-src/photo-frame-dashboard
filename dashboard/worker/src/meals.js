@@ -4,7 +4,8 @@
 //   GET    /meals?date=YYYY-MM-DD    the day's meal events: kind, start, usual time, calendar, people
 //   PUT    /meals/plan/:date         {meals: [{kind, start, people?, note?}], reason?}: moves events in
 //                                    place (same UID and file name) and into the feeders' calendar;
-//                                    the day's other copies of each planned meal go (not Life Log's)
+//                                    the day's other copies of each planned meal go (not Life Log's);
+//                                    a start over 90 min from the usual time is skipped
 //   POST   /meals/log                {id, person, at, planned_at?, delta_min?, cups?, purina_pct?,
 //                                    fortiflora?, ate?, source?}: writes the Life Log event, stashes and
 //                                    removes the planned one (posting again just rewrites the Life Log event)
@@ -24,6 +25,7 @@ import { logCalendarName } from './dogapi.js';
 export const KINDS = { breakfast: 'Breakfast', 'walk-snack': 'Walk snack', lunch: 'Lunch', dinner: 'Dinner', 'night-snack': 'Night snack' };
 const DAY = 864e5;
 const MARK = '⏰ ';
+export const MAX_MOVE_MIN = 90;
 const ID = /^maya_meal-(\d{4}-\d{2}-\d{2})-([a-z0-9-]{3,40})$/;
 const PEOPLE = /^[a-z][a-z0-9_-]{0,31}$/;
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, n);
@@ -290,6 +292,18 @@ export class MealStore {
     const d = await this.day(date), now = Date.now(), reason = clean(body.reason, 200);
     const byKind = new Map(d.meals.map((x) => [x.kind, x]));
     const out = { date, changed: [], unchanged: [], skipped: [], removed: [] };
+    let ok = false;
+    try {
+      await this.planMeals(date, body, d, byKind, out, now, reason);
+      ok = true;
+    } finally {
+      // After a failure too: a write may have landed before it.
+      if (!ok || out.changed.length || out.removed.length) await this.forgetEvents();
+    }
+    return out;
+  }
+
+  async planMeals(date, body, d, byKind, out, now, reason) {
     for (const it of body.meals.slice(0, 10)) {
       const kind = normKind(it && (it.kind || it.meal));
       const m = kind && byKind.get(kind);
@@ -297,6 +311,16 @@ export class MealStore {
       let start;
       try { start = when(it.start, date, d.tz, kind + ' start'); } catch (e) { out.skipped.push({ kind, why: e.message }); continue; }
       if (localDate(start, d.tz) !== date) { out.skipped.push({ kind, why: 'start is not on ' + date }); continue; }
+      // A meal moves at most MAX_MOVE_MIN from its usual time (on that date, in the plan's time zone);
+      // a move back toward it (between the usual and the current time, e.g. a meal moved further by hand
+      // brought back) is always allowed.
+      const cur = Date.parse(m.start);
+      const usualAt = /^\d{1,2}:\d{2}$/.test(m.usual || '') ? when(m.usual, date, d.tz, 'usual') : cur;
+      const toward = start >= Math.min(usualAt, cur) && start <= Math.max(usualAt, cur);
+      if (Math.abs(start - usualAt) > MAX_MOVE_MIN * 60e3 && !toward) {
+        out.skipped.push({ kind, why: 'more than ' + MAX_MOVE_MIN + ' min from the usual ' + m.usual });
+        continue;
+      }
       const oldStart = Date.parse(m.start), end = start + Math.max(5 * 60e3, Date.parse(m.end) - oldStart);
       const people = [...new Set((Array.isArray(it.people) ? it.people : it.people ? [it.people] : []).map((p) => String(p).toLowerCase()).filter((p) => PEOPLE.test(p)))];
       // Only a calendar /meals reads (one in mealCalendars, by its configured name), or the meal would vanish.
@@ -323,7 +347,11 @@ export class MealStore {
       await this.dropDupes(d, m, out.removed, now);
       out.changed.push({ kind, from: m.start, to: new Date(start).toISOString(), usual: m.usual, fromCalendar: m.calendar, calendar });
     }
-    return out;
+  }
+
+  // The frame's GET /events is cached in KV (index.js); the next read fetches the calendars again.
+  async forgetEvents() {
+    if (this.env.DATA && this.env.DATA.delete) await this.env.DATA.delete('events').catch(() => {});
   }
 
   // The day's other events for m's meal (the planned one is m): the same event left behind on another
@@ -414,8 +442,9 @@ export class MealStore {
     return { ok: true, id, removed, restored };
   }
 
-  // The dog tab caches the Life Log calendar for 2 minutes.
+  // The dog tab caches the Life Log calendar for 2 minutes; the frame's schedule shows planned meals.
   async bust() {
+    await this.forgetEvents();
     if (!this.env.DATA || !this.env.DATA.list) return;
     const { keys } = await this.env.DATA.list({ prefix: 'dog-log:' });
     for (const k of keys) await this.env.DATA.delete(k.name);

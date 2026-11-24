@@ -254,7 +254,10 @@ script:
           # manual override (input_select.maya_away_override). "home" cancels a stay in progress that started before it was set.
           today: "{{ now().date().isoformat() }}"
           ovr: "{{ states('input_select.maya_away_override') }}"
-          ovr_since: "{{ as_timestamp(states.input_select.maya_away_override.last_changed, 0) if states.input_select.maya_away_override else 0 }}"
+          # When the override was set: maya_away.yaml's override_since survives restarts; last_changed doesn't.
+          ovr_since: >-
+            {%- set s = as_timestamp(state_attr('binary_sensor.maya_away', 'override_since') or '', none) -%}
+            {{ s if s else (as_timestamp(states.input_select.maya_away_override.last_changed, 0) if states.input_select.maya_away_override else 0) }}
           sitter: >-
             {%- set ns = namespace(out=[], seen=[]) -%}
             {%- set nowts = now().timestamp() -%}
@@ -284,7 +287,7 @@ script:
             {%- set ns = namespace(out=[]) -%}
             {%- for x in (cur.content.walks if cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
               {%- if x.status == 'planned' and as_timestamp(x.start) >= from_ts -%}
-                {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ ' [id ' ~ x.id ~ ']' ~ (' (' ~ x.note ~ ')' if x.note else '')] -%}
+                {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ ' [id ' ~ x.id ~ ']' ~ (' (' ~ x.note ~ ')' if x.note | default('') else '')] -%}
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
@@ -350,7 +353,7 @@ script:
             {%- set lines = namespace(cal=[], wx=[]) -%}
             {%- for ent, label in calendars.items() -%}
               {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b.*\\b(breakfast|lunch|dinner|snack)') -%}
-                {%- set lines.cal = lines.cal + ['- ' ~ label ~ ': ' ~ e.start ~ ' → ' ~ e.end ~ ' · ' ~ e.summary ~ (' @ ' ~ e.location if e.location else '')] -%}
+                {%- set lines.cal = lines.cal + ['- ' ~ label ~ ': ' ~ e.start ~ ' → ' ~ e.end ~ ' · ' ~ (e.summary | default('')) ~ (' @ ' ~ e.location if e.location | default('') else '')] -%}
               {%- endfor -%}
             {%- endfor -%}
             {%- for f in (wx['weather.forecast_home'].forecast if wx is defined and wx['weather.forecast_home'] is defined else []) if as_timestamp(f.datetime) < start_ts + 24 * 3600 and as_timestamp(f.datetime) >= from_ts - 3600 -%}
@@ -432,12 +435,21 @@ script:
           - condition: template
             value_template: "{{ job is defined and job is mapping and job.job_id | default('') != '' }}"
         then:
+          # The job may finish before the wait starts (its event would be missed): check first. Terminal
+          # statuses are the integration's TERMINAL set. If it's already over, wait only a few seconds, so
+          # its persistent notification exists before it is dismissed below.
+          - action: ha_copilot_agent.get_job
+            data:
+              job_id: "{{ job.job_id }}"
+            response_variable: pre
+            continue_on_error: true
           - wait_for_trigger:
               - trigger: event
                 event_type: ha_copilot_agent_job_finished
                 event_data:
                   job_id: "{{ job.job_id }}"
-            timeout: "00:15:00"
+            timeout: >-
+              {{ '00:00:05' if pre is defined and pre is mapping and pre.status | default('') in ['completed', 'failed', 'cancelled', 'interrupted'] else '00:15:00' }}
             continue_on_timeout: true
           - action: ha_copilot_agent.get_job
             data:
@@ -506,13 +518,36 @@ script:
             response_variable: put
             continue_on_error: true
           # Meals: only the ones offered to the agent (not fed, not about to happen).
+          # A meal moves at most 90 min from its usual time (the prompt's rule; the Worker checks it too). A
+          # start beyond that is clamped to usual ± 90 rather than dropped: the agent moved it because the
+          # feeders aren't free at the usual time, so the nearest allowed time keeps its intent. Like the
+          # Worker, a time between the usual and the current one (a meal moved further by hand) is allowed.
           - variables:
               meal_kinds: "{{ meals | map(attribute='kind') | list }}"
               meal_plan: >-
                 {%- set ns = namespace(out=[]) -%}
                 {%- for m in (plan.meals if plan.meals is defined and plan.meals is list else []) if m is mapping and (m.kind | default('') | lower | replace(' ', '-')) in meal_kinds -%}
-                  {%- set ns.out = ns.out + [{'kind': m.kind | lower | replace(' ', '-'), 'start': m.start | default('') | string,
-                       'people': ([m.people] if m.people is string else m.people | default([])), 'note': m.note | default(none)}] -%}
+                  {%- set k = m.kind | lower | replace(' ', '-') -%}
+                  {%- set cur = meals | selectattr('kind', 'eq', k) | first -%}
+                  {%- set s = m.start | default('') | string -%}
+                  {%- set note = m.note | default(none) -%}
+                  {%- set st = strptime(s, '%H:%M', none) -%}
+                  {%- set ut = strptime((cur.usual or '') | string, '%H:%M', none) -%}
+                  {%- set ct = strptime((cur.start or '') | string, '%H:%M', none) -%}
+                  {%- if st and ut -%}
+                    {%- set sm = st.hour * 60 + st.minute -%}
+                    {%- set um = ut.hour * 60 + ut.minute -%}
+                    {%- set cm = ct.hour * 60 + ct.minute if ct else um -%}
+                    {%- set lo = [[um - 90, cm] | min, 0] | max -%}
+                    {%- set hi = [[um + 90, cm] | max, 1439] | min -%}
+                    {%- if sm < lo or sm > hi -%}
+                      {%- set nm = lo if sm < lo else hi -%}
+                      {%- set s = '%02d:%02d' % (nm // 60, nm % 60) -%}
+                      {%- set note = ((note ~ '; ') if note else '') ~ 'moved only as far as allowed from the usual ' ~ cur.usual ~ ' (asked ' ~ m.start ~ ')' -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                  {%- set ns.out = ns.out + [{'kind': k, 'start': s,
+                       'people': ([m.people] if m.people is string else m.people | default([])), 'note': note}] -%}
                 {%- endfor -%}
                 {{ ns.out }}
           - if:

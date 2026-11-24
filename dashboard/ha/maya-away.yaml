@@ -6,8 +6,10 @@
 # e.g. "🐕 Maya at the sitter (Andreas)". input_select.maya_away_override (script.maya_away_set, the frame's
 # buttons) overrides it: auto follows the calendar, away forces it on until changed, home cancels the
 # sitter event(s) in progress (only those that started before the override was set) and goes back to auto
-# once no sitter event is in progress. While she is away there are no walk or meal heads-ups
-# (walk_plan.yaml, maya_meal.yaml, maya_food.yaml) and the walk planner plans no walks.
+# once no sitter event is in progress. input_datetime.maya_away_override_set keeps when the override was
+# last changed (the input_select's last_changed resets on every HA restart). While she is away there are
+# no walk or meal heads-ups (walk_plan.yaml, maya_meal.yaml, maya_food.yaml) and the walk planner plans
+# no walks.
 
 input_select:
   maya_away_override:
@@ -17,6 +19,14 @@ input_select:
       - auto
       - away
       - home
+
+# When the override was last changed, restored across restarts (set by maya_away_override_stamp).
+input_datetime:
+  maya_away_override_set:
+    name: Maya away override set
+    icon: mdi:clock-edit-outline
+    has_date: true
+    has_time: true
 
 script:
   maya_away_set:
@@ -45,7 +55,9 @@ template:
       - trigger: time_pattern
         minutes: "/5"
       - trigger: state
-        entity_id: input_select.maya_away_override
+        entity_id:
+          - input_select.maya_away_override
+          - input_datetime.maya_away_override_set
       - trigger: homeassistant
         event: start
       - trigger: event
@@ -64,7 +76,16 @@ template:
         continue_on_error: true
       - variables:
           ovr: "{{ states('input_select.maya_away_override') }}"
-          ovr_since: "{{ as_timestamp(states.input_select.maya_away_override.last_changed, 0) if states.input_select.maya_away_override else 0 }}"
+          # When the override was set. On its own change, that change's time (the stamp is written just
+          # after); otherwise the stamp, which survives restarts. Before the first stamp (unknown, or the
+          # 1970 default), the select's last_changed.
+          ovr_since: >-
+            {%- set sel = states.input_select.maya_away_override -%}
+            {%- set stamp = state_attr('input_datetime.maya_away_override_set', 'timestamp') | float(0) -%}
+            {%- if trigger is defined and trigger.platform == 'state' and trigger.entity_id == 'input_select.maya_away_override'
+                 and trigger.to_state is not none -%}{{ as_timestamp(trigger.to_state.last_changed, 0) }}
+            {%- elif stamp > 86400 * 366 -%}{{ stamp }}
+            {%- else -%}{{ as_timestamp(sel.last_changed, 0) if sel else 0 }}{%- endif -%}
           # Sitter events in progress: {t, s, e} (timestamps). On a calendar error, the last known one.
           current: >-
             {%- set ns = namespace(out=[]) -%}
@@ -107,8 +128,31 @@ template:
           until: "{{ (shown.e | timestamp_local) if shown else none }}"
           event: "{{ current | count > 0 }}"
           override: "{{ ovr }}"
+          override_since: "{{ (ovr_since | float(0)) | timestamp_local if ovr_since | float(0) > 0 else none }}"
 
 automation:
+  - id: maya_away_override_stamp
+    alias: "Maya away: remember when the override was set"
+    description: >-
+      Stamps input_datetime.maya_away_override_set on every override change (script, frame, dashboard or
+      the reset below), so "home" still knows which stays it cancels after a restart.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_select.maya_away_override
+        to: [auto, away, home]
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.from_state.state in ['auto', 'away', 'home']
+             and trigger.from_state.state != trigger.to_state.state }}
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.maya_away_override_set
+        data:
+          timestamp: "{{ as_timestamp(trigger.to_state.last_changed) }}"
+
   - id: maya_away_override_reset
     alias: "Maya away: reset a stale home override"
     description: >-

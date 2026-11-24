@@ -303,7 +303,10 @@ time), keeping about 3 hours between main meals. It reassigns the meal to whoeve
 the current feeder when they are. HA sends the agent's `meals` to `PUT /meals/plan/<date>`. The Worker
 moves the event, and puts it in the new feeder's calendar (`WALK_PLAN_CALENDARS`). It records the
 usual time (`X-MAYA-USUAL`) and adds a "⏰ Moved from the usual 12:30: reason" line, which is dropped
-when the meal goes back to its usual time. A moved occurrence of a recurring meal series is split
+when the meal goes back to its usual time. The Worker enforces the 90-minute limit: a start more than
+90 minutes from the usual time on that date (in the plan's time zone) is skipped (`skipped`: "more than
+90 min from the usual 18:30") and the event stays put, except that a meal already further away (e.g.
+moved by hand) can always be brought back toward or to its usual time. A moved occurrence of a recurring meal series is split
 off: the series gets an `EXDATE` and the occurrence becomes a standalone event. The calendar watcher
 ignores Maya's 🐕 walks and meals ("Maya … breakfast/lunch/dinner/snack") so the planner's own moves don't
 trigger replans; her other events (training, vet) and sitter stays do. Edits people make to
@@ -313,7 +316,9 @@ When a meal is logged (NFC tag or notification, `maya_meal.yaml`), HA POSTs `/me
 writes **Maya lunch 🍽️ 1 cup — Ambuja** to the Life Log calendar, with who fed her, when, how late,
 the food, whether she ate it all and the calendar it was planned on. It then removes the planned
 event (or adds an `EXDATE` to the series). Undo (`DELETE /meals/log/<id>`) puts the planned event
-back. The meal sensor reads the Life Log too, so a second tap is still caught as a double feed.
+back. The meal sensor reads the Life Log too, so a second tap is still caught as a double feed. A meal
+move, log or undo clears the frame's cached `GET /events` (KV key `events`), so the frame shows the
+new time on its next refresh instead of up to 5 minutes later.
 
 ## Home Assistant
 

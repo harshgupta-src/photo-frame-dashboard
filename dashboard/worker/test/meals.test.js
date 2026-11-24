@@ -192,3 +192,51 @@ test('a plan removes the day\'s other copies of a meal: other UIDs deleted, a se
   const g = await s.get('2026-11-16');
   assert.deepEqual([g.meals.filter((x) => x.kind === 'dinner').map((x) => x.calendar), g.duplicates.length], [['Ambuja’s Calendar'], 1]);
 });
+
+test('a plan moves a meal at most 90 minutes from its usual time, but can always bring it back', async () => {
+  const href = CALS['A&H Life'] + 'd1.ics', dtstart = () => /DTSTART:(\w+)/.exec(objects.get(href))[1];
+  objects.set(href, vevent('d1', '20261117T023000Z', '20261117T024500Z', 'Maya dinner'));
+  const s = new MealStore(env);
+  let r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '20:30' }] });
+  assert.deepEqual(r.skipped, [{ kind: 'dinner', why: 'more than 90 min from the usual 18:30' }]);
+  assert.equal(dtstart(), '20261117T023000Z');
+  r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '17:00' }] });
+  assert.deepEqual(r.changed.map((c) => c.to), ['2026-11-17T01:00:00.000Z']);
+
+  // Moved 2 h by hand: further away is refused; closer, or back to the usual time, is fine.
+  objects.set(href, vevent('d1', '20261117T043000Z', '20261117T044500Z', 'Maya dinner').replace('DTSTAMP:', 'X-MAYA-USUAL:18:30\r\nDTSTAMP:'));
+  r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '20:45' }] });
+  assert.equal(r.skipped.length, 1);
+  assert.equal(dtstart(), '20261117T043000Z');
+  r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '20:15' }] });
+  assert.equal(dtstart(), '20261117T041500Z');
+  r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '18:30' }] });
+  assert.equal(dtstart(), '20261117T023000Z');
+  assert.doesNotMatch(objects.get(href), /Moved from/);
+});
+
+test('the 90-minute limit uses the usual time on that date, across a DST change', async () => {
+  // 2026-11-01: Los Angeles goes from PDT to PST at 02:00; dinner at 18:30 PST is 02:30Z.
+  const href = CALS['A&H Life'] + 'd1.ics';
+  objects.set(href, vevent('d1', '20261102T023000Z', '20261102T024500Z', 'Maya dinner'));
+  const s = new MealStore(env);
+  let r = await s.putPlan('2026-11-01', { meals: [{ kind: 'dinner', start: '20:01' }] });
+  assert.equal(r.skipped.length, 1);
+  r = await s.putPlan('2026-11-01', { meals: [{ kind: 'dinner', start: '20:00' }] });
+  assert.deepEqual(r.changed.map((c) => c.to), ['2026-11-02T04:00:00.000Z']);
+});
+
+test('a meal change, log or undo clears the frame\'s cached /events', async () => {
+  const s = new MealStore(env), cache = () => kv.set('events', JSON.stringify({ updated: new Date().toISOString(), events: [] }));
+  cache();
+  await s.putPlan('2026-11-16', { meals: [{ kind: 'breakfast', start: '06:45' }, { kind: 'lunch', start: '15:00' }] });
+  assert.equal(kv.has('events'), true, 'nothing changed: cache kept');
+  await s.putPlan('2026-11-16', { meals: [{ kind: 'lunch', start: '13:15' }] });
+  assert.equal(kv.has('events'), false, 'after a move');
+  cache();
+  await s.log({ id: 'maya_meal-2026-11-16-breakfast', person: 'ambuja', at: '2026-11-16T06:57:00-08:00' });
+  assert.equal(kv.has('events'), false, 'after a log');
+  cache();
+  await s.unlog('maya_meal-2026-11-16-breakfast');
+  assert.equal(kv.has('events'), false, 'after an undo');
+});

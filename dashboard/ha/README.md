@@ -74,7 +74,8 @@ What you get:
   Adding a title that's already open is a no-op, as is changing an item that's gone.
 - **`sensor.frame_reminders_ledger`** — state: the last op number; attributes `seq` and `ops`
   (`{seq, op, list, title, old_title, notes, assignee, at}`): the changes the phone hasn't made yet.
-  Restored across restarts, compacted (add then delete cancels out, untick cancels tick, …), capped
+  Restored across restarts, compacted without cancelling pairs (the phone may already hold
+  the first op): a newer tick/untick, notes edit or delete replaces older ones for that title; add then delete keeps both. Capped
   at 300 ops, and ops expire after 14 days.
 - **Automation `frame_reminders_sync`** ("Reminders sync from iPhone") — mirrors each pushed list by
   title (case-insensitive), except where a pending op says otherwise: titles added or renamed-to on
@@ -206,9 +207,11 @@ away at a sitter or boarding.
   - `automation.maya_away_reset_a_stale_home_override` puts `home` back to `auto` once no sitter
     event is in progress, so it doesn't cancel the next stay.
 - **`script.maya_away_set`** (field `mode`) sets the override.
+- **`input_datetime.maya_away_override_set`** records when the override last changed (stamped by the
+  `maya_away_override_stamp` automation), because the override's `last_changed` resets on restart.
 - **`binary_sensor.maya_away`** checks the calendars every 5 min and when the override changes.
   - Attributes: `source` (manual/calendar/none), `title`, `start`, `until`, `event` (a sitter event
-    is in progress, regardless of the override) and `override`.
+    is in progress, regardless of the override), `override` and `override_since`.
   - While it's on, there are no 15-min walk heads-ups, `script.maya_meal_notify` (`maya_meal.yaml`)
     sends only error notices, and there's no food-bump notification.
 - **Walk planner:** it gets the stays that overlap the day and the override. It plans no walks

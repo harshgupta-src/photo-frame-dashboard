@@ -48,8 +48,9 @@ rest_command:
 
 template:
   # Pending frame changes. Events: frame_todo_op {op, entity, list, title, old_title, notes,
-  # assignee} appends (with compaction: a tick then an untick cancel out, deleting an item added on
-  # the frame drops both, a newer note edit replaces an older one); frame_todo_ack {ack} drops ops
+  # assignee} appends (with compaction that never cancels a pair, as the phone may already hold the
+  # first op: a tick or untick replaces earlier ones for the title, a newer note edit an older one,
+  # a delete earlier ticks and edits; an add then a delete both stay); frame_todo_ack {ack} drops ops
   # up to ack. Every 6 h, and on each event, ops older than 14 days are dropped.
   - triggers:
       - trigger: event
@@ -86,27 +87,24 @@ template:
                     'title': t, 'old_title': (d.old_title | default('') | string)[:120],
                     'notes': (d.notes | default('') | string)[:500], 'assignee': (d.assignee | default('') | string)[:40],
                     'ts': now().timestamp() | int, 'at': now().isoformat(timespec='seconds')} -%}
-              {%- set m = namespace(last='', idx=-1, added=false, keep=[]) -%}
-              {%- for o in ns.out if o.entity == new.entity and (o.title | string | lower) == key -%}
-                {%- if o.op in ['complete', 'reopen', 'edit'] and (d.op in ['complete', 'reopen'] and o.op != 'edit' or d.op == 'edit' and o.op == 'edit') -%}
-                  {%- set m.last = o.op -%}{%- set m.idx = o.seq -%}
-                {%- endif -%}
-                {%- if o.op == 'add' -%}{%- set m.added = true -%}{%- endif -%}
+              {#- The phone may already have fetched (and applied) any pending op without acking it yet, so
+                  an op is never cancelled out: the new op is always appended, and older ops for the
+                  same title are dropped only when the new one fully decides their outcome (a tick or
+                  untick supersedes earlier ones, a note edit earlier edits, a delete earlier ticks and
+                  edits). An add stays: dropping it with its delete would strand an add the phone may
+                  have already made. -#}
+              {%- set m = namespace(last='', keep=[]) -%}
+              {%- set drop = {'delete': ['complete', 'reopen', 'edit'], 'complete': ['complete', 'reopen'],
+                    'reopen': ['complete', 'reopen'], 'edit': ['edit']}.get(d.op, []) -%}
+              {%- for o in ns.out -%}
+                {%- set same = o.entity == new.entity and (o.title | string | lower) == key -%}
+                {%- if same and o.op in drop -%}{%- set m.last = o.op -%}{%- endif -%}
+                {%- if not (same and o.op in drop) -%}{%- set m.keep = m.keep + [o] -%}{%- endif -%}
               {%- endfor -%}
-              {%- if d.op == 'delete' -%}
-                {#- Ticks and note edits are moot once it's deleted; an item added here never reaches the phone. -#}
-                {%- for o in ns.out if not (o.entity == new.entity and (o.title | string | lower) == key and (m.added or o.op in ['complete', 'reopen', 'edit'])) -%}
-                  {%- set m.keep = m.keep + [o] -%}
-                {%- endfor -%}
-                {%- set ns.out = m.keep + ([] if m.added else [new]) -%}
-              {%- elif d.op in ['complete', 'reopen'] and m.last and m.last != d.op -%}
-                {%- set ns.out = ns.out | rejectattr('seq', 'eq', m.idx) | list -%}
-              {%- elif d.op in ['complete', 'reopen'] and m.last == d.op -%}
-                {#- already recorded -#}
-              {%- elif d.op == 'edit' and m.last == 'edit' -%}
-                {%- set ns.out = (ns.out | rejectattr('seq', 'eq', m.idx) | list) + [new] -%}
+              {%- if d.op in ['complete', 'reopen'] and m.last == d.op -%}
+                {#- already recorded (and still pending) -#}
               {%- else -%}
-                {%- set ns.out = ns.out + [new] -%}
+                {%- set ns.out = m.keep + [new] -%}
               {%- endif -%}
             {%- endif -%}
             {{ ns.out[-300:] }}
@@ -204,19 +202,28 @@ script:
                   - stop: already on the list
               - if: "{{ same is mapping }}"
                 then:
-                  - action: todo.update_item
-                    target:
-                      entity_id: "{{ ent }}"
-                    data:
-                      item: "{{ same.uid }}"
-                      status: needs_action
                   - event: frame_todo_op
                     event_data:
                       op: reopen
                       entity: "{{ ent }}"
                       list: "{{ name }}"
                       title: "{{ same.summary }}"
+                  - action: todo.update_item
+                    target:
+                      entity_id: "{{ ent }}"
+                    data:
+                      item: "{{ same.uid }}"
+                      status: needs_action
                   - stop: reopened
+              # Recorded first, so a Reminders push mirrored meanwhile can't remove the new item.
+              - event: frame_todo_op
+                event_data:
+                  op: add
+                  entity: "{{ ent }}"
+                  list: "{{ name }}"
+                  title: "{{ t }}"
+                  notes: "{{ notes }}"
+                  assignee: "{{ assignee }}"
               - if: "{{ desc != '' }}"
                 then:
                   - action: todo.add_item
@@ -231,14 +238,6 @@ script:
                       entity_id: "{{ ent }}"
                     data:
                       item: "{{ t }}"
-              - event: frame_todo_op
-                event_data:
-                  op: add
-                  entity: "{{ ent }}"
-                  list: "{{ name }}"
-                  title: "{{ t }}"
-                  notes: "{{ notes }}"
-                  assignee: "{{ assignee }}"
           - conditions: "{{ kind == 'clear_completed' }}"
             sequence:
               - repeat:
@@ -264,18 +263,18 @@ script:
             sequence:
               - if: "{{ item.status != ('completed' if kind == 'complete' else 'needs_action') }}"
                 then:
-                  - action: todo.update_item
-                    target:
-                      entity_id: "{{ ent }}"
-                    data:
-                      item: "{{ item.uid }}"
-                      status: "{{ 'completed' if kind == 'complete' else 'needs_action' }}"
                   - event: frame_todo_op
                     event_data:
                       op: "{{ kind }}"
                       entity: "{{ ent }}"
                       list: "{{ name }}"
                       title: "{{ item.summary }}"
+                  - action: todo.update_item
+                    target:
+                      entity_id: "{{ ent }}"
+                    data:
+                      item: "{{ item.uid }}"
+                      status: "{{ 'completed' if kind == 'complete' else 'needs_action' }}"
           - conditions: "{{ kind == 'delete' }}"
             sequence:
               - action: todo.remove_item
@@ -302,12 +301,6 @@ script:
                     error: true
               - if: "{{ t and t != item.summary }}"
                 then:
-                  - action: todo.update_item
-                    target:
-                      entity_id: "{{ ent }}"
-                    data:
-                      item: "{{ item.uid }}"
-                      rename: "{{ t }}"
                   - event: frame_todo_op
                     event_data:
                       op: rename
@@ -315,6 +308,12 @@ script:
                       list: "{{ name }}"
                       title: "{{ t }}"
                       old_title: "{{ item.summary }}"
+                  - action: todo.update_item
+                    target:
+                      entity_id: "{{ ent }}"
+                    data:
+                      item: "{{ item.uid }}"
+                      rename: "{{ t }}"
               - if: "{{ has_desc and desc != (item.description or '') | trim }}"
                 then:
                   - action: todo.update_item
@@ -351,9 +350,6 @@ automation:
         loml: todo.loml
       ack: >-
         {{ trigger.json.ack | default(0) | int(0) if trigger.json is mapping and trigger.json.ack is defined else 0 }}
-      ledger: >-
-        {%- set o = state_attr('sensor.frame_reminders_ledger', 'ops') -%}
-        {{ o if o is list else [] }}
       work: >-
         {% set j = trigger.json if trigger.json is mapping else {} %}
         {% set lists = j['lists'] if j['lists'] is defined and j['lists'] is mapping else j %}
@@ -391,10 +387,24 @@ automation:
                     {% endif %}
                   {% endfor %}
                   {{ ns.out }}
+            - action: todo.get_items
+              target:
+                entity_id: "{{ entity }}"
+              data:
+                status: [needs_action, completed]
+              response_variable: current
+            - variables:
+                existing: "{{ current[entity]['items'] }}"
+                # Read only now, after the items: an op recorded while this run waited (e.g. an item
+                # added on the frame a moment ago) is honoured rather than undone by the mirror.
+                ledger: >-
+                  {%- set o = state_attr('sensor.frame_reminders_ledger', 'ops') -%}
+                  {{ o if o is list else [] }}
+            - variables:
                 # Frame ops the phone hasn't applied: lower-cased title → open|keep|done|gone (last op wins).
                 intent: >-
                   {% set ns = namespace(m={}) %}
-                  {% for o in ledger if o.entity == entity and (o.seq | int(0)) > ack %}
+                  {% for o in ledger if o is mapping and o.entity == entity and (o.seq | int(0)) > ack %}
                     {% set t = o.title | string | lower %}
                     {% if o.op == 'rename' %}
                       {% set ns.m = dict(ns.m, **{(o.old_title | string | lower): 'gone'}) %}
@@ -413,18 +423,10 @@ automation:
                 # Titles whose frame ops this push acknowledges: the phone has applied them.
                 acked: >-
                   {% set ns = namespace(out=[]) %}
-                  {% for o in ledger if ack > 0 and o.entity == entity and (o.seq | int(0)) <= ack %}
+                  {% for o in ledger if o is mapping and ack > 0 and o.entity == entity and (o.seq | int(0)) <= ack %}
                     {% set ns.out = ns.out + [o.title | string | lower] %}
                   {% endfor %}
                   {{ ns.out }}
-            - action: todo.get_items
-              target:
-                entity_id: "{{ entity }}"
-              data:
-                status: [needs_action, completed]
-              response_variable: current
-            - variables:
-                existing: "{{ current[entity]['items'] }}"
                 incoming_titles: "{{ incoming | map(attribute='title') | map('lower') | list }}"
                 existing_titles: "{{ existing | map(attribute='summary') | map('lower') | list }}"
             - variables:
