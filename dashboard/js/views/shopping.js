@@ -259,7 +259,13 @@ import { createTodos, applyLocal, bumpHistory, topHistory, createHold } from '..
     V.hold.touch();
     V.checking[id] = setTimeout(function () {
       delete V.checking[id];
-      T.toggle(L, id, true);
+      // Not sent (offline, or deleted on another device meanwhile): the row mustn't stay struck through.
+      T.toggle(L, id, true).then(function (ok) {
+        if (ok) return;
+        var r = V.el && V.el.querySelector('.s-list [data-id="' + id + '"]');
+        if (r) r.classList.remove('is-checking');
+        if (!T.find(L, id)) App.toast('<b>' + App.esc(g.name) + '</b> was removed on another device', { icon: 'cart', ms: 3000 });
+      });
     }, 1200);
     var r = V.el.querySelector('.s-list [data-id="' + id + '"]');
     if (r) r.classList.add('is-checking');
@@ -313,6 +319,7 @@ import { createTodos, applyLocal, bumpHistory, topHistory, createHold } from '..
 
   // Shared with the pinned list's sheet (home.js): rename, notes, "Assigned to" (pinned list only),
   // delete with undo.
+  function gone(it) { App.toast('<b>' + App.esc(it.title) + '</b> was already removed on another device', { icon: 'bolt', ms: 3000 }); }
   App.todoEditSheet = function (list, id, opts) {
     opts = opts || {};
     var it = T.find(list, id);
@@ -334,8 +341,18 @@ import { createTodos, applyLocal, bumpHistory, topHistory, createHold } from '..
           e.preventDefault();
           var title = el.querySelector('.te-title').value.trim();
           if (!title) { el.querySelector('.te-title').focus(); return; }
-          if (list === L && title.toLowerCase() !== it.title.toLowerCase()) deleted[it.title.toLowerCase()] = 1;
-          T.edit(list, id, { title: title, notes: el.querySelector('.te-notes').value, assignee: App.assigneeOf(el) }).then(function (r) {
+          // The sheet may have been open a while: another device may have renamed or removed the item.
+          var cur = T.find(list, id);
+          if (!cur) { close(); return gone(it); }
+          // Only what was changed in the sheet: a field edited on another device meanwhile keeps its new value.
+          var notes = el.querySelector('.te-notes').value, who = App.assigneeOf(el), f = {};
+          if (title !== it.title) f.title = title;
+          if (notes.trim() !== String(it.notes || '').trim()) f.notes = notes;
+          if (who !== undefined && who !== String(it.assignee || '')) f.assignee = who;
+          var old = cur.title.toLowerCase(), renamed = list === L && f.title != null && f.title.toLowerCase() !== old;
+          if (renamed) deleted[old] = 1;
+          T.edit(list, id, f).then(function (r) {
+            if (renamed && r !== true) delete deleted[old]; // not renamed after all
             if (r && r.dup) App.toast('<b>' + App.esc(title) + '</b> is already on the list', { tone: 'error', icon: 'bolt' });
           });
           close();
@@ -343,10 +360,13 @@ import { createTodos, applyLocal, bumpHistory, topHistory, createHold } from '..
         el.querySelector('.te-del').addEventListener('click', function () {
           close();
           // Marked before remove(): it re-renders (and learn() runs) at once, and a deleted item mustn't count as bought.
-          var k = it.title.toLowerCase();
+          var cur = T.find(list, id);
+          if (!cur) return gone(it);
+          var k = cur.title.toLowerCase();
           if (list === L) deleted[k] = 1;
           var undo = T.remove(list, id);
-          if (undo) App.toast('Deleted <b>' + App.esc(it.title) + '</b>', { icon: 'trash', undo: function () { delete deleted[k]; undo(); } });
+          if (!undo) { delete deleted[k]; return; }
+          App.toast('Deleted <b>' + App.esc(cur.title) + '</b>', { icon: 'trash', undo: function () { delete deleted[k]; undo(); } });
         });
       }
     });

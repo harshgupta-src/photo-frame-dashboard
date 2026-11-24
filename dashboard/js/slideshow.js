@@ -47,9 +47,20 @@
     };
   };
   // Place and the photo's own caption, for one line: "Lisbon, Portugal · Grandma's 80th".
+  // A caption that only repeats the place is left out.
   App.photoWhere = function (m) {
-    var cap = m.caption && m.caption.length <= 60 ? m.caption : '';
-    return [m.place, cap].filter(Boolean).join(' · ');
+    var place = String(m.place || '').trim(), cap = String(m.caption || '').trim();
+    if (cap.length > 60 || cap.toLowerCase() === place.toLowerCase()) cap = '';
+    return [place, cap].filter(Boolean).join(' · ');
+  };
+  // Several photos on one slide: each distinct place once ("Lisbon · Porto"), at most two.
+  App.photosWhere = function (ps) {
+    var seen = {}, out = [];
+    ps.forEach(function (p) {
+      var pl = String(p.place || '').trim(), k = pl.toLowerCase();
+      if (pl && !seen[k]) { seen[k] = 1; out.push(pl); }
+    });
+    return out.slice(0, 2).join(' · ');
   };
 
   // One cycle of the slideshow. Each photo appears once; on-this-day photos 4 times, this-week ones
@@ -98,7 +109,7 @@
   function screenShape() { return App.portrait ? 'p' : 'l'; }
 
   function caption(ps, size) {
-    var m = App.photoMeta(ps[0]), where = App.photoWhere(m);
+    var m = App.photoMeta(ps[0]), where = ps.length > 1 ? App.photosWhere(ps) : App.photoWhere(m);
     return '<div class="cap cap--' + (size || 'l') + '">' +
       '<div class="cap-kicker">' + (m.onThisDay ? '<b>On this day</b> · ' : '') + m.kicker + (where ? ' · ' + App.esc(where) : '') + '</div>' +
       '<div class="cap-date serif">' + (ps.length > 1 ? m.monthYear : m.date) + '</div>' +
@@ -198,13 +209,24 @@
     var odds = D.photos.filter(function (x) { return x.o === odd; }).length;
     if (layout === 'pair' && odds < 2) layout = first.o === odd ? 'polaroid' : 'cover';
     if (layout === 'collage' && D.photos.length < 3) layout = 'cover';
+    if (layout === 'pair' && first.o !== odd) {
+      var o1 = sibling(function (x) { return x.o === odd; });
+      if (o1) { first = o1; ps = [first]; } else layout = 'cover';
+    }
     if (layout === 'pair') {
-      if (first.o !== odd) { first = sibling(function (x) { return x.o === odd; }); ps = [first]; }
       ps.push(sibling(function (x) { return x !== first && x.o === odd && x.tag === first.tag; }) || sibling(function (x) { return x !== first && x.o === odd; }));
     }
     if (layout === 'collage') {
       ps.push(sibling(function (x) { return x !== first; }));
       ps.push(sibling(function (x) { return ps.indexOf(x) < 0; }));
+    }
+    // The pool (this screen's shape) can be smaller than the album: with no photo left to fill a pair
+    // or collage, show the first one alone rather than build a slide around a missing photo.
+    ps = ps.filter(Boolean);
+    if ((layout === 'pair' && ps.length < 2) || (layout === 'collage' && ps.length < 3)) {
+      ps = ps.slice(0, 1);
+      if (!ps.length) return null;
+      layout = ps[0].o === odd ? 'polaroid' : 'cover';
     }
     return { layout: layout, photos: ps };
   };

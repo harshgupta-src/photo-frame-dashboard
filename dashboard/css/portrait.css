@@ -174,3 +174,15 @@
 [data-orient="portrait"] .h-hero-foot .dots { display: none; }
 [data-orient="portrait"] .h-hero-foot:empty { display: none; }
 [data-orient="portrait"] .h-hero-title { margin: 6px 0; }
+
+/* Tablet portrait (an iPad, ~3:4): squarer than the frame's 10:16, so this never matches the frame.
+   The stage is the frame's height but the tab bar is taller (--safe-b), so the food-bump card
+   left no room for "Walks today" in the meals card. Tighten the cards around it. */
+@media (orientation: portrait) and (min-aspect-ratio: 13/20) {
+  :root[data-orient="portrait"]:not([data-phone]) .dg { grid-template-rows: auto auto minmax(0, 1fr) 226px; }
+  :root[data-orient="portrait"]:not([data-phone]) .dg-topbox { gap: 10px; }
+  :root[data-orient="portrait"]:not([data-phone]) .dg-food { padding-top: 8px; padding-bottom: 8px; }
+  :root[data-orient="portrait"]:not([data-phone]) .dg-tile { padding-top: 8px; padding-bottom: 8px; }
+  :root[data-orient="portrait"]:not([data-phone]) .dg-m { padding-top: 5px; padding-bottom: 5px; }
+  :root[data-orient="portrait"]:not([data-phone]) .dg-head--walks { margin-top: 8px; padding-top: 10px; }
+}

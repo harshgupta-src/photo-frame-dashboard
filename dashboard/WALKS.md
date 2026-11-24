@@ -129,7 +129,7 @@ the home time zone (sent by the frame).
 | `GET /walks/summary` | active walk, last walk, last pee/poop and minutes since, today, last 7 days |
 | `GET /walks/log.md` | the markdown log (the vault note) |
 | `PUT /walks/:id` | create or replace `{startedAt, endedAt?, pee?, poop?, walkers?: ["<person id>"], notes?}` |
-| `DELETE /walks/:id` | delete a walk and its calendar event |
+| `DELETE /walks/:id` | delete a walk and its calendar event; saving that id again gets `410 Gone` for 30 days unless the body has `restore: true` (Undo) |
 | `POST /walks/start` | start now `{by?: "<person id>"}` (409 if one is active) |
 | `POST /walks/stop` | stop now `{pee?, poop?, by?}`; pee/poop left out default to the walk's [expected](#expected-pee-and-poop) ones (404 if none is active). A stop within a minute of the start discards the walk (`discarded: true`) |
 | `POST /walks/resync` | retry calendar writes |

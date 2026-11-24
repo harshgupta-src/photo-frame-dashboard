@@ -222,3 +222,38 @@ test('walk-sheet defaults: a planId the replan no longer has falls back to the n
   const plans = [{ walks: [{ id: 'new', start: '2026-11-19T16:30:00Z', walkerIds: ['harsh'] }] }];
   assert.equal(planFor({ startedAt: Date.parse('2026-11-19T16:15:00Z'), planId: 'gone' }, plans, Date.parse('2026-11-19T17:00:00Z')).id, 'new');
 });
+
+// The frame's walk module (js/walk.js) with just enough of the page around it.
+async function loadFrameWalk(store, fetcher) {
+  const { readFile } = await import('node:fs/promises');
+  const here = new URL('../../js/', import.meta.url);
+  const src = (await readFile(new URL('walk.js', here), 'utf8'))
+    .replace(/import\.meta\.env\.VITE_FRAME_API/g, '"https://api.test"').replace(/import\.meta\.env\.VITE_FRAME_KEY/g, '"k"')
+    .replace(/from '(\.{1,2}\/[^']+)'/g, (_, p) => "from '" + new URL(p, here).href + "'");
+  const toasts = [];
+  globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; } };
+  globalThis.window = globalThis.window || globalThis;
+  window.CONFIG = { dog: 'Rex', people: [{ id: 'harsh', name: 'Harsh' }] };
+  globalThis.App = { emit() {}, on() {}, esc: (s) => s, toast: (m) => toasts.push(m), fmt: { time: () => '' } };
+  globalThis.fetch = fetcher;
+  await import('data:text/javascript,' + encodeURIComponent(src + '\n// ' + Math.random()));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  return { W: App.walk, toasts };
+}
+
+test('frame: a walk deleted on another device while the end-of-walk sheet is open is dropped, not re-created', async () => {
+  const t = Date.now() - 30 * 60e3, puts = [];
+  const rec = { id: 'walk-sheet1', startedAt: t, endedAt: t + 25 * 60e3, walkers: [{ id: 'harsh', name: 'Harsh' }], pee: true, poop: false };
+  const store = { 'walk-state-v1': JSON.stringify({ active: rec, recent: [], plans: [], planDays: [] }) };
+  const json = (status, j) => Promise.resolve(new Response(JSON.stringify(j), { status }));
+  const { W, toasts } = await loadFrameWalk(store, (url, init = {}) => {
+    if (url.endsWith('/walk')) return json(200, { active: null, recent: [], plans: [] });
+    puts.push(JSON.parse(init.body));
+    return json(410, { error: 'this walk was deleted on another device', deleted: true, id: rec.id });
+  });
+  assert.equal(puts.length, 1, 'sent once, not retried');
+  assert.equal(W.active, null);
+  assert.deepEqual(W.recent, []);
+  assert.deepEqual(JSON.parse(store['walk-outbox-v1']), []);
+  assert.match(toasts.join('|'), /deleted on another device/);
+});

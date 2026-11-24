@@ -112,7 +112,7 @@
   }
   function list() {
     var l = filtered();
-    if (!l.length) return '<p class="cp-empty">' + (sessions().length ? 'No sessions of this type.' : C.on && !C.data ? 'Loading…' : 'No Copilot sessions yet.') + '</p>';
+    if (!l.length) return '<p class="cp-empty">' + (sessions().length ? 'No sessions of this type.' : C.on && !C.data ? (C.error ? 'Couldn\u2019t load sessions · ' + esc(C.error) : 'Loading…') : 'No Copilot sessions yet.') + '</p>';
     // The selected session stays listed even when it's further down than the rows shown.
     var n = Math.max(V.rows, l.findIndex(function (s) { return s.id === V.sel; }) + 1);
     return l.slice(0, n).map(row).join('') +
@@ -198,14 +198,15 @@
     }).join('') + '</div>';
   }
 
-  function renderDetail() {
+  // keepTop: scroll position to restore once the conversation is back ("Show more").
+  function renderDetail(keepTop) {
     var pane = V.el.querySelector('.cp-detail');
     if (!pane) return;
     var s = find(V.sel);
     if (!s) { pane.innerHTML = '<p class="cp-empty">Pick a session to read the conversation.</p>'; V.chatFor = null; return; }
     var key = s.id + '|' + s.updatedAt;
     if (V.chatFor === key && pane.querySelector('.cp-chat')) return;
-    var chat = pane.querySelector('.cp-chat'), keep = V.chatFor && V.chatFor.split('|')[0] === s.id && chat ? chat.scrollTop : 0;
+    var chat = pane.querySelector('.cp-chat'), keep = keepTop != null ? keepTop : V.chatFor && V.chatFor.split('|')[0] === s.id && chat ? chat.scrollTop : 0;
     V.chatFor = key;
     pane.innerHTML = detailHead(s) + '<div class="cp-chat"><p class="cp-empty">Loading…</p></div>';
     chat = pane.querySelector('.cp-chat');
@@ -222,7 +223,10 @@
         (all.length > shown.length ? '<button class="btn cp-more" data-more>Show more · ' + (all.length - shown.length) + ' left</button>' : '');
       chat.scrollTop = keep;
     }, function (e) {
-      if (V.chatFor === key) chat.innerHTML = '<p class="cp-empty">' + esc(e.message) + '</p>';
+      if (V.chatFor === key) {
+        chat.innerHTML = '<p class="cp-empty">' + esc((e && e.message) || 'Couldn\u2019t load the conversation') + '</p>';
+        V.chatFor = null; // the next update (or a tap on the session) tries again
+      }
     });
   }
 
@@ -289,9 +293,8 @@
     }
     if (t.closest('[data-back]')) { V.detail = false; V.el.querySelector('.cp-body').classList.remove('is-detail'); return; }
     if (t.closest('[data-more]')) {
-      var chat = V.el.querySelector('.cp-chat'), top = chat.scrollTop;
-      V.shown += PAGE; V.chatFor = null; renderDetail();
-      V.el.querySelector('.cp-chat').scrollTop = top;
+      var chat = V.el.querySelector('.cp-chat'), top = chat ? chat.scrollTop : 0;
+      V.shown += PAGE; V.chatFor = null; renderDetail(top);
       return;
     }
     if (t.closest('[data-refresh]')) {
@@ -306,8 +309,9 @@
     show: function (el) {
       if (!V.el) { V.el = el; el.addEventListener('click', click); }
       render();
-      if (C.ensureFresh) C.ensureFresh();
-      else if (C.on && (!C.updated || Date.now() - C.updated > 60e3)) C.refresh();
+      var p = C.ensureFresh ? C.ensureFresh() : C.on && (!C.updated || Date.now() - C.updated > 60e3) ? C.refresh() : null;
+      // A failed fetch emits nothing: replace "Loading…" with the error.
+      if (p && p.then) p.then(function () { if (C.error && App.onScreen('agents')) refreshList(); });
     },
     release: function (el) { V.chatFor = null; V.rows = ROWS; el.textContent = ''; }
   });

@@ -48,7 +48,7 @@ beforeEach(() => {
   env = {
     LIFELOG_URL: LL + '/', LIFELOG_TOKEN: 't', LIFELOG_WALK_TYPE: 'rex_walk', WALK_CALENDAR: 'Family',
     WALK_PLAN_CALENDARS: '{"harsh": "Harsh"}',
-    DATA: { get: async (k, t) => (kv.has(k) ? (t === 'json' ? JSON.parse(kv.get(k)) : kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); } },
+    DATA: { get: async (k, t) => (kv.has(k) ? (t === 'json' ? JSON.parse(kv.get(k)) : kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); }, delete: async (k) => { kv.delete(k); } },
   };
 });
 
@@ -121,6 +121,27 @@ test('deleting a walk soft-deletes it and removes its calendar event', async () 
   assert.equal(events.get('walk-bbbbbb').data.calendar.state, 'none');
   assert.equal(ical.size, 0);
   assert.equal((await call('state')).body.recent.length, 0);
+});
+
+test('a deleted walk stays deleted: a later PUT of it (the frame\'s open sheet) is a 410; Undo restores it', async () => {
+  const t = Date.now() - 40 * 60e3, body = { startedAt: t, endedAt: t + 20 * 60e3, walkers: ['harsh'], source: 'frame' };
+  await call('upsert', 'walk-tombst', { startedAt: t, endedAt: null, walkers: ['harsh'], source: 'frame' });
+  await call('remove', 'walk-tombst');
+  const r = await call('upsert', 'walk-tombst', body);
+  assert.deepEqual([r.status, r.body.deleted], [410, true]);
+  assert.ok(events.get('walk-tombst').deleted_at, 'not brought back');
+  assert.equal((await call('state')).body.recent.length, 0);
+  assert.equal((await call('upsert', 'walk-tombst', { ...body, restore: true })).status, 200);
+  assert.equal(events.get('walk-tombst').deleted_at, null);
+  assert.equal((await call('upsert', 'walk-tombst', { ...body, pee: true })).status, 200, 'restored: edits work again');
+});
+
+test('only explicit deletes tombstone: a discarded mis-tap and other walks still upsert', async () => {
+  const id = (await call('start', { by: 'harsh' })).body.id;
+  assert.equal((await call('stop', {})).body.discarded, true);
+  const t = Date.now() - 40 * 60e3;
+  assert.equal((await call('upsert', id, { startedAt: t, endedAt: t + 20 * 60e3, walkers: ['harsh'] })).status, 200);
+  assert.equal((await call('upsert', 'walk-other1', { startedAt: t - 3600e3, endedAt: t - 1800e3, walkers: ['harsh'] })).status, 200);
 });
 
 test('a walk an agent logs or edits in Lifelog reaches the calendar on the next GET /walk', async () => {
@@ -374,6 +395,27 @@ test('a walk just before midnight counts for that day\'s late planned walk, not 
   const today = (await call('state')).body.plans.find((p) => p.date === '2026-11-20');
   assert.equal(today.walks[0].status, 'planned');
   assert.equal((await call('getPlan', '2026-11-19')).body.walks[0].status, 'done');
+});
+
+test('a Shortcut stop just before midnight takes its pee/poop from the planned walk it matches (next day\'s plan)', async () => {
+  setClock('2026-11-19T23:55:00Z');
+  const at = (s) => Date.parse(s), harsh = [{ id: 'harsh', name: 'Harsh' }], made = at('2026-11-19T12:00:00Z');
+  kv.set('walk-plan:2026-11-20', JSON.stringify({ date: '2026-11-20', tz: 'UTC', updated: 'x',
+    items: [{ id: '2026-11-20-0030', start: at('2026-11-20T00:30:00Z'), end: at('2026-11-20T01:00:00Z'), walkers: harsh, created: made, expect: { pee: false, poop: true } }] }));
+  await call('upsert', 'walk-latenite', { startedAt: at('2026-11-19T23:40:00Z'), endedAt: null, walkers: ['harsh'], tz: 'UTC' });
+  const s = await call('stop', {});
+  assert.deepEqual([s.status, s.body.pee, s.body.poop], [200, false, true]);
+});
+
+test('a stop ignores a planned walk that another walk already covers (by its planId)', async () => {
+  setClock('2026-11-24T15:00:00Z');
+  const at = (s) => Date.parse(s), harsh = [{ id: 'harsh', name: 'Harsh' }];
+  kv.set('walk-plan:2026-11-24', JSON.stringify({ date: '2026-11-24', tz: 'UTC', updated: 'x',
+    items: [{ id: '2026-11-24-1430', start: at('2026-11-24T14:30:00Z'), end: at('2026-11-24T15:00:00Z'), walkers: harsh, created: at('2026-11-24T08:00:00Z'), expect: { pee: false, poop: true } }] }));
+  await call('upsert', 'walk-named01', { startedAt: at('2026-11-24T13:00:00Z'), endedAt: at('2026-11-24T13:30:00Z'), walkers: ['harsh'], tz: 'UTC', planId: '2026-11-24-1430' });
+  await call('upsert', 'walk-free001', { startedAt: at('2026-11-24T14:20:00Z'), endedAt: null, walkers: ['harsh'], tz: 'UTC' });
+  const s = await call('stop', {});
+  assert.deepEqual([s.body.pee, s.body.poop], [true, false], 'the 14:30 walk is the 13:00 walk\'s (its planId), so her routine applies');
 });
 
 test('OwnTracks: a fix with a missing latitude or longitude is ignored, not stored at 0', async () => {

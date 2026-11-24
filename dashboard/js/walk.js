@@ -111,11 +111,12 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   // ---------------------------------------------------------------- outbox
   // check: finishing the active walk. Another device (a phone) may have stopped it while the sheet was
   // open, so the Worker's copy is read first and an already-ended walk isn't overwritten (see flush).
-  function enqueue(op, rec, check) {
+  // restore: an Undo of the frame's own delete, so the Worker lifts that delete's tombstone (see flush).
+  function enqueue(op, rec, check, restore) {
     gen++;
     watchUntil = Date.now() + REPLAN_WATCH;
     var box = read(OUTBOX, []).filter(function (o) { return o.id !== rec.id; });
-    box.push({ op: op, id: rec.id, rec: op === 'put' ? rec : undefined, check: check ? true : undefined });
+    box.push({ op: op, id: rec.id, rec: op === 'put' ? rec : undefined, check: check ? true : undefined, restore: op === 'put' && restore ? true : undefined });
     write(OUTBOX, box);
     flush();
   }
@@ -126,7 +127,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     if (o.op === 'put') {
       init.body = JSON.stringify({
         startedAt: r.startedAt, endedAt: r.endedAt, pee: r.pee, poop: r.poop, walkers: r.walkers, notes: r.notes || '', planId: r.planId,
-        dog: window.CONFIG.dog, tz: tz, source: 'frame', clientNow: Date.now()
+        dog: window.CONFIG.dog, tz: tz, source: 'frame', clientNow: Date.now(), restore: o.restore || undefined
       });
     }
     return fetch(API + '/walks/' + encodeURIComponent(o.id), init).then(function (res) {
@@ -135,7 +136,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   }
   // Sends queued changes in order. Network errors and 5xx stop and retry later; other errors drop
   // the change (it can never succeed). 409 = a walk started elsewhere (a phone) is already active:
-  // that one wins.
+  // that one wins. 410 = the walk was deleted elsewhere (a phone): the frame drops its copy too.
   function flush() {
     if (!W.on) return Promise.resolve();
     if (syncing) { again = true; return Promise.resolve(); }
@@ -153,7 +154,10 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
       if (rest[0] && rest[0].id === o.id && JSON.stringify(rest[0]) === JSON.stringify(o)) rest.shift();
       write(OUTBOX, rest);
       W.error = null;
-      if (r.status === 409 && r.body.active) {
+      if (r.status === 410) {
+        dropDeleted(o.id);
+        App.toast(App.esc(window.CONFIG.dog) + '’s walk was deleted on another device', { icon: 'clock' });
+      } else if (r.status === 409 && r.body.active) {
         W.active = fromServer(r.body.active);
         App.toast(App.esc(window.CONFIG.dog) + '’s walk was already started on another device', { icon: 'clock' });
       } else if (r.status >= 400) {
@@ -173,6 +177,13 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     }).then(function () {
       if (again) { again = false; return flush(); }
     });
+  }
+
+  function dropDeleted(id) {
+    var gone = (W.active && W.active.id === id ? W.active : null) || W.recent.filter(function (w) { return w.id === id; })[0];
+    if (W.active && W.active.id === id) W.active = null;
+    W.recent = W.recent.filter(function (w) { return w.id !== id; });
+    if (gone) planStatus(gone.planId, 'planned');
   }
 
   // The Worker's ended copy of walk o.id, or null when it's still active there (or unknown: never
@@ -277,7 +288,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     W.recent = W.recent.filter(function (w) { return w.id !== rec.id; }).concat([rec])
       .sort(function (a, b) { return b.startedAt - a.startedAt; });
     rec.calendar = 'pending';
-    enqueue('put', rec, finishing);
+    enqueue('put', rec, finishing, !!(opts && opts.restore));
     changed();
     return true;
   };
@@ -289,11 +300,11 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     changed();
   };
   W.restore = function (rec) {
-    if (rec.endedAt) { W.save(rec); return; }
+    if (rec.endedAt) { W.save(rec, { restore: true }); return; }
     if (W.active) return;
     W.active = rec;
     planStatus(rec.planId, 'active');
-    enqueue('put', rec);
+    enqueue('put', rec, false, true);
     changed();
   };
   // Typical length (median of recent walks), for a walk nobody stopped.

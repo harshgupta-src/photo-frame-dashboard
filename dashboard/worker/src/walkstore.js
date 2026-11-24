@@ -17,12 +17,13 @@ import {
 } from './walks.js';
 import { loadGraph, snapRoute } from './snap.js';
 import { owntracksPoints, mergePaths } from './owntracks.js';
-import { normalizePlan, matchPlans, planCalendarName, planRev, planICS, planJSON, validDate, nextDate, prevDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
+import { normalizePlan, matchPlans, planCalendarName, planRev, planICS, planJSON, validDate, nextDate, prevDate, minuteOfDay } from './walkplan.js';
 import { expectPotty } from './walkexpect.js';
 
 const DAY = 864e5;
 const RECENT_DAYS = 14;
 const MAX_TRIES = 10;
+export const TOMBSTONE_DAYS = 30;
 const OPS = ['state', 'list', 'summary', 'log', 'upsert', 'remove', 'start', 'stop', 'resync', 'getPlan', 'putPlan', 'deletePlan', 'active', 'putRoute', 'resnapRoute', 'resnapRoutes'];
 const POTTY = ['pee', 'poop'];
 const sibling = (href, kind) => href.replace(/\.ics$/, '-' + kind + '.ics');
@@ -178,6 +179,12 @@ export class WalkStore {
   // ---------------------------------------------------------------- writes
   async upsert(id, body) {
     if (!validId(id)) throw new WalkError('bad walk id');
+    // Deleted on purpose (remove): a device that still has it (the frame's open end-of-walk sheet, a
+    // phone's queue) mustn't bring it back. body.restore (an Undo of that delete) clears the tombstone.
+    if (await this.tombstoned(id)) {
+      if (!(body && body.restore === true)) throw new WalkError('this walk was deleted on another device', 410, { deleted: true, id });
+      await this.env.DATA.delete('walk-deleted:' + id);
+    }
     const now = Date.now(), f = normalize(body, now);
     const [oldEvent, recent] = await Promise.all([this.ll.get(id), this.walks(now - 30 * DAY)]);
     if (!oldEvent && await this.ll.exists(id)) throw new WalkError('that id belongs to another kind of event', 409);
@@ -207,17 +214,25 @@ export class WalkStore {
     return walkJSON(saved, tz);
   }
 
-  async remove(id) {
+  // An explicit delete leaves a tombstone (KV walk-deleted:<id>, TOMBSTONE_DAYS) so a later upsert of the
+  // same id is a 410, not a new walk. tombstone: false for a discarded mis-tap (stop()).
+  async remove(id, { tombstone = true } = {}) {
     if (!validId(id)) throw new WalkError('bad walk id');
     const old = await this.ll.get(id);
-    if (!old || old.deleted_at) return { ok: true, id, existed: false };
+    if (!old || old.deleted_at) { if (tombstone) await this.tomb(id); return { ok: true, id, existed: false }; }
     const w = fromEvent(await this.ll.del(id, 'deleted on the frame'));
+    if (tombstone) await this.tomb(id);
     this.later(async () => { await this.syncPotty(w); if (needsSync(w, Date.now(), true)) await this.sync(id); });
     const tz = w.tz || 'UTC';
     this.later(() => this.notifyHA('delete', w, tz));
     this.later(() => this.syncPlan(localDate(w.startedAt, tz)));
     return { ok: true, id, existed: true };
   }
+
+  async tomb(id) {
+    if (this.env.DATA) await this.env.DATA.put('walk-deleted:' + id, String(Date.now()), { expirationTtl: TOMBSTONE_DAYS * 86400 });
+  }
+  async tombstoned(id) { return !!(this.env.DATA && await this.env.DATA.get('walk-deleted:' + id)); }
 
   // Server-timed start and stop for an iPhone Shortcut or an agent.
   async start(body = {}) {
@@ -227,7 +242,7 @@ export class WalkStore {
     const a = (await this.walks(Date.now() - 30 * DAY)).find((w) => w.endedAt == null && !w.abandoned);
     if (!a) throw new WalkError('no walk is active', 404);
     // Stopped within a minute of starting: a mis-tap, not a walk. Drop it instead of logging it.
-    if (Date.now() - a.startedAt < MIN_WALK_MS) return { ...(await this.remove(a.id)), discarded: true };
+    if (Date.now() - a.startedAt < MIN_WALK_MS) return { ...(await this.remove(a.id, { tombstone: false })), discarded: true };
     const pick = (v, d) => (v == null || v === '' ? d : v);
     const guess = body.pee == null || body.pee === '' || body.poop == null || body.poop === '' ? await this.expectFor(a) : { pee: true, poop: false };
     return this.upsert(a.id, {
@@ -237,14 +252,17 @@ export class WalkStore {
   }
 
   // What a walk probably brought (a stop that doesn't say): its planned walk's expect, else history.
+  // The planned walk is the one matchPlans gives it (its planId first, the days either side of its
+  // start too, never one planned after it ended), as on GET /walk.
   async expectFor(w) {
     const now = Date.now(), recent = await this.walks(now - 15 * DAY), tz = w.tz || household(recent).tz;
-    const plan = await this.loadPlan(localDate(w.startedAt, tz)).catch(() => null);
+    const live = recent.filter((x) => !x.deletedAt && x.id !== w.id).concat([{ ...w, endedAt: w.endedAt ?? now }]);
+    const date = localDate(w.startedAt, tz);
+    const plans = (await Promise.all([prevDate(date), date, nextDate(date)].map((d) => this.loadPlan(d).catch(() => null))))
+      .filter((p) => p && Array.isArray(p.items));
+    const matched = matchPlans(plans, live);
     let item = null;
-    if (plan) {
-      item = plan.items.find((x) => x.id === w.planId) ||
-        plan.items.filter((x) => Math.abs(x.start - w.startedAt) <= MATCH_WINDOW).sort((x, y) => Math.abs(x.start - w.startedAt) - Math.abs(y.start - w.startedAt))[0];
-    }
+    for (const p of plans) for (const [id, x] of matched.get(p.date)) if (x.id === w.id) item = p.items.find((i) => i.id === id);
     return expectPotty(item && item.expect, recent.filter((x) => !x.deletedAt), w.startedAt, minuteOfDay(tz), w.id);
   }
 
