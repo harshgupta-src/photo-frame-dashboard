@@ -44,6 +44,8 @@ const pad = (n) => String(n).padStart(2, '0');
 
 // ISO with Z/offset → that instant. Wall-clock "YYYY-MM-DDTHH:MM[:SS]" → that time in `tz`.
 export function parseTime(s, tz = DEFAULT_TZ) {
+  if (tz == null || tz === '') tz = DEFAULT_TZ;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { throw new AgentCalError(400, 'bad timezone (use an IANA name like America/New_York): ' + tz); }
   const str = String(s ?? '').trim();
   if (/(Z|[+-]\d{2}:?\d{2})$/i.test(str)) {
     const ms = Date.parse(str);

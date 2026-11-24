@@ -183,6 +183,13 @@ and `walk_plan.yaml`, with your Worker subdomain and entity ids; see `../WALKS.m
 Secrets: `frame_walk_auth: "Bearer <WALK_KEY>"` and `frame_walk_webhook_id` (random). The Worker's
 `HA_WALK_WEBHOOK_URL` is `https://<ha external url>/api/webhook/<that id>`.
 
+## Dog meals
+
+`maya-meal.yaml` (copy to `/config/packages/maya_meal.yaml`; secrets `lifelog_auth`,
+`maya_meal_webhook_id`) logs meals from the NFC tap, catches double feeds (a second tap within 30
+min of a logged meal, well before the next one, asks before logging), sends meal heads-ups and
+missed-meal reminders, and syncs undo to both phones. Details are in the file's header.
+
 ## Dog food bumps
 
 `maya-food.yaml` (copy to `/config/packages/maya_food.yaml` with your Worker subdomain; it uses

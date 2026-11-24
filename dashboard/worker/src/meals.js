@@ -16,7 +16,7 @@
 // or when it is fed.
 import ICAL from 'ical.js';
 import { calendarEntries, putEvent, deleteEvent, getEvent, calKey } from './icloud.js';
-import { expandICS } from './ics.js';
+import { expandICS, icalMs } from './ics.js';
 import { WalkError, localDate, localHM } from './walks.js';
 import { when, validDate, planCalendarName } from './walkplan.js';
 import { WalkStore, household } from './walkstore.js';
@@ -73,6 +73,21 @@ export function mealCalendars(env) {
   return [...out].map(([name, people]) => ({ name, people }));
 }
 
+// A series occurrence's regular time (its RECURRENCE-ID, occ as ical.js prints it), not where an
+// override (e.g. moved by hand in Calendar) put it.
+function seriesHM(ics, occ, tz) {
+  try {
+    const root = new ICAL.Component(ICAL.parse(ics));
+    const v = root.getAllSubcomponents('vevent').find((x) => !x.hasProperty('recurrence-id') && x.hasProperty('rrule'));
+    const ds = v && v.getFirstPropertyValue('dtstart');
+    if (!ds || ds.isDate) return null;
+    const t = ICAL.Time.fromString(occ);
+    if (!/Z$/.test(occ)) t.zone = ds.zone;
+    const ms = icalMs(t, v.getFirstProperty('dtstart').getParameter('tzid'));
+    return Number.isNaN(ms) ? null : localHM(ms, tz);
+  } catch { return null; }
+}
+
 const icsProp = (ics, name) => { const m = new RegExp('^' + name + '(?:;[^:\\r\\n]*)?:([^\\r\\n]*)', 'mi').exec(ics); return m ? m[1].trim() : null; };
 const uidOf = (ics) => icsProp(ics, 'UID');
 
@@ -93,7 +108,7 @@ export function moveICS(ics, { start, end, usual, desc }, now) {
   v.addPropertyWithValue('dtstamp', utc(now));
   v.addPropertyWithValue('last-modified', utc(now));
   if (desc) v.addPropertyWithValue('description', desc);
-  if (usual && !v.hasProperty('x-maya-usual')) v.addPropertyWithValue('x-maya-usual', usual);
+  if (usual) v.updatePropertyWithValue('x-maya-usual', usual);
   v.updatePropertyWithValue('sequence', (parseInt(v.getFirstPropertyValue('sequence'), 10) || 0) + 1);
   return root.toString() + '\r\n';
 }
@@ -201,7 +216,7 @@ export class MealStore {
     const deny = (what) => (access[what] ? null : { status: 401, body: { error: 'unauthorized' } });
     const run = async (fn) => {
       try { return { status: 200, body: await fn() }; } catch (e) {
-        return { status: e instanceof WalkError ? e.status : 500, body: { error: String(e.message || e) } };
+        return { status: e instanceof WalkError ? e.status : 500, body: { error: String(e.message || e), ...(e.partial || {}) } };
       }
     };
     const withBody = async (fn) => {
@@ -261,7 +276,7 @@ export class MealStore {
           const occ = recurring ? o.id.slice(o.id.lastIndexOf('@') + 1) : null;
           all.push({
             id: 'maya_meal-' + date + '-' + kind, kind, meal: KINDS[kind], title: o.title, start: o.start, end: o.end,
-            usual: icsProp(r.ics, 'X-MAYA-USUAL') || localHM(at, tz), moved: false, calendar: cal.name, people: cal.people,
+            usual: icsProp(r.ics, 'X-MAYA-USUAL') || (occ && seriesHM(r.ics, occ, tz)) || localHM(at, tz), hasUsual: !!icsProp(r.ics, 'X-MAYA-USUAL'), moved: false, calendar: cal.name, people: cal.people,
             cups: cupsOf(o.title, o.notes), notes: (o.notes && o.notes.length >= 500 ? descOf(r.ics, occ) : o.notes) || null, uid: uidOf(r.ics), recurring, occ,
             modified: icsProp(r.ics, 'LAST-MODIFIED') || icsProp(r.ics, 'DTSTAMP') || '', href: r.href, ics: r.ics,
           });
@@ -275,6 +290,10 @@ export class MealStore {
       list.sort((a, b) => (a.recurring - b.recurring) || (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
       meals.push(list[0]);
       dupes.push(...list.slice(1));
+      // The usual time of a copy (e.g. a split-off occurrence, or one an agent re-wrote) comes from the
+      // series it belongs with, else from a dupe that recorded one, never from where the copy sits now.
+      const series = list.find((x) => x.recurring), known = list.find((x) => x.hasUsual);
+      if (!list[0].recurring && (series || (!list[0].hasUsual && known))) list[0].usual = (series || known).usual;
     }
     for (const x of meals) x.moved = x.usual !== localHM(Date.parse(x.start), tz);
     meals.sort((a, b) => (a.start < b.start ? -1 : 1));
@@ -283,7 +302,7 @@ export class MealStore {
 
   async get(date) {
     const d = await this.day(date);
-    const pub = ({ href, ics, modified, occ, ...x }) => x;
+    const pub = ({ href, ics, modified, occ, hasUsual, ...x }) => x;
     return { date: d.date, tz: d.tz, meals: d.meals.map(pub), duplicates: d.dupes.map(pub) };
   }
 
@@ -296,6 +315,10 @@ export class MealStore {
     try {
       await this.planMeals(date, body, d, byKind, out, now, reason);
       ok = true;
+    } catch (e) {
+      // What already landed before the failure (e.g. iCloud refusing a later write) is reported too.
+      if (e && typeof e === 'object') e.partial = out;
+      throw e;
     } finally {
       // After a failure too: a write may have landed before it.
       if (!ok || out.changed.length || out.removed.length) await this.forgetEvents();

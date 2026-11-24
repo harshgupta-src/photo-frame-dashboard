@@ -182,7 +182,10 @@ test('a plan removes the day\'s other copies of a meal: other UIDs deleted, a se
   const s = new MealStore(env);
   assert.equal((await s.get('2026-11-16')).duplicates.length, 3);
   const r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '20:30' }] });
-  assert.deepEqual(r.unchanged, ['dinner']);
+  // The kept copy sits at 20:30 but the series' usual is 18:30: it records that (and the move line).
+  assert.deepEqual([r.unchanged, r.changed.map((c) => [c.kind, c.usual])], [[], [['dinner', '18:30']]]);
+  assert.match(unfold(objects.get(ambuja)), /X-MAYA-USUAL:18:30/);
+  assert.match(unfold(objects.get(ambuja)), /Moved from the usual 18:30/);
   assert.deepEqual(r.removed.map((x) => x.calendar).sort(), ['A&H Life', 'Harsh’s Calendar']);
   assert.equal(objects.has(harsh), false);
   assert.equal(objects.has(ambuja), true);
@@ -239,4 +242,45 @@ test('a meal change, log or undo clears the frame\'s cached /events', async () =
   cache();
   await s.unlog('maya_meal-2026-11-16-breakfast');
   assert.equal(kv.has('events'), false, 'after an undo');
+});
+
+test('usual time: a hand-moved occurrence keeps the series time, a copy takes the series\' or a dupe\'s', async () => {
+  env.TZ = 'America/New_York';
+  // The 16th's occurrence moved to 20:30 in Calendar (an override with RECURRENCE-ID).
+  const override = 'BEGIN:VEVENT\r\nUID:SER-1\r\nDTSTAMP:20261101T000000Z\r\nRECURRENCE-ID;TZID=America/New_York:20261116T183000\r\n' +
+    'DTSTART;TZID=America/New_York:20261116T203000\r\nDTEND;TZID=America/New_York:20261116T204500\r\nSUMMARY:Maya dinner 3/4 cup\r\nEND:VEVENT\r\n';
+  objects.set(CALS['A&H Life'] + 'ser.ics', SERIES.replace('END:VCALENDAR', override + 'END:VCALENDAR'));
+  const s = new MealStore(env);
+  let g = (await s.get('2026-11-16')).meals.find((m) => m.kind === 'dinner');
+  assert.deepEqual([g.start, g.usual, g.moved], ['2026-11-17T01:30:00.000Z', '18:30', true]);
+  const r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '19:45' }] });
+  assert.equal(r.changed[0].usual, '18:30');
+  assert.match(unfold(objects.get(CALS['A&H Life'] + 'maya-meal-plan-2026-11-16-dinner.ics')), /X-MAYA-USUAL:18:30/);
+
+  // A copy written with the wrong usual next to the series' own occurrence: the series wins.
+  objects.set(CALS['Ambuja’s Calendar'] + 'c17.ics', vevent('c17', '20261118T013000Z', '20261118T014500Z', 'Maya dinner 3/4 cup').replace('SUMMARY', 'X-MAYA-USUAL:20:30\r\nSUMMARY'));
+  g = (await s.get('2026-11-17')).meals.find((m) => m.kind === 'dinner');
+  assert.deepEqual([g.calendar, g.usual], ['Ambuja’s Calendar', '18:30']);
+  // A 90-min check measured from 18:30: 20:30 is out unless it's a move back toward the usual time.
+  const p = await s.putPlan('2026-11-17', { meals: [{ kind: 'dinner', start: '20:15' }] });
+  assert.deepEqual([p.changed[0].usual, p.removed.length], ['18:30', 1]);
+  assert.match(unfold(objects.get(CALS['Ambuja’s Calendar'] + 'c17.ics')), /X-MAYA-USUAL:18:30/);
+
+  // A copy without X-MAYA-USUAL takes a dupe's recorded one, not its own time.
+  objects.set(CALS['Harsh’s Calendar'] + 'd1.ics', vevent('d1', '20261117T013000Z', '20261117T014500Z', 'Maya snack 1/4 cup').replace('DTSTAMP:20261101', 'DTSTAMP:20261102'));
+  objects.set(CALS['A&H Life'] + 'd2.ics', vevent('d2', '20261117T020000Z', '20261117T021000Z', 'Maya snack 1/4 cup').replace('SUMMARY', 'X-MAYA-USUAL:21:00\r\nSUMMARY'));
+  objects.delete(CALS['A&H Life'] + 's1.ics');
+  g = (await s.get('2026-11-16')).meals.find((m) => m.kind === 'night-snack');
+  assert.equal(g.usual, '21:00');
+});
+
+test('a plan that fails partway reports what it already changed', async () => {
+  const s = new MealStore(env);
+  failPut = (u) => u.includes('b1.ics');
+  const r = await s.route(new Request('https://x/meals/plan/2026-11-16', { method: 'PUT', body: JSON.stringify({ meals: [{ kind: 'lunch', start: '13:00' }, { kind: 'breakfast', start: '07:15' }] }) }),
+    new URL('https://x/meals/plan/2026-11-16'), { write: true, read: true });
+  assert.equal(r.status, 500);
+  assert.ok(r.body.error);
+  assert.deepEqual(r.body.changed.map((c) => c.kind), ['lunch']);
+  assert.match(objects.get(CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-lunch.ics'), /DTSTART:20261116T210000Z/);
 });

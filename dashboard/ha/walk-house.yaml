@@ -32,7 +32,9 @@ rest_command:
 
 template:
   # The walk HA is tracking. Restored across restarts. Ops (event maya_walk_update):
-  #   start {walk_id, walkers, started_at, points} · point {walk_id, point} · turned_off {walk_id, entities} · end {walk_id}
+  #   start {walk_id, walkers, started_at, points} · point {walk_id, point} · checked {walk_id}
+  #   · turned_off {walk_id, entities} · end {walk_id}
+  # `checked` is set once the 1-minute empty-house check has run, so a restart before it can resume it.
   - trigger:
       - trigger: event
         event_type: maya_walk_update
@@ -57,6 +59,11 @@ template:
             {%- if d.op == 'start' -%}{{ [] }}
             {%- elif d.op == 'turned_off' and d.walk_id == this.attributes.walk_id -%}{{ d.entities }}
             {%- else -%}{{ this.attributes.turned_off | default([]) }}{%- endif -%}
+          checked: >-
+            {%- set d = trigger.event.data -%}
+            {%- if d.op == 'start' -%}{{ false }}
+            {%- elif d.op in ['checked', 'turned_off'] and d.walk_id == this.attributes.walk_id -%}{{ true }}
+            {%- else -%}{{ this.attributes.checked | default(true) }}{%- endif -%}
           route: >-
             {%- set d = trigger.event.data -%}
             {%- set old = this.attributes.route | default([]) -%}
@@ -71,6 +78,7 @@ script:
     mode: restart
     fields:
       walk: { description: "The Worker's walk JSON (id, startedAt, walkerIds)" }
+      resume: { description: "Already tracked (HA restarted before the 1-min check): only run the check" }
     variables:
       # Turned off when the house is empty. Lights and fans by domain, TVs by name (not speakers).
       tvs:
@@ -84,22 +92,26 @@ script:
       walkers: "{{ walk.walkerIds | default([]) }}"
       started: "{{ as_timestamp(walk.startedAt) }}"
     sequence:
-      - event: maya_walk_update
-        event_data:
-          op: start
-          walk_id: "{{ walk.id }}"
-          walkers: "{{ walkers }}"
-          started_at: "{{ walk.startedAt }}"
-          points: >-
-            {%- set ns = namespace(out=[]) -%}
-            {%- for p in states.person if p.name.split(' ')[0] | lower in walkers and p.attributes.latitude is defined -%}
-              {%- set ns.out = ns.out + [{'who': p.name.split(' ')[0] | lower, 'lat': p.attributes.latitude, 'lon': p.attributes.longitude,
-                  'acc': p.attributes.gps_accuracy | default(none), 't': as_timestamp(p.last_updated) | round(0)}] -%}
-            {%- endfor -%}
-            {{ ns.out }}
-      - action: script.maya_walk_locate
-        data:
-          walkers: "{{ walkers }}"
+      - if:
+          - condition: template
+            value_template: "{{ not (resume | default(false)) }}"
+        then:
+          - event: maya_walk_update
+            event_data:
+              op: start
+              walk_id: "{{ walk.id }}"
+              walkers: "{{ walkers }}"
+              started_at: "{{ walk.startedAt }}"
+              points: >-
+                {%- set ns = namespace(out=[]) -%}
+                {%- for p in states.person if p.name.split(' ')[0] | lower in walkers and p.attributes.latitude is defined -%}
+                  {%- set ns.out = ns.out + [{'who': p.name.split(' ')[0] | lower, 'lat': p.attributes.latitude, 'lon': p.attributes.longitude,
+                      'acc': p.attributes.gps_accuracy | default(none), 't': as_timestamp(p.last_updated) | round(0)}] -%}
+                {%- endfor -%}
+                {{ ns.out }}
+          - action: script.maya_walk_locate
+            data:
+              walkers: "{{ walkers }}"
       # Only act on a fresh start (not one HA noticed late, e.g. after a restart).
       - condition: template
         value_template: "{{ now().timestamp() - started < 300 }}"
@@ -107,6 +119,10 @@ script:
           seconds: "{{ [0, (started + 60 - now().timestamp()) | round(0, 'ceil')] | max }}"
       - condition: template
         value_template: "{{ is_state('sensor.maya_walk', 'out') and state_attr('sensor.maya_walk', 'walk_id') == walk.id }}"
+      - event: maya_walk_update
+        event_data:
+          op: checked
+          walk_id: "{{ walk.id }}"
       - variables:
           # Non-walkers who are, or may be, home. Only not_home or another zone counts as away; a phone
           # that isn't reporting (unknown/unavailable) may be at home, so the house is left on.
@@ -147,6 +163,7 @@ script:
     mode: queued
     fields:
       walk_id: { description: The walk id being ended }
+      deleted: { description: "The walk was deleted, so its route isn't sent" }
     sequence:
       - action: script.turn_off
         target:
@@ -191,7 +208,7 @@ script:
               message: "Back home, turned on {{ turned_off | count }} again"
       - if:
           - condition: template
-            value_template: "{{ (route + last) | count > 0 }}"
+            value_template: "{{ (route + last) | count > 0 and not (deleted | default(false) | bool) }}"
         then:
           - action: rest_command.frame_walk_route
             data:
@@ -204,7 +221,7 @@ script:
             data:
               name: Maya walk
               message: >-
-                Route {{ 'saved' if put is defined and put.status == 200 else 'not saved (' ~ (put.status if put is defined else 'error') ~ ')' }}:
+                Route {{ 'saved' if put is defined and put.status == 200 else ('not saved, the walk was deleted' if put is defined and put.status == 404 else 'not saved (' ~ (put.status if put is defined else 'error') ~ ')') }}:
                 {{ (route + last) | count }} points{{ ', ' ~ put.content.distanceM ~ ' m' if put is defined and put.status == 200 and put.content.distanceM is defined else '' }}
 
   maya_walk_locate:
@@ -276,6 +293,10 @@ automation:
           - action: script.maya_walk_end
             data:
               walk_id: "{{ tracked }}"
+              # Deleted on the frame mid-walk: the Worker would only answer 404 to the route.
+              deleted: >-
+                {{ trigger.id == 'hook' and trigger.json is mapping and trigger.json.event == 'delete'
+                   and trigger.json.walk is mapping and trigger.json.walk.id == tracked }}
       - if:
           - condition: template
             value_template: "{{ active is mapping and active.id != tracked }}"
@@ -287,6 +308,22 @@ automation:
               variables:
                 walk: "{{ active }}"
         else:
+          # HA restarted during the walk's first minute: the 1-min empty-house check never ran, and the
+          # restored sensor already tracks this walk, so resume just the check (it skips walks > 5 min old).
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ active is mapping and active.id == tracked and is_state('script.maya_walk_start', 'off')
+                     and state_attr('sensor.maya_walk', 'checked') == false
+                     and now().timestamp() - as_timestamp(active.startedAt, 0) < 300 }}
+            then:
+              - action: script.turn_on
+                target:
+                  entity_id: script.maya_walk_start
+                data:
+                  variables:
+                    walk: "{{ active }}"
+                    resume: true
           - if:
               - condition: template
                 value_template: "{{ active is mapping and trigger.id == 'tick' }}"

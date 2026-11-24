@@ -201,3 +201,8 @@ test('icsTime keeps the repeated hour unambiguous; localISO and TZID without a V
   const bare = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:x\r\nSUMMARY:x\r\nDTSTART;TZID=America/New_York:20260701T090000\r\nDTEND;TZID=America/New_York:20260701T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
   assert.equal(expandICS(bare, { name: 'A' }, new Date('2026-07-01T00:00Z'), new Date('2026-07-02T00:00Z'))[0].start, '2026-07-01T13:00:00.000Z');
 });
+
+test('an unknown timezone is a 400, not a 502', () => {
+  assert.throws(() => parseTime('2026-11-12T12:30', 'Mars/Olympus'), (e) => e.status === 400 && /bad timezone/.test(e.message));
+  assert.equal(new Date(parseTime('2026-11-12T12:30', 'America/Los_Angeles')).toISOString(), '2026-11-12T20:30:00.000Z');
+});

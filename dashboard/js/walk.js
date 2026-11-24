@@ -109,11 +109,13 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   }
 
   // ---------------------------------------------------------------- outbox
-  function enqueue(op, rec) {
+  // check: finishing the active walk. Another device (a phone) may have stopped it while the sheet was
+  // open, so the Worker's copy is read first and an already-ended walk isn't overwritten (see flush).
+  function enqueue(op, rec, check) {
     gen++;
     watchUntil = Date.now() + REPLAN_WATCH;
     var box = read(OUTBOX, []).filter(function (o) { return o.id !== rec.id; });
-    box.push({ op: op, id: rec.id, rec: op === 'put' ? rec : undefined });
+    box.push({ op: op, id: rec.id, rec: op === 'put' ? rec : undefined, check: check ? true : undefined });
     write(OUTBOX, box);
     flush();
   }
@@ -141,7 +143,11 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     if (!box.length) return Promise.resolve();
     syncing = true;
     var o = box[0];
-    return send(o).then(function (r) {
+    return (o.check ? endedElsewhere(o) : Promise.resolve(null)).then(function (srv) {
+      if (!srv) return send(o);
+      adoptEnded(o, srv);
+      return { status: 200, body: {}, skipped: true };
+    }).then(function (r) {
       if (r.status >= 500 || r.status === 429) throw new Error('HTTP ' + r.status);
       var rest = read(OUTBOX, []);
       if (rest[0] && rest[0].id === o.id && JSON.stringify(rest[0]) === JSON.stringify(o)) rest.shift();
@@ -153,7 +159,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
       } else if (r.status >= 400) {
         W.error = r.body.error || 'HTTP ' + r.status;
         App.toast('Walk not saved · ' + App.esc(W.error), { tone: 'error', icon: 'bolt' });
-      } else if (o.op === 'put' && r.body.id) {
+      } else if (!r.skipped && o.op === 'put' && r.body.id) {
         W.recent.forEach(function (w) { if (w.id === r.body.id) w.calendar = r.body.calendar; });
       }
       syncing = false;
@@ -168,6 +174,33 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
       if (again) { again = false; return flush(); }
     });
   }
+
+  // The Worker's ended copy of walk o.id, or null when it's still active there (or unknown: never
+  // synced). Errors reject, so the finish stays queued and is retried.
+  function endedElsewhere(o) {
+    return fetch(API + '/walk', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        if (j.active && j.active.id === o.id) return null;
+        var hit = (j.recent || []).filter(function (w) { return w.id === o.id && w.endedAt; })[0];
+        return hit ? fromServer(hit) : null;
+      });
+  }
+  function adoptEnded(o, srv) {
+    var mine = o.rec;
+    srv.calendar = srv.calendar || (W.recent.filter(function (w) { return w.id === srv.id; })[0] || {}).calendar;
+    if (W.active && W.active.id === srv.id) W.active = null;
+    W.recent = W.recent.filter(function (w) { return w.id !== srv.id; }).concat([srv])
+      .sort(function (a, b) { return b.startedAt - a.startedAt; });
+    // Same as ours (our own earlier PUT whose answer was lost): nothing to say.
+    if (mine && (mine.pee !== srv.pee || mine.poop !== srv.poop || Math.abs(mine.endedAt - srv.endedAt) > 60e3)) {
+      App.toast(App.esc(window.CONFIG.dog) + '’s walk was already logged on another device · kept that one', { icon: 'clock' });
+    }
+  }
+  W.endedElsewhere = function (id) {
+    if (W.active && W.active.id === id) return null;
+    return W.recent.filter(function (w) { return w.id === id && w.endedAt; })[0] || null;
+  };
 
   // Outbox first, then adopt the Worker's state (a walk started or stopped from a phone shows up).
   W.refresh = function () {
@@ -230,14 +263,23 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   };
   W.resume = function () { if (W.active) { W.active.endedAt = null; changed(); } };
   // A completed walk: the one just finished, or an edit of an old one.
-  W.save = function (rec) {
+  // opts.finishing: the end-of-walk sheet for the active walk. Returns false (nothing saved) when another
+  // device already ended that walk while the sheet was open; its pee/poop/end time are kept.
+  W.save = function (rec, opts) {
+    var finishing = !!(opts && opts.finishing);
+    if (finishing && W.endedElsewhere(rec.id)) {
+      if (App.toast) App.toast(App.esc(window.CONFIG.dog) + '’s walk was already logged on another device · kept that one', { icon: 'clock' });
+      changed();
+      return false;
+    }
     if (W.active && W.active.id === rec.id) W.active = null;
     planStatus(rec.planId, 'done');
     W.recent = W.recent.filter(function (w) { return w.id !== rec.id; }).concat([rec])
       .sort(function (a, b) { return b.startedAt - a.startedAt; });
     rec.calendar = 'pending';
-    enqueue('put', rec);
+    enqueue('put', rec, finishing);
     changed();
+    return true;
   };
   W.remove = function (rec) {
     if (W.active && W.active.id === rec.id) W.active = null;
@@ -272,7 +314,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     try { g = W.suggest(r); } catch (e) { /* App.fmt not ready: plain defaults */ }
     if (r.pee == null) r.pee = g.pee;
     if (r.poop == null) r.poop = g.poop;
-    W.save(r);
+    W.save(r, { finishing: true });
   }
 
   if (!W.on) { console.warn('Walk log is local only: VITE_FRAME_API / VITE_FRAME_KEY not set'); return; }

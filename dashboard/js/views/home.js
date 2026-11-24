@@ -234,7 +234,7 @@ import { createHold } from '../todo.js';
         // Saved, or closed by the idle timer while finishing: log it as it stands.
         if (opts.finishing && r.endedAt - r.startedAt < App.walk.MIN_MS) { App.walk.resume(); discardShort(App.walk.active); return; }
         if (saved || opts.finishing) {
-          App.walk.save(r);
+          if (App.walk.save(r, { finishing: opts.finishing }) === false) return;
           if (opts.finishing) App.toast('Walk logged · ' + App.fmt.mins((r.endedAt - r.startedAt) / 60000) + ' · ' + potty(r), { icon: 'check' });
         }
       }

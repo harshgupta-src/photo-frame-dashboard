@@ -27,7 +27,8 @@
 .h-wx-hours { display: grid; grid-template-columns: repeat(7, 1fr); }
 .h-hr { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 16px; }
 .h-hr-l { font-size: var(--fs-min); font-weight: 700; color: var(--mute); text-transform: uppercase; }
-.h-hr-i { height: 26px; display: grid; place-items: center; }
+/* The icon is lifted up to 8px by temperature (js/views/home.js); the top margin keeps it off the label. */
+.h-hr-i { height: 22px; margin-top: 6px; display: grid; place-items: center; }
 .h-hr b { font-weight: 800; font-stretch: 70%; }
 .h-hr.is-wet .h-hr-i { color: #1F6FEB; }
 

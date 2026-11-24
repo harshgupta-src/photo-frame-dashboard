@@ -89,8 +89,8 @@ test('every() skips ticks while hidden and catches up once when shown', async ()
   doc.hidden = false;
   listeners.forEach((f) => f());
   listeners.forEach((f) => f()); // a second visibilitychange doesn't run it again
-  stop();
   await new Promise((r) => setTimeout(r, 5));
+  stop();
   assert.equal(resumes, 1);
 });
 

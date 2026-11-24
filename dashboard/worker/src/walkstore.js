@@ -17,7 +17,7 @@ import {
 } from './walks.js';
 import { loadGraph, snapRoute } from './snap.js';
 import { owntracksPoints, mergePaths } from './owntracks.js';
-import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate, nextDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
+import { normalizePlan, matchPlans, planCalendarName, planRev, planICS, planJSON, validDate, nextDate, prevDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
 import { expectPotty } from './walkexpect.js';
 
 const DAY = 864e5;
@@ -125,7 +125,7 @@ export class WalkStore {
     const all = await this.walks(now - (RECENT_DAYS + 1) * DAY, { deleted: true });
     const live = all.filter((w) => !w.deletedAt);
     const { tz } = household(all);
-    const active = live.find((w) => w.endedAt == null);
+    const active = live.find((w) => w.endedAt == null && !w.abandoned);
     const due = all.filter((w) => needsSync(w, now));
     if (due.length) this.later(() => this.syncAll(due));
     const plans = [];
@@ -133,7 +133,7 @@ export class WalkStore {
     for (const date of [today, nextDate(today)]) {
       const plan = await this.loadPlan(date);
       if (!plan) continue;
-      const matched = matchPlan(plan.items, live);
+      const matched = await this.matchDay(plan, live);
       if (this.planDue(plan, matched, now)) this.later(() => this.syncPlan(date));
       plans.push(planJSON(plan, matched, now, live, plan.tz || tz));
     }
@@ -184,7 +184,7 @@ export class WalkStore {
     const old = oldEvent && fromEvent(oldEvent);
     const h = household(recent), tz = f.tz || h.tz;
     if (f.endedAt == null) {
-      const a = recent.find((w) => w.endedAt == null && w.id !== id);
+      const a = recent.find((w) => w.endedAt == null && !w.abandoned && w.id !== id);
       if (a) throw new WalkError('another walk is already active', 409, { active: walkJSON(a, tz) });
     }
     const w = {
@@ -224,7 +224,7 @@ export class WalkStore {
     return this.upsert(crypto.randomUUID(), { startedAt: Date.now(), walkers: body.by || body.walkers, source: body.source || 'shortcut', dog: body.dog, planId: body.planId });
   }
   async stop(body = {}) {
-    const a = (await this.walks(Date.now() - 30 * DAY)).find((w) => w.endedAt == null);
+    const a = (await this.walks(Date.now() - 30 * DAY)).find((w) => w.endedAt == null && !w.abandoned);
     if (!a) throw new WalkError('no walk is active', 404);
     // Stopped within a minute of starting: a mis-tap, not a walk. Drop it instead of logging it.
     if (Date.now() - a.startedAt < MIN_WALK_MS) return { ...(await this.remove(a.id)), discarded: true };
@@ -385,6 +385,13 @@ export class WalkStore {
     if (!this.env.DATA) throw new WalkError('no KV namespace for walk plans', 503);
     await this.env.DATA.put('walk-plan:' + plan.date, JSON.stringify(plan), { expirationTtl: 90 * 86400 });
   }
+  // Which walk covers each of the day's planned walks (matchPlan), matched together with the days either
+  // side so a walk around midnight isn't counted for two plans.
+  async matchDay(plan, walks) {
+    const side = await Promise.all([this.loadPlan(prevDate(plan.date)), this.loadPlan(nextDate(plan.date))]);
+    const plans = [plan, ...side.filter((p) => p && p.date !== plan.date && Array.isArray(p.items))];
+    return matchPlans(plans, walks).get(plan.date);
+  }
   // Live walks near the plan's day.
   async planWalks(plan) {
     // 15 days back: the walks it matches, and the history behind each walk's expect.
@@ -393,7 +400,7 @@ export class WalkStore {
   }
   // Does any planned event need writing or removing? (no iCloud call)
   planDue(plan, matched, now = Date.now()) {
-    if ((plan.removed || []).length) return true;
+    if ((plan.removed || []).some((x) => !(x.cal && x.cal.retry_at && now < x.cal.retry_at))) return true;
     return plan.items.some((x) => {
       const c = x.cal || {};
       if (c.retry_at && now < c.retry_at) return false;
@@ -410,7 +417,7 @@ export class WalkStore {
     const plan = await this.loadPlan(d);
     if (!plan) return { date: d, walks: [] };
     const walks = await this.planWalks(plan);
-    return planJSON(plan, matchPlan(plan.items, walks), now, walks, plan.tz || household(walks).tz);
+    return planJSON(plan, await this.matchDay(plan, walks), now, walks, plan.tz || household(walks).tz);
   }
 
   // Replaces the day's plan and writes its calendar events before answering.
@@ -418,9 +425,10 @@ export class WalkStore {
     const now = Date.now(), recent = await this.walks(now - 30 * DAY), h = household(recent);
     const old = await this.loadPlan(date);
     // Planned walks already walked or under way are never dropped for being after bedtime.
-    const oldMatch = old ? matchPlan(old.items, recent.filter((w) => !w.deletedAt)) : new Map();
+    const oldMatch = old ? await this.matchDay(old, recent.filter((w) => !w.deletedAt)) : new Map();
     const plan = normalizePlan(body, date, (body && body.tz) || h.tz, h.names, now, new Set(oldMatch.keys()));
     plan.dog = h.dog;
+    plan.v = crypto.randomUUID(); // tells two PUTs in the same millisecond apart (syncPlan's race check)
     const prev = new Map(((old && old.items) || []).map((x) => [x.id, x]));
     for (const x of plan.items) {
       const o = prev.get(x.id);
@@ -451,7 +459,7 @@ export class WalkStore {
   async syncPlan(date) {
     const plan = await this.loadPlan(date);
     if (!plan) return null;
-    const now = Date.now(), walks = await this.planWalks(plan), matched = matchPlan(plan.items, walks);
+    const now = Date.now(), walks = await this.planWalks(plan), matched = await this.matchDay(plan, walks);
     let changed = false;
     const fail = (x, err) => {
       const tries = ((x.cal && x.cal.tries) || 0) + 1;
@@ -488,7 +496,7 @@ export class WalkStore {
     if (changed) {
       // Keep any re-plan that landed while iCloud answered; just record where events now are.
       const cur = await this.loadPlan(date);
-      if (cur && cur.updated !== plan.updated) {
+      if (cur && (cur.updated !== plan.updated || cur.v !== plan.v)) {
         // Events written here that the newer plan doesn't know about: adopt them, or remove them.
         const known = new Set([...cur.items, ...(cur.removed || [])].map((x) => x.cal && x.cal.href).filter(Boolean));
         let adopted = false;

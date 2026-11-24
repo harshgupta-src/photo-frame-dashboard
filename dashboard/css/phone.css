@@ -48,6 +48,9 @@ html[data-phone] .rail-item {
   color: var(--mute);
 }
 html[data-phone] .rail-item .i { width: 25px; height: 25px; stroke-width: 1.8; }
+html[data-phone] .rail-item span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Eight tabs on a 375 pt phone: "Shopping" and "Photos" ran into each other at 10 px. */
+@media (max-width: 389px) { html[data-phone] .rail-item { font-size: 9px; letter-spacing: -.01em; } }
 html[data-phone] .rail-item.is-active { background: none; color: var(--ink); }
 html[data-phone] .rail-item.is-active .i { stroke-width: 2.4; }
 html[data-phone] .rail-item:active, html[data-phone] .rail-item.is-active:active { background: none; opacity: .6; }
@@ -88,14 +91,23 @@ html[data-phone] .toast { min-height: 48px; max-width: 100%; padding: 0 6px 0 16
 html[data-phone] .toast-msg { padding: 12px 6px 12px 0; }
 html[data-phone] .toast-undo { min-height: 36px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
 html[data-phone] .toast:not(:has(.toast-undo)) { padding-right: 16px; }
+/* Banners (js/system.js App.banner) drop in below the status bar; the buttons get their own row. */
+html[data-phone] .banners { top: calc(var(--safe-t, 0px) + 8px); left: 12px; right: 12px; gap: 8px; }
+html[data-phone] .banner { flex-wrap: wrap; min-height: 0; padding: 12px 12px 12px 14px; gap: 10px 12px; border-radius: 16px; }
+html[data-phone] .banner > .i { width: 24px; height: 24px; }
+html[data-phone] .banner-text { flex: 1 1 calc(100% - 40px); min-width: 0; }
+html[data-phone] .banner-text b { font-size: 18px; line-height: 1.15; }
+html[data-phone] .banner-text span { font-size: 14px; line-height: 1.3; }
+html[data-phone] .banner-btn { flex: 1 1 0; min-height: 44px; padding: 0 12px; font-size: 14px; border-radius: 12px; text-align: center; }
 
 /* sheets: iOS bottom sheets, full width, grabber on top */
 html[data-phone] .sheet,
 html[data-phone][data-orient="portrait"] .sheet,
 html[data-phone][data-orient="portrait"] .sheet--wide,
 html[data-phone][data-orient="portrait"] .sheet--cam {
-  top: auto; bottom: 0; left: 0; width: 100%; max-width: 100%;
-  max-height: calc(100% - var(--safe-t, 0px) - 12px);
+  /* --kb: on-screen keyboard height, so a form sheet rides above it (set by JS; 0 until then). */
+  top: auto; bottom: var(--kb, 0px); left: 0; width: 100%; max-width: 100%;
+  max-height: calc(100% - var(--safe-t, 0px) - var(--kb, 0px) - 12px);
   border-radius: 14px 14px 0 0; padding-bottom: var(--safe-b, 0px);
   transform: translateY(100%); opacity: 1;
 }
@@ -139,7 +151,7 @@ html[data-phone] .h-wx-meta b { font-size: 13px; }
 html[data-phone] .h-wx-say { font-size: 18px; margin: 6px 0 8px; }
 html[data-phone] .h-hr { font-size: 14px; }
 html[data-phone] .h-hr-l { font-size: 11px; }
-html[data-phone] .h-hr-i { height: 22px; }
+html[data-phone] .h-hr-i { height: 18px; margin-top: 6px; }
 html[data-phone] .h-hr-i .i { width: 18px; height: 18px; }
 
 html[data-phone] .h-walk { order: 3; flex-direction: column; align-items: stretch; gap: 4px; padding: 12px 14px; }
@@ -157,6 +169,18 @@ html[data-phone] .h-walk-timer { font-size: 48px; }
 html[data-phone] .h-walk-stale { max-width: none; }
 html[data-phone] .h-walk-back { order: 0; margin: 4px 0 0; align-self: flex-start; height: 38px; font-size: 16px; }
 html[data-phone] .h-walk-x { order: 0; margin: -8px -8px -8px 0; }
+/* The resting strip's portrait grid (css/portrait.css) is too wide for a phone: label · Start on top,
+   then the verdict, the next walk, and the last pee, each on its own row. */
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) {
+  grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label go" "title title" "plan plan" "last last";
+  column-gap: 10px; row-gap: 6px; padding: 12px 14px;
+}
+html[data-phone] .h-walk:not(.h-walk--out) .h-walk-head { display: contents; }
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-title { white-space: normal; }
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-go { height: 36px; padding: 0 14px; }
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-last { justify-self: start; }
+html[data-phone][data-orient="portrait"] .h-walk:not(.h-walk--out) .h-walk-plan { justify-content: space-between; }
 
 html[data-phone] .h-hero-slot { order: 4; }
 html[data-phone] .h-hero { padding: 16px 18px; gap: 12px; min-height: 140px; }
@@ -311,6 +335,16 @@ html[data-phone] .dg-id h1 { font-size: 44px; }
 html[data-phone] .dg-meta { font-size: 14px; margin-top: 4px; }
 html[data-phone] .dg-walk { height: 44px; padding: 0 16px 0 12px; gap: 8px; border-radius: 22px; font-size: 16px; }
 html[data-phone] .dg-walk .i { width: 20px; height: 20px; }
+/* Name and age on their own row, then Away · Start walk (the frame-sized Away pill covered the name). */
+html[data-phone] .dg-top { flex-wrap: wrap; row-gap: 10px; }
+html[data-phone] .dg-id { flex: 1 1 100%; }
+html[data-phone] .dg-meta { white-space: normal; }
+html[data-phone] .dg-away-btn { height: 44px; padding: 0 18px; border-radius: 22px; border-width: 1.5px; font-size: 16px; }
+html[data-phone] .dg-top .dg-walk { flex: 1 1 auto; justify-content: center; }
+html[data-phone] .dg-now.dg-away { gap: 12px; padding: 12px 14px; }
+html[data-phone] .dg-away b { font-size: 20px; }
+html[data-phone] .dg-away span { font-size: 14px; }
+html[data-phone] .dg-away .dg-away-go { padding: 10px 16px; font-size: 15px; }
 html[data-phone] .dg-food { gap: 10px; padding: 10px 12px; border-width: 1px; }
 html[data-phone] .dg-food-ic { width: 32px; height: 32px; }
 html[data-phone] .dg-food-t b { font-size: 15px; }
@@ -412,7 +446,7 @@ html[data-phone] .cp-row { padding: 10px 12px; gap: 4px; }
 html[data-phone] .cp-row-top b { font-size: 16px; font-weight: 700; }
 html[data-phone] .cp-row-meta span:not(.cp-tag) { max-width: 140px; }
 html[data-phone] .cp-tag { font-size: 10px; padding: 2px 6px; }
-html[data-phone] .cp-body.is-detail .cp-detail { min-height: calc(100vh - 220px); }
+html[data-phone] .cp-body.is-detail .cp-detail { min-height: calc(var(--stage-h, 100vh) - 220px); }
 html[data-phone] .cp-dtitle b { font-size: 17px; }
 html[data-phone] .cp-chat { overflow: visible; padding: 12px; }
 html[data-phone] .cp-bubble, html[data-phone] .cp-md { font-size: 15px; }

@@ -1,5 +1,6 @@
 // Core shell: router, demo clock, idle/ambient, toasts, sheets, helpers.
 import { assetKey, decide, markApplied } from './update.js';
+import { every } from './poll.js';
 
 (function () {
   'use strict';
@@ -266,7 +267,8 @@ import { assetKey, decide, markApplied } from './update.js';
       if (cached && isToday(cached)) applyWeather(cached);
     } catch (e) { /* ignore a bad cache */ }
     loadWeather();
-    setInterval(loadWeather, 15 * 60000);
+    // Paused while hidden, caught up on return (an iPhone app back from the background shows fresh weather).
+    every(15 * 60000, loadWeather);
   };
 
   // ------------------------------------------------------------ router
@@ -685,6 +687,16 @@ import { assetKey, decide, markApplied } from './update.js';
     if (App.handheld) {
       [300, 1000, 2500].forEach(function (ms) { setTimeout(fit, ms); });
       document.addEventListener('visibilitychange', function () { if (!document.hidden) fit(); });
+    }
+    // The iPhone keyboard shrinks only the visual viewport: lift form sheets above it (--kb, phone.css).
+    var vv = window.visualViewport;
+    if (App.phone && vv) {
+      var kb = function () {
+        var h = Math.max(0, Math.round(App.stageH - vv.height - vv.offsetTop));
+        $('#stage').style.setProperty('--kb', (h > 80 ? h : 0) + 'px');
+      };
+      vv.addEventListener('resize', kb);
+      vv.addEventListener('scroll', kb);
     }
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
     // (detail === 0) still work.

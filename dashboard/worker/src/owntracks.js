@@ -196,7 +196,8 @@ export async function owntracksPost(req, env, ctx, same, { resaveDelayMs = 20e3,
 
   const walks = await recentWalks(env, now);
   if (msg._type === 'location') {
-    const lat = Number(msg.lat), lon = Number(msg.lon), acc = msg.acc == null ? null : Math.round(Number(msg.acc));
+    const num = (v) => (v == null || v === '' ? NaN : Number(v)); // Number(null) is 0: a fix at 0,0
+    const lat = num(msg.lat), lon = num(msg.lon), acc = msg.acc == null ? null : Math.round(Number(msg.acc));
     const t = Number(msg.tst);
     if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && Number.isInteger(t) && t * 1000 <= now + 300e3 &&
       !(acc != null && !(acc >= 0 && acc <= MAX_ACC))) {

@@ -12,6 +12,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const validDate = (d) => typeof d === 'string' && DATE.test(d) && !Number.isNaN(Date.parse(d + 'T12:00:00Z'));
 // The calendar day after date (not localDate(now + 24 h): days are 23 or 25 hours around DST changes).
 export const nextDate = (d) => new Date(Date.parse(d + 'T12:00:00Z') + 864e5).toISOString().slice(0, 10);
+export const prevDate = (d) => new Date(Date.parse(d + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10);
 
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n);
 
@@ -59,9 +60,18 @@ export function normalizePlan(body, date, tz, names = {}, now = Date.now(), keep
     if (localDate(start, tz) !== date) throw new WalkError('walk ' + (i + 1) + ' does not start on ' + date);
     const walkers = walkersOf(x.walkers ?? x.by).map(({ id, name, named }) => ({ id, name: named ? name : names[id] || name }));
     if (!walkers.length) throw new WalkError('walk ' + (i + 1) + ' needs walkers');
-    const id = validId(x.id) ? x.id : date + '-' + new Date(start).toISOString().slice(11, 16).replace(':', '');
-    return { id, start, end, walkers, note: clean(x.note ?? x.notes, 200) || null, expect: normalizeExpect(x.expect), created: now };
+    const auto = !validId(x.id), id = auto ? date + '-' + new Date(start).toISOString().slice(11, 16).replace(':', '') : x.id;
+    return { id, auto, start, end, walkers, note: clean(x.note ?? x.notes, 200) || null, expect: normalizeExpect(x.expect), created: now };
   }).sort((a, b) => a.start - b.start);
+  // An auto id (date + UTC start) that another walk already has, e.g. a new walk at the same minute as a
+  // kept one, gets a suffix; walks the PUT names keep theirs (and so their calendar events). Two new
+  // walks at the same minute are still rejected below.
+  const named = new Set(all.filter((x) => !x.auto).map((x) => x.id)), taken = new Set(named);
+  for (const x of all) {
+    if (x.auto && named.has(x.id)) { const base = x.id; for (let n = 2; taken.has(x.id); n++) x.id = base + '-' + n; }
+    taken.add(x.id);
+    delete x.auto;
+  }
   const items = all.filter((x) => x.start <= late || keep.has(x.id));
   const dropped = all.filter((x) => !items.includes(x)).map((x) => ({ start: new Date(x.start).toISOString(), walkers: x.walkers.map((p) => p.id), reason: 'after bedtime' }));
   if (new Set(items.map((x) => x.id)).size !== items.length) throw new WalkError('two planned walks share an id or a start time');
@@ -74,21 +84,32 @@ export function normalizePlan(body, date, tz, names = {}, now = Date.now(), keep
 // Which logged walk covers each planned item → Map(itemId → walk). Walks naming a plan item win; the
 // rest take the nearest free item within MATCH_WINDOW of their start, but never one planned after the walk
 // ended (a replan made after a walk mustn't count it as done). walks: live (not deleted).
-export function matchPlan(items, walks) {
-  const out = new Map(), used = new Set();
+export function matchPlan(items, walks, key = (x) => x.id) {
+  const out = new Map(), used = new Set(), named = new Set();
   for (const w of walks) {
-    if (w.planId && items.some((x) => x.id === w.planId) && !out.has(w.planId)) { out.set(w.planId, w); used.add(w.id); }
+    const x = w.planId && !named.has(w.planId) && items.find((i) => i.id === w.planId && !out.has(key(i)));
+    if (x) { out.set(key(x), w); used.add(w.id); named.add(w.planId); }
   }
   for (const w of [...walks].sort((a, b) => a.startedAt - b.startedAt)) {
-    if (used.has(w.id) || (w.planId && out.has(w.planId))) continue;
+    if (used.has(w.id) || (w.planId && named.has(w.planId))) continue;
     let best = null;
     for (const x of items) {
-      if (out.has(x.id) || (x.created && w.endedAt != null && x.created > w.endedAt)) continue;
+      if (out.has(key(x)) || (x.created && w.endedAt != null && x.created > w.endedAt)) continue;
       const d = Math.abs(w.startedAt - x.start);
       if (d <= MATCH_WINDOW && (!best || d < best.d)) best = { x, d };
     }
-    if (best) { out.set(best.x.id, w); used.add(w.id); }
+    if (best) { out.set(key(best.x), w); used.add(w.id); }
   }
+  return out;
+}
+
+// matchPlan over neighbouring days at once, so a walk around midnight counts for one day's plan only
+// (the nearest), not for both. plans: [{date, items}] → Map(date → Map(itemId → walk)).
+export function matchPlans(plans, walks) {
+  const items = plans.flatMap((p) => p.items.map((x) => ({ ...x, day: p.date })));
+  const all = matchPlan(items, walks, (x) => x.day + ' ' + x.id);
+  const out = new Map(plans.map((p) => [p.date, new Map()]));
+  for (const x of items) if (all.has(x.day + ' ' + x.id)) out.get(x.day).set(x.id, all.get(x.day + ' ' + x.id));
   return out;
 }
 
@@ -169,6 +190,7 @@ export function planJSON(plan, matched, now, walks = [], tz = plan.tz || 'UTC') 
       const w = matched.get(x.id);
       return {
         id: x.id, start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString(),
+        created: x.created ? new Date(x.created).toISOString() : undefined,
         durationMin: Math.round((x.end - x.start) / 60e3),
         walkers: x.walkers.map((p) => p.name), walkerIds: x.walkers.map((p) => p.id),
         note: x.note || undefined, status: planStatus(x, w, now), walkId: w ? w.id : undefined,

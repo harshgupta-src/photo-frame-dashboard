@@ -249,8 +249,9 @@ becomes an event **🐕 Rex walk — Alex** (UID `walk-plan-<id>`) in the walker
 `WALK_PLAN_CALENDARS` (`{"alex": "Alex's Calendar", "alex+jordan": "Family"}`, ids sorted and joined
 by `+`; keys match in any order or case), else the `CALENDARS` entry with exactly those people. The frame shows them in its schedule
 too. When a walk is logged it is matched to the plan (its `planId`, else the nearest planned walk
-within 90 minutes, but never one planned after the walk ended) and that planned event is deleted; a
-planned walk whose time has passed shows as `missed`. A new PUT moves changed events (a walk that keeps its `id` keeps its event), deletes dropped
+within 90 minutes, but never one whose plan was written after the walk ended; around midnight the
+previous and next day's plans are checked together so a walk counts for one planned walk only) and that planned event is deleted; a
+planned walk whose time has passed shows as `missed`. A new PUT moves changed events (a walk that keeps its `id` keeps its event; a new walk whose generated id clashes with a kept one gets `-2`), deletes dropped
 ones and keeps the rest. A walk already done stays in the plan even if the PUT leaves it out. Plans are kept for 90 days in the Worker's KV; `GET /walk` includes today's and tomorrow's.
 
 Home Assistant writes the plan at 04:30 and replans the rest of the day 2 minutes after each walk of

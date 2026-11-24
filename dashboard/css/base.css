@@ -1,6 +1,8 @@
 /* ---------------------------------------------------------------- reset */
 *, *::before, *::after { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #0B0B0B; }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #0B0B0B; }
+/* iOS Safari inflates text after rotating to landscape unless told not to. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   font-family: var(--sans);
   font-size: var(--fs-body);
@@ -12,7 +14,7 @@ body {
   touch-action: manipulation;
 }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; }
-input { font: inherit; color: inherit; -webkit-user-select: text; user-select: text; }
+input, textarea, select { font: inherit; color: inherit; -webkit-user-select: text; user-select: text; }
 img { display: block; }
 h1, h2, h3, p { margin: 0; font-weight: inherit; }
 ul { margin: 0; padding: 0; list-style: none; }

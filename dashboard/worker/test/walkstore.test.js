@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { WalkStore } from '../src/walkstore.js';
 import { encodeGraph } from '../src/snap.js';
+import { owntracksPost, owntracksPoints } from '../src/owntracks.js';
 
 const LL = 'https://lifelog.test', CAL = 'https://caldav.test/cal/', HCAL = 'https://caldav.test/harsh/', HA = 'https://ha.test/hook';
 let events, ical, env, kv, hooks;
@@ -317,4 +318,73 @@ test('two plan PUTs racing: events the losing one wrote are removed, not left on
   assert.deepEqual(r.body.walks.map((x) => x.start.slice(11, 16)), ['19:00']);
   assert.deepEqual([...ical.keys()].filter((k) => k.startsWith(HCAL)), [HCAL + 'walk-plan-' + date + '-1900.ics']);
   assert.deepEqual(JSON.parse(kv.get('walk-plan:' + date)).removed, []);
+});
+
+test('an abandoned open walk is not active anywhere and doesn\'t block a new one', async () => {
+  const t = Date.now() - 5 * 3600e3, iso = new Date(t).toISOString();
+  events.set('walk-oldopen', { id: 'walk-oldopen', type: 'rex_walk', started_at: iso, ended_at: null, created_at: iso, updated_at: iso, deleted_at: null,
+    data: { walkers: ['Harsh'], walker_ids: ['harsh'], abandoned: true } });
+  assert.equal((await call('state')).body.active, null);
+  assert.equal((await call('active')).body.active, null);
+  const r = await call('start', { by: 'harsh' });
+  assert.equal(r.status, 200);
+  assert.equal((await call('state')).body.active.id, r.body.id);
+});
+
+test('a planned event whose delete failed waits for its backoff instead of retrying on every GET /walk', async () => {
+  setClock('2026-11-24T15:00:00Z');
+  const href = HCAL + 'walk-plan-gone.ics', put = globalThis.fetch;
+  let deletes = 0;
+  globalThis.fetch = (url, init = {}) => { if (url === href && init.method === 'DELETE') deletes++; return put(url, init); };
+  kv.set('walk-plan:2026-11-24', JSON.stringify({ date: '2026-11-24', tz: 'UTC', items: [], updated: 'x',
+    removed: [{ id: 'gone', cal: { href, error: 'boom', tries: 1, retry_at: Date.now() + 3600e3 } }] }));
+  await call('state');
+  assert.equal(deletes, 0);
+  Date.now = ((t) => () => t)(Date.now() + 2 * 3600e3);
+  await call('state');
+  assert.equal(deletes, 1);
+});
+
+test('two plan PUTs in the same millisecond: the later one still wins', async () => {
+  const t0 = Date.parse('2026-11-24T15:00:00Z');
+  Date.now = () => t0;
+  const date = '2026-11-24', put = globalThis.fetch;
+  let raced = false;
+  globalThis.fetch = async (url, init = {}) => {
+    if (!raced && url.startsWith(HCAL) && init.method === 'PUT') {
+      raced = true;
+      kv.delete('walk-plan:' + date);
+      await new WalkStore(env).putPlan(date, { walks: [{ start: '19:00', walkers: ['harsh'] }] });
+    }
+    return put(url, init);
+  };
+  const r = await call('putPlan', date, { walks: [{ start: '17:00', walkers: ['harsh'] }] });
+  assert.deepEqual(r.body.walks.map((x) => x.start.slice(11, 16)), ['19:00']);
+  assert.deepEqual(JSON.parse(kv.get('walk-plan:' + date)).items.map((x) => x.id), [date + '-1900']);
+});
+
+test('a walk just before midnight counts for that day\'s late planned walk, not also tomorrow\'s early one', async () => {
+  setClock('2026-11-20T00:05:00Z');
+  const at = (s) => Date.parse(s), harsh = [{ id: 'harsh', name: 'Harsh' }], made = at('2026-11-19T12:00:00Z');
+  kv.set('walk-plan:2026-11-19', JSON.stringify({ date: '2026-11-19', tz: 'UTC', updated: 'x',
+    items: [{ id: '2026-11-19-2310', start: at('2026-11-19T23:10:00Z'), end: at('2026-11-19T23:40:00Z'), walkers: harsh, created: made }] }));
+  kv.set('walk-plan:2026-11-20', JSON.stringify({ date: '2026-11-20', tz: 'UTC', updated: 'x',
+    items: [{ id: '2026-11-20-0030', start: at('2026-11-20T00:30:00Z'), end: at('2026-11-20T01:00:00Z'), walkers: harsh, created: made }] }));
+  await call('upsert', 'walk-midnight', { startedAt: at('2026-11-19T23:20:00Z'), endedAt: at('2026-11-19T23:50:00Z'), walkers: ['harsh'], tz: 'UTC' });
+  const today = (await call('state')).body.plans.find((p) => p.date === '2026-11-20');
+  assert.equal(today.walks[0].status, 'planned');
+  assert.equal((await call('getPlan', '2026-11-19')).body.walks[0].status, 'done');
+});
+
+test('OwnTracks: a fix with a missing latitude or longitude is ignored, not stored at 0', async () => {
+  const now = Date.now(), pw = 'p'.repeat(20), same = (a, b) => a === b;
+  env.OWNTRACKS_USERS = JSON.stringify({ harsh: { password: pw, walker: 'harsh' } });
+  kv.set('ot:walks', JSON.stringify({ at: now, walks: [{ id: 'walk-otnull', s: now - 600e3, e: null, who: ['harsh'] }] }));
+  const post = (fix) => owntracksPost(new Request('https://w/owntracks', { method: 'POST', headers: { Authorization: 'Basic ' + btoa('harsh:' + pw) },
+    body: JSON.stringify({ _type: 'location', acc: 5, tst: Math.floor(now / 1000) - 60, ...fix }) }), env, { waitUntil() {} }, same, { now });
+  await post({ lat: null, lon: -74 });
+  await post({ lat: 40.7 });
+  assert.deepEqual(await owntracksPoints(env, 'walk-otnull'), {});
+  await post({ lat: 40.7, lon: -74 });
+  assert.deepEqual(await owntracksPoints(env, 'walk-otnull'), { harsh: [[40.7, -74, 5, Math.floor(now / 1000) - 60]] });
 });

@@ -79,3 +79,14 @@ RRULE:FREQ=DAILY
 END:VEVENT`);
   assert.equal(expandICS(ics, meta, from, to).length, 21);
 });
+
+test('a TZID without its VTIMEZONE is read in that zone, floating times in the home zone', () => {
+  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:lon\r\nDTSTAMP:20261101T000000Z\r\nDTSTART;TZID=Europe/Paris:20261124T120000\r\nDTEND;TZID=Europe/Paris:20261124T130000\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:London\r\nEND:VEVENT\r\n' +
+    'BEGIN:VEVENT\r\nUID:float\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20260701T090000\r\nDTEND:20260701T093000\r\nSUMMARY:Floating\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+  const out = expandICS(ics, { name: 'x' }, new Date('2026-06-01T00:00:00Z'), new Date('2026-12-01T00:00:00Z'));
+  assert.deepEqual(out.map((e) => [e.title, e.start, e.end]), [
+    ['London', '2026-11-24T11:00:00.000Z', '2026-11-24T12:00:00.000Z'],
+    ['London', '2026-11-25T11:00:00.000Z', '2026-11-25T12:00:00.000Z'],
+    ['Floating', '2026-07-01T13:00:00.000Z', '2026-07-01T13:30:00.000Z'],
+  ]);
+});

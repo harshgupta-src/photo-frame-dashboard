@@ -184,14 +184,18 @@
   }
 
   // Keep the screen on while a recipe is open on a phone or iPad.
-  var lock = null;
+  var lock = null, asking = false;
   function wake(on) {
     if (!on) { if (lock) { lock.release().catch(function () {}); lock = null; } return; }
-    if (lock || !navigator.wakeLock || document.hidden) return;
+    if (lock || asking || !navigator.wakeLock || document.hidden) return;
+    asking = true;
     navigator.wakeLock.request('screen').then(function (l) {
+      asking = false;
+      // Left the recipe (or the tab) while asking: let it go, or the screen stays on elsewhere.
+      if (!wanted() || App.current !== 'recipes') { l.release().catch(function () {}); return; }
       lock = l;
       l.addEventListener('release', function () { if (lock === l) lock = null; });
-    }).catch(function () { /* not allowed here; fine */ });
+    }).catch(function () { asking = false; /* not allowed here; fine */ });
   }
   function wanted() { return App.current === 'recipes' && (V.detail || !App.portrait) && !!V.sel; }
   document.addEventListener('visibilitychange', function () { if (!document.hidden && wanted()) wake(true); });

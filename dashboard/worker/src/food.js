@@ -14,6 +14,8 @@
 // PUT  /dog/food        { decision: 'bump'|'hold', date, fromCups, toCups, meal, healthy, reason, plan, ... }
 // POST /dog/food/done   { by }         marks the bump as done (it then counts as a change)
 
+import { localISO } from './ics.js';
+
 const DAY = 864e5;
 const KEY = 'dog-food';
 export const STEP = 0.25;
@@ -41,7 +43,8 @@ function share(weeks) {
 }
 
 const r1 = (v) => Math.round(v * 10) / 10, r2 = (v) => Math.round(v * 100) / 100;
-const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+// The home calendar date of `ms` (not UTC: after 7 PM Eastern the UTC date is already tomorrow).
+const dayOf = (ms) => localISO(ms).slice(0, 10);
 function addMonths(iso, n) {
   const d = new Date(iso + 'T12:00:00Z');
   d.setUTCMonth(d.getUTCMonth() + n);

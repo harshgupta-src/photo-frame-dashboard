@@ -1,0 +1,497 @@
+# Maya meal logging. Copy to /config/packages/maya_meal.yaml (secrets: lifelog_auth, maya_meal_webhook_id;
+# needs home_taps.yaml, home.jinja's notify_service, and walk_plan.yaml's rest_command.frame_meal_log/unlog).
+# The calendar is the plan (written by Muse); Lifelog holds what actually happened.
+# Household Shortcut "Maya Meal Tap" (NFC tag at the meal station, same Shortcut on every phone)
+#   -> HA app Fire Event home_tap {"tag": "maya_meal"} -> home_taps.yaml; the person comes from the phone's HA user.
+# Legacy: POST /api/webhook/<maya_meal_webhook_id> {"device": "<iPhone name>"}; the person is read from the phone's name.
+# 15 min before each planned meal, its owners get a heads-up; 30/60 min after, a missed-meal reminder.
+# script.maya_meal_notify sends nothing (except error notices) while Maya is away at the sitter (maya_away.yaml).
+# The walk planner (walk_plan.yaml) may move a meal or hand it to whoever is free; once it is logged, the
+# frame Worker (POST /meals/log) moves its event to the Life Log calendar with who/when/what (undo puts it back).
+# A meal's owners come from its calendar: Harsh's (harsh), Ambuja's (ambuja), A&H Life (both); fed meals on
+# Life Log stay in the list (done: true) so a second tap is still caught as a double feed.
+# Each planned meal gets a fixed Lifelog id (maya_meal-YYYY-MM-DD-<meal>), so it can only be logged once (double-feed guard).
+# Muse event contract: title "Maya · Lunch" (Breakfast / Walk snack / Lunch / Dinner / Night snack), description lines
+# "cups: 1", "purina_pct: 75", "fortiflora: 0.5". Older titles like "Maya lunch 1 cup" / "Maya snack 1/4 cup" also parse.
+
+template:
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: maya_meal_refresh_plan
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id:
+            - calendar.harshs_calendar
+            - calendar.ambujas_calendar
+            - calendar.a_h_life
+            - calendar.life_log
+        data:
+          start_date_time: "{{ (now() - timedelta(hours=12)).isoformat() }}"
+          end_date_time: "{{ (now() + timedelta(hours=36)).isoformat() }}"
+        response_variable: cal
+        continue_on_error: true
+    sensor:
+      - name: Maya meal plan
+        unique_id: maya_meal_plan
+        icon: mdi:food-drumstick
+        state: "{{ 'ok' if cal is defined else 'calendar error' }}"
+        attributes:
+          # On a calendar error, keep the last good plan.
+          meals: >-
+            {%- if cal is not defined -%}
+              {{ this.attributes.meals | default([]) }}
+            {%- else -%}
+              {%- set owners = {'calendar.harshs_calendar': ['harsh'], 'calendar.ambujas_calendar': ['ambuja'], 'calendar.a_h_life': ['harsh', 'ambuja'], 'calendar.life_log': []} -%}
+              {%- set ns = namespace(out=[], ids=[]) -%}
+              {%- for ent, v in cal.items() -%}
+                {%- for e in v.events if 'T' in e.start -%}
+                  {%- set t = e.summary | lower -%}
+                  {%- set kinds = t | regex_findall('breakfast|lunch|dinner|walk snack|night snack|snack') -%}
+                  {%- if t is match('maya\\b') and kinds and 'prep' not in t -%}
+                    {%- set st = as_datetime(e.start) | as_local -%}
+                    {%- set k = kinds[0] if kinds[0] != 'snack' else ('walk snack' if st.hour < 15 else 'night snack') -%}
+                    {%- set id = 'maya_meal-' ~ st.strftime('%Y-%m-%d') ~ '-' ~ k | replace(' ', '-') -%}
+                    {%- set d = (e.get('description') or '') | lower -%}
+                    {%- set c1 = d | regex_findall('cups?\\s*:\\s*([0-9.]+)') -%}
+                    {%- set c2 = t | regex_findall('(?:(\\d+)\\s+)?(\\d+)/(\\d+)\\s*cups?') -%}
+                    {%- set c3 = t | regex_findall('(\\d+(?:\\.\\d+)?)\\s*cups?') -%}
+                    {%- if c1 -%}{%- set cups = c1[0] | float(none) -%}
+                    {%- elif c2 -%}{%- set cups = ((c2[0][0] | int(0)) + (c2[0][1] | int) / (c2[0][2] | int)) | round(2) -%}
+                    {%- elif c3 -%}{%- set cups = c3[0] | float(none) -%}
+                    {%- else -%}{%- set cups = none -%}{%- endif -%}
+                    {%- set pp = d | regex_findall('purina[_ ]?pct\\s*:\\s*(\\d+)') -%}
+                    {%- set ff = d | regex_findall('fortiflora\\s*:\\s*([0-9./]+)') -%}
+                    {%- if id not in ns.ids -%}
+                      {%- set ns.ids = ns.ids + [id] -%}
+                      {%- set ns.out = ns.out + [{
+                        'id': id, 'meal': k | capitalize, 'at': st.isoformat(), 'cups': cups,
+                        'purina_pct': pp[0] | int if pp else none, 'fortiflora': ff[0] if ff else none,
+                        'calendar': ent, 'owners': owners.get(ent, ['harsh', 'ambuja']), 'title': e.summary,
+                        'done': ent == 'calendar.life_log' }] -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endfor -%}
+              {{ ns.out | sort(attribute='at') }}
+            {%- endif -%}
+
+rest_command:
+  lifelog_maya_meals:
+    url: "http://local-lifelog:8788/events?type=maya_meal&limit=50&since={{ (utcnow() - timedelta(hours=36)).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+    method: GET
+    headers:
+      Authorization: !secret lifelog_auth
+    timeout: 10
+  lifelog_put_event:
+    url: "http://local-lifelog:8788/events/{{ id | urlencode }}"
+    method: PUT
+    headers:
+      Authorization: !secret lifelog_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 10
+  lifelog_patch_event:
+    url: "http://local-lifelog:8788/events/{{ id | urlencode }}"
+    method: PATCH
+    headers:
+      Authorization: !secret lifelog_auth
+    content_type: application/json
+    payload: "{{ body | tojson }}"
+    timeout: 10
+  lifelog_delete_event:
+    url: "http://local-lifelog:8788/events/{{ id | urlencode }}?reason={{ reason | urlencode }}"
+    method: DELETE
+    headers:
+      Authorization: !secret lifelog_auth
+    timeout: 10
+
+script:
+  maya_meal_notify:
+    alias: "Maya meal: notify"
+    description: Send a notification to the given people's HA app (found from each person's phone tracker).
+    mode: parallel
+    fields:
+      people: { description: "List of people (harsh, ambuja)" }
+      title: { description: Title }
+      message: { description: Message }
+      tag: { description: Notification tag (same tag replaces) }
+      actions: { description: iOS notification actions }
+      level: { description: "active | time-sensitive" }
+    sequence:
+      # Quiet while Maya is away at the sitter (maya_away.yaml), except error notices.
+      - condition: template
+        value_template: "{{ not is_state('binary_sensor.maya_away', 'on') or (tag | default('')) is search('error') }}"
+      - variables:
+          services: >-
+            {%- from 'home.jinja' import notify_service -%}
+            {%- set ns = namespace(s=[]) -%}
+            {%- for p in people | default([]) -%}
+              {%- set svc = notify_service(p) -%}
+              {%- if svc and svc not in ns.s -%}{%- set ns.s = ns.s + [svc] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ ns.s }}
+      - repeat:
+          for_each: "{{ services }}"
+          sequence:
+            - action: "{{ repeat.item }}"
+              continue_on_error: true
+              data:
+                title: "{{ title }}"
+                message: "{{ message }}"
+                data:
+                  tag: "{{ tag | default('maya_meal') }}"
+                  actions: "{{ actions | default([]) }}"
+                  push:
+                    interruption-level: "{{ level | default('active') }}"
+
+  maya_meal_log:
+    alias: "Maya meal: log"
+    description: >-
+      Log a meal for Maya. Matches the nearest planned meal from 60 min before to 120 min after it
+      (preferring one not yet logged), or the given meal_id; warns instead of logging if it was already given,
+      or if a nearby meal was logged in the last 30 min and the unlogged one is still over 15 min away
+      (a second tap right after a feed), with a button to log that next meal early.
+    mode: queued
+    max: 10
+    fields:
+      person: { description: "Who fed her (harsh, ambuja)" }
+      meal_id: { description: "Planned meal id to log (from a reminder); default: match by time" }
+      extra: { description: "Log an extra, unplanned meal" }
+      source: { description: "Source tag for Lifelog" }
+    sequence:
+      - action: rest_command.lifelog_maya_meals
+        response_variable: lr
+        continue_on_error: true
+      - variables:
+          person: "{{ person | default('harsh', true) | lower }}"
+          who: "{{ person | capitalize }}"
+          meal_id: "{{ meal_id | default('', true) }}"
+          extra: "{{ extra | default(false, true) }}"
+          everyone: ["harsh", "ambuja"]
+          now_ts: "{{ as_timestamp(now()) }}"
+          meals: "{{ state_attr('sensor.maya_meal_plan', 'meals') or [] }}"
+          logged: "{{ lr.content | rejectattr('deleted_at') | list if lr is defined and lr.status == 200 and lr.content is list else [] }}"
+          logged_ids: "{{ logged | map(attribute='id') | list }}"
+          res: >-
+            {%- set ns = namespace(best=none, bd=9999, fed=none, fd=9999) -%}
+            {%- for m in meals -%}
+              {%- set dm = (now_ts - as_timestamp(m.at)) / 60 -%}
+              {%- if (meal_id and m.id == meal_id) or (not meal_id and -60 <= dm <= 120) -%}
+                {%- if m.id in logged_ids -%}
+                  {%- if dm | abs < ns.fd -%}{%- set ns.fed = m -%}{%- set ns.fd = dm | abs -%}{%- endif -%}
+                {%- elif dm | abs < ns.bd -%}{%- set ns.best = m -%}{%- set ns.bd = dm | abs -%}{%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {#- A meal just logged nearby and the unlogged one still well ahead: a second tap, not the next meal. -#}
+            {%- set early = namespace(next=none) -%}
+            {%- if ns.best and ns.fed and not meal_id -%}
+              {%- set prev = logged | selectattr('id', 'eq', ns.fed.id) | first | default(none) -%}
+              {%- if prev and (now_ts - as_timestamp(prev.started_at, 0)) / 60 < 30
+                     and (now_ts - as_timestamp(ns.best.at)) / 60 < -15 -%}
+                {%- set early.next = ns.best -%}
+              {%- endif -%}
+            {%- endif -%}
+            {{ {'pick': none if extra or early.next else ns.best, 'fed': none if extra else ns.fed,
+                'next': none if extra else early.next} }}
+          pick: "{{ res.pick }}"
+          fed: "{{ res.fed }}"
+          next_meal: "{{ res.next }}"
+          kind: "{{ 'log' if pick else ('dup' if fed else 'extra') }}"
+          ev_id: >-
+            {{ pick.id if pick else (fed.id if fed else 'maya_meal-' ~ now().strftime('%Y-%m-%d') ~ '-extra-' ~ now().strftime('%H%M%S')) }}
+          delta: "{{ ((now_ts - as_timestamp(pick.at)) / 60) | round(0) | int if pick else none }}"
+          last: "{{ logged | rejectattr('id', 'eq', ev_id) | first | default(none) }}"
+          last_txt: >-
+            {%- if last -%} Last: {{ (last.data or {}).meal | default('meal', true) }} {{ (as_datetime(last.started_at) | as_local).strftime('%-I:%M %p') }} ({{ (last.person or '?') | capitalize }}){%- endif -%}
+          qty: >-
+            {%- set p = [] -%}
+            {%- if pick and pick.cups is not none -%}{%- set p = p + ['%g' | format(pick.cups) ~ ' cup'] -%}{%- endif -%}
+            {%- if pick and pick.purina_pct is not none -%}{%- set p = p + [pick.purina_pct ~ '% Purina'] -%}{%- endif -%}
+            {%- if pick and pick.fortiflora -%}{%- set p = p + [pick.fortiflora ~ ' FortiFlora'] -%}{%- endif -%}
+            {{ p | join(' · ') }}
+          hhmm: "{{ now().strftime('%-I:%M %p') }}"
+      - if:
+          - condition: template
+            value_template: "{{ lr is not defined or lr.status != 200 }}"
+        then:
+          - action: script.maya_meal_notify
+            data:
+              people: "{{ [person] }}"
+              title: "🐶 Maya meal not logged"
+              message: "Couldn't reach Lifelog. Tap again, or tell an agent \"fed Maya at {{ hhmm }}\"."
+          - action: persistent_notification.create
+            data:
+              notification_id: maya_meal_log_failed
+              title: Maya meal log failed
+              message: "Lifelog unreachable for {{ person }}: {{ lr.status if lr is defined else 'no response' }}"
+          - stop: Lifelog unreachable
+      - choose:
+          - conditions: "{{ kind == 'dup' }}"
+            sequence:
+              - variables:
+                  prev: "{{ logged | selectattr('id', 'eq', fed.id) | first }}"
+              - action: script.maya_meal_notify
+                data:
+                  people: "{{ [person] }}"
+                  title: "⚠️ Maya already had {{ fed.meal | lower }}"
+                  message: >-
+                    {{ (prev.person or '?') | capitalize }} fed her at {{ (as_datetime(prev.started_at) | as_local).strftime('%-I:%M %p') }}. Nothing logged.
+                  tag: "{{ fed.id }}"
+                  actions: >-
+                    {{ ([{'action': 'MAYA_MEAL_FED__' ~ next_meal.id, 'title': 'Log ' ~ next_meal.meal | lower ~ ' now'}] if next_meal else [])
+                       + [{'action': 'MAYA_MEAL_EXTRA__' ~ fed.id, 'title': 'Log an extra meal'}] }}
+        default:
+          - action: rest_command.lifelog_put_event
+            response_variable: pr
+            continue_on_error: true
+            data:
+              id: "{{ ev_id }}"
+              body:
+                type: maya_meal
+                person: "{{ person }}"
+                started_at: "{{ now().isoformat() }}"
+                source: "{{ source | default('ha-nfc', true) }}"
+                data:
+                  meal: "{{ pick.meal if pick else 'Extra' }}"
+                  planned_at: "{{ pick.at if pick else none }}"
+                  delta_min: "{{ delta }}"
+                  cups: "{{ pick.cups if pick else none }}"
+                  purina_pct: "{{ pick.purina_pct if pick else none }}"
+                  fortiflora: "{{ pick.fortiflora if pick else none }}"
+                  calendar: "{{ pick.calendar if pick else none }}"
+                  ate: all
+          - variables:
+              ok: "{{ pr is defined and pr.status in [200, 201] }}"
+              title: >-
+                {{ ('🐶 Maya fed · ' ~ pick.meal) if pick else '🐶 Extra meal logged' }}{{ '' if ok else ' (NOT saved)' }}
+              detail: >-
+                {%- if pick -%}{{ hhmm }} ({{ '%+d' | format(delta) }} min){{ ' · ' ~ qty if qty else '' }}
+                {%- else -%}{{ hhmm }} · no planned meal near now{%- endif -%}
+          - action: script.maya_meal_notify
+            data:
+              people: "{{ [person] }}"
+              title: "{{ title }}"
+              message: "{{ detail }}{{ '\\n' ~ last_txt if last_txt else '' }}"
+              tag: "{{ ev_id }}"
+              actions:
+                - action: "MAYA_MEAL_LEFT__{{ ev_id }}"
+                  title: Left some
+                - action: "MAYA_MEAL_UNDO__{{ ev_id }}"
+                  title: Undo
+                  destructive: true
+          - action: script.maya_meal_notify
+            data:
+              people: "{{ everyone | reject('eq', person) | list }}"
+              title: "🐶 {{ who }} fed Maya"
+              message: "{{ pick.meal if pick else 'Extra meal' }} at {{ hhmm }}{{ ' · ' ~ qty if qty else '' }}"
+              tag: "{{ ev_id }}"
+          # Move the planned event to the Life Log calendar (frame Worker, walk_plan.yaml's rest_command).
+          - if:
+              - condition: template
+                value_template: "{{ ok }}"
+            then:
+              - action: rest_command.frame_meal_log
+                continue_on_error: true
+                response_variable: fl
+                data:
+                  body:
+                    id: "{{ ev_id }}"
+                    person: "{{ person }}"
+                    at: "{{ now().isoformat() }}"
+                    planned_at: "{{ pick.at if pick else none }}"
+                    delta_min: "{{ delta }}"
+                    cups: "{{ pick.cups if pick else none }}"
+                    purina_pct: "{{ pick.purina_pct if pick else none }}"
+                    fortiflora: "{{ pick.fortiflora if pick else none }}"
+                    ate: all
+                    source: "{{ source | default('ha-nfc', true) }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ fl is not defined or fl.status != 200 }}"
+                then:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: maya_meal_calendar_failed
+                      title: Maya meal not moved to Life Log
+                      message: "{{ ev_id }}: {{ fl.status ~ ' ' ~ (fl.content.error if fl.content is mapping else '') if fl is defined else 'no response' }}"
+              - event: maya_meal_refresh_plan
+
+automation:
+  - id: maya_meal_nfc_tap
+    alias: "Maya meal: NFC tap"
+    description: Log Maya's meal when the meal-station NFC tag is tapped.
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret maya_meal_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+    actions:
+      - action: script.maya_meal_log
+        data:
+          # The shared Shortcut sends the phone's name ("Ambuja's iPhone"); older ones send person directly.
+          person: >-
+            {%- set j = trigger.json if trigger.json is mapping else {} -%}
+            {%- set dev = (j.device | default('', true)) | lower -%}
+            {%- set known = ['harsh', 'ambuja'] | select('in', dev) | list -%}
+            {{ (j.person | default('', true)) | lower or (known | first) or (dev | regex_replace("[’'].*", '')).split(' ')[0] or 'unknown' }}
+          source: ha-nfc
+
+  - id: maya_meal_notification_action
+    alias: "Maya meal: notification buttons"
+    description: Handle Left some / Undo / Log an extra meal / Fed it.
+    mode: queued
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.action is string and trigger.event.data.action.startswith('MAYA_MEAL_') and '__' in trigger.event.data.action }}"
+    actions:
+      - variables:
+          verb: "{{ trigger.event.data.action.split('__')[0][10:] }}"
+          ev_id: "{{ trigger.event.data.action.split('__')[1] }}"
+          person: >-
+            {{ (states.person | selectattr('attributes.user_id', 'eq', trigger.event.context.user_id)
+                | map(attribute='name') | first | default('harsh')).split(' ')[0] | lower }}
+      - choose:
+          - conditions: "{{ verb == 'UNDO' }}"
+            sequence:
+              - action: rest_command.lifelog_delete_event
+                response_variable: r
+                continue_on_error: true
+                data:
+                  id: "{{ ev_id }}"
+                  reason: "undo by {{ person }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ r is defined and r.status == 200 }}"
+                then:
+                  - action: rest_command.frame_meal_unlog
+                    continue_on_error: true
+                    data:
+                      id: "{{ ev_id }}"
+                  - event: maya_meal_refresh_plan
+              # Same tag for both phones, so the other person's "fed Maya" notice is replaced too.
+              - action: script.maya_meal_notify
+                data:
+                  people: "{{ ['harsh', 'ambuja'] if r is defined and r.status == 200 else [person] }}"
+                  title: "{{ '↩️ Meal log undone by ' ~ person | capitalize if r is defined and r.status == 200 else '⚠️ Undo failed' }}"
+                  message: "Tap the tag again when Maya is fed."
+                  tag: "{{ ev_id }}"
+          - conditions: "{{ verb == 'LEFT' }}"
+            sequence:
+              - action: rest_command.lifelog_patch_event
+                data:
+                  id: "{{ ev_id }}"
+                  body:
+                    data:
+                      ate: some
+              - action: rest_command.frame_meal_log
+                continue_on_error: true
+                data:
+                  body:
+                    id: "{{ ev_id }}"
+                    ate: some
+          - conditions: "{{ verb == 'EXTRA' }}"
+            sequence:
+              - action: script.maya_meal_log
+                data:
+                  person: "{{ person }}"
+                  extra: true
+                  source: ha-notification
+          - conditions: "{{ verb == 'FED' }}"
+            sequence:
+              - action: script.maya_meal_log
+                data:
+                  person: "{{ person }}"
+                  meal_id: "{{ ev_id }}"
+                  source: ha-notification
+
+  - id: maya_meal_missed_reminder
+    alias: "Maya meal: missed-meal reminder"
+    description: 30 min after a planned meal with no log, remind whoever's calendar it is on; at 60 min, remind everyone.
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    variables:
+      due: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for m in state_attr('sensor.maya_meal_plan', 'meals') or [] -%}
+          {%- set dm = (as_timestamp(now()) - as_timestamp(m.at)) / 60 -%}
+          {%- if not m.done | default(false) and (30 <= dm < 35 or 60 <= dm < 65) -%}{%- set ns.out = ns.out + [dict(m, late=(dm // 30 * 30) | int)] -%}{%- endif -%}
+        {%- endfor -%}
+        {{ ns.out }}
+    conditions:
+      - condition: template
+        value_template: "{{ due | count > 0 }}"
+    actions:
+      - action: rest_command.lifelog_maya_meals
+        response_variable: lr
+        continue_on_error: true
+      - variables:
+          logged_ids: "{{ lr.content | rejectattr('deleted_at') | map(attribute='id') | list if lr is defined and lr.status == 200 and lr.content is list else none }}"
+      - condition: template
+        value_template: "{{ logged_ids is not none }}"
+      - repeat:
+          for_each: "{{ due | rejectattr('id', 'in', logged_ids) | list }}"
+          sequence:
+            - action: script.maya_meal_notify
+              data:
+                people: "{{ repeat.item.owners if repeat.item.late == 30 else ['harsh', 'ambuja'] }}"
+                title: "⏰ Maya's {{ repeat.item.meal | lower }} isn't logged"
+                message: >-
+                  Planned {{ (as_datetime(repeat.item.at) | as_local).strftime('%-I:%M %p') }} ({{ repeat.item.late }} min ago){{ ' · ' ~ '%g' | format(repeat.item.cups) ~ ' cup' if repeat.item.cups is not none else '' }}. Tap the tag after feeding.
+                tag: "{{ repeat.item.id }}"
+                level: time-sensitive
+                actions:
+                  - action: "MAYA_MEAL_FED__{{ repeat.item.id }}"
+                    title: Fed it
+
+  - id: maya_meal_heads_up
+    alias: "Maya meal: 15-min heads-up"
+    description: 15 min before each planned meal that isn't logged yet, tell whoever's calendar it is on to get it ready.
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    variables:
+      due: >-
+        {%- set ns = namespace(out=[]) -%}
+        {%- for m in state_attr('sensor.maya_meal_plan', 'meals') or [] -%}
+          {%- set ds = as_timestamp(m.at) - as_timestamp(now().replace(second=0, microsecond=0)) -%}
+          {%- if not m.done | default(false) and 15 * 60 <= ds < 16 * 60 -%}{%- set ns.out = ns.out + [m] -%}{%- endif -%}
+        {%- endfor -%}
+        {{ ns.out }}
+    conditions:
+      - condition: template
+        value_template: "{{ due | count > 0 }}"
+    actions:
+      - action: rest_command.lifelog_maya_meals
+        response_variable: lr
+        continue_on_error: true
+      # If Lifelog can't be read, remind anyway (an extra nudge beats a missed meal).
+      - variables:
+          logged_ids: "{{ lr.content | rejectattr('deleted_at') | map(attribute='id') | list if lr is defined and lr.status == 200 and lr.content is list else [] }}"
+      - repeat:
+          for_each: "{{ due | rejectattr('id', 'in', logged_ids) | list }}"
+          sequence:
+            - action: script.maya_meal_notify
+              data:
+                people: "{{ repeat.item.owners }}"
+                title: "🍽️ Maya's {{ repeat.item.meal | lower }} in 15 min"
+                message: >-
+                  {%- set m = repeat.item -%}
+                  {{ (as_datetime(m.at) | as_local).strftime('%-I:%M %p') }}
+                  {%- if m.cups is not none %} · {{ '%g' | format(m.cups) }} cup{% endif -%}
+                  {%- if m.purina_pct is not none %} · {{ m.purina_pct }}% Purina{% endif -%}
+                  {%- if m.fortiflora %} · {{ m.fortiflora }} FortiFlora{% endif %}. Tap the tag after feeding.
+                tag: "maya_meal_heads_up-{{ repeat.item.id }}"
+                level: time-sensitive

@@ -5,6 +5,7 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (!env.ORIGIN) return new Response('frame-data proxy is not configured (ORIGIN is unset)', { status: 503, headers: { 'Cache-Control': 'no-store' } });
     const target = env.ORIGIN.replace(/\/$/, '') + url.pathname + url.search;
     const headers = new Headers(request.headers);
     headers.set('X-Forwarded-Host', url.host);

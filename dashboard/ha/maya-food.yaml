@@ -146,9 +146,12 @@ script:
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
+          # Same target as maya_food_bump_notify: today's first breakfast not yet logged, else the next unlogged meal.
           breakfast: >-
-            {%- set b = (state_attr('sensor.maya_meal_plan', 'meals') or []) | selectattr('meal', 'eq', 'Breakfast')
-                | selectattr('at', 'search', '^' ~ today) | map(attribute='at') | first | default(none) -%}
+            {%- set open = (state_attr('sensor.maya_meal_plan', 'meals') or []) | selectattr('at', 'search', '^' ~ today)
+                | rejectattr('done') | list -%}
+            {%- set b = open | selectattr('meal', 'eq', 'Breakfast') | map(attribute='at') | first | default(none)
+                or open | map(attribute='at') | first | default(none) -%}
             {{ (as_datetime(b) | as_local) if b else today_at('06:45') }}
           earliest: "{{ today if now() < as_datetime(breakfast) - timedelta(minutes=30) else (now().date() + timedelta(days=1)).isoformat() }}"
       - action: rest_command.frame_dog_food_facts
@@ -315,23 +318,30 @@ automation:
   - id: maya_food_bump_notify
     alias: "Maya food: bump day, before breakfast"
     description: >-
-      On a bump's day, 30 min before her first planned breakfast (06:15 without a plan), tell Harsh and
-      Ambuja on their phones, with a Done button. Not while Maya is away at the sitter (maya_away.yaml).
+      On a bump's day, 30 min before her first breakfast not yet logged (if breakfast was already given,
+      before the next unlogged meal; 06:15 without a plan), tell Harsh and Ambuja on their phones, with a
+      Done button. Once a day; a missed minute (restart) is caught up until an hour after that meal.
+      Not while Maya is away at the sitter (maya_away.yaml).
     mode: single
     triggers:
       - trigger: time_pattern
         minutes: "/1"
     variables:
       a: "{{ state_attr('sensor.maya_food_advice', 'advice') }}"
+      # A logged breakfast is done (moved to Life Log, maybe well before the plan), so skip it.
       breakfast: >-
-        {%- set b = (state_attr('sensor.maya_meal_plan', 'meals') or []) | selectattr('meal', 'eq', 'Breakfast')
-            | selectattr('at', 'search', '^' ~ now().date().isoformat()) | map(attribute='at') | first | default(none) -%}
+        {%- set open = (state_attr('sensor.maya_meal_plan', 'meals') or [])
+            | selectattr('at', 'search', '^' ~ now().date().isoformat()) | rejectattr('done') | list -%}
+        {%- set b = open | selectattr('meal', 'eq', 'Breakfast') | map(attribute='at') | first | default(none)
+            or open | map(attribute='at') | first | default(none) -%}
         {{ (as_datetime(b) | as_local) if b else today_at('06:45') }}
     conditions:
       - condition: template
         value_template: >-
           {{ a is mapping and a.decision == 'bump' and not a.doneAt and a.date == now().date().isoformat()
-             and now().strftime('%H:%M') == (as_datetime(breakfast) - timedelta(minutes=30)).strftime('%H:%M') }}
+             and as_datetime(breakfast) - timedelta(minutes=30) <= now() < as_datetime(breakfast) + timedelta(minutes=60)
+             and (this.attributes.last_triggered is none
+                  or (this.attributes.last_triggered | as_local).date() != now().date()) }}
       - condition: not
         conditions:
           - condition: state

@@ -365,11 +365,27 @@
       render();
     }
   });
+  // A 24/7 frame: when the date rolls over (midnight, DST, clock fix), a calendar that was on "today"
+  // follows to the new today rather than staying on yesterday. A day picked by hand stays put.
+  var today = null;
   App.on('minute', function () {
+    var t = App.dayStart(App.now());
+    if (today && +t !== +today && V.date) {
+      var wasToday = V.mode === 'month'
+        ? V.date.getFullYear() === today.getFullYear() && V.date.getMonth() === today.getMonth()
+        : App.sameDay(V.date, today);
+      if (wasToday) {
+        V.date = new Date(t);
+        if (V.mode === 'month') V.date.setDate(1);
+        V.scroll = null;
+        if (App.onScreen('calendar')) render();
+      }
+    }
+    today = t;
     if (!App.onScreen('calendar')) return;
     var line = V.el.querySelector('.now-line');
     var now = App.now();
     if (line) { line.style.top = y(now) + 'px'; line.querySelector('span').textContent = App.fmt.time(now, false); }
   });
-  App.on('time', function () { V.date = App.dayStart(App.now()); V.scroll = null; });
+  App.on('time', function () { V.date = App.dayStart(App.now()); if (V.mode === 'month') V.date.setDate(1); V.scroll = null; today = App.dayStart(App.now()); });
 })();

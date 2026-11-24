@@ -38,8 +38,9 @@ export function normalizeExpect(v) {
   return pee == null || poop == null ? null : { pee, poop };
 }
 
-// The planned walk (planJSON item: {id, start ISO, walkerIds, expect}) a walk {startedAt, endedAt?, planId?}
-// is for: the one it names, else the nearest within 90 min of its start, never one planned after it ended.
+// The planned walk (planJSON item: {id, start ISO, created? ISO, walkerIds, expect}) a walk {startedAt, endedAt?, planId?}
+// is for: the one it names, else the nearest within 90 min of its start, never one planned (created) after
+// it ended, as on the Worker (matchPlan): a walk taken a little early still counts for its planned walk.
 // A planId that is no longer in the plans (replanned) falls back to the nearest, as on the Worker (matchPlan).
 export function planFor(rec, plans, now = Date.now()) {
   let best = null;
@@ -47,8 +48,8 @@ export function planFor(rec, plans, now = Date.now()) {
   const all = (plans || []).flatMap((p) => (p && p.walks) || []);
   if (rec.planId) { const named = all.find((x) => x.id === rec.planId); if (named) return named; }
   for (const x of all) {
-    const s = Date.parse(x.start), d = Math.abs(s - rec.startedAt);
-    if (d <= EXPECT_WINDOW * 60e3 && s <= end && (!best || d < best.d)) best = { x, d };
+    const s = Date.parse(x.start), d = Math.abs(s - rec.startedAt), c = x.created ? Date.parse(x.created) : NaN;
+    if (d <= EXPECT_WINDOW * 60e3 && !(c > end) && (!best || d < best.d)) best = { x, d };
   }
   return best ? best.x : null;
 }

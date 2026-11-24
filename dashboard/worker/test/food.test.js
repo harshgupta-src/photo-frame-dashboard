@@ -53,3 +53,8 @@ test('routes: store a checked bump, show it, mark it done', async () => {
   assert.equal(f.lastBump, '2026-11-23');
   assert.match(checkAdvice(bump('2026-11-26', { fromCups: 3.5 }), f), /1\/4 cup bump on 2026-11-23/);
 });
+
+test('today is the home date, not the UTC date, in the evening', () => {
+  // 8 PM Eastern on Nov 12 is already Nov 13 in UTC.
+  assert.equal(facts(PLAN, Date.parse('2026-11-13T01:00:00Z')).today, '2026-11-12');
+});

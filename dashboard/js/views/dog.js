@@ -17,6 +17,8 @@
 
   var esc = App.esc;
   function now() { return +App.now(); }
+  // Walk times and walk plans are real time (walk.js), never the demo-shifted App.now().
+  function realNow() { return Date.now(); }
   function dur(ms) { var m = Math.max(0, Math.round(ms / MIN)); return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : ''); }
   var FR = { 25: '¼', 33: '⅓', 50: '½', 67: '⅔', 75: '¾' };
   function cups(c) {
@@ -25,7 +27,7 @@
     return (f ? (w ? w : '') + f : String(Math.round(c * 100) / 100)) + ' cup' + (c > 1 ? 's' : '');
   }
   function pname(id) { return App.person(id).name; }
-  function walkMins(w) { return ((w.endedAt || now()) - w.startedAt) / MIN; }
+  function walkMins(w) { return ((w.endedAt || realNow()) - w.startedAt) / MIN; }
   function potty(w) { return (w.pee ? '💧' : '') + (w.poop ? '💩' : ''); }
   function who(list) { return (list || []).map(function (p) { return p.name || pname(p.id); }).join(' & '); }
   function dayLabel(ms) {
@@ -116,10 +118,10 @@
   }
   function walkTile() {
     var a = App.walk.active;
-    if (a && !a.endedAt) return tile('walk', 'paw', 'Out walking', '<span class="num">' + dur(now() - a.startedAt) + '</span>', 'Since ' + App.fmt.time(new Date(a.startedAt)) + ' · ' + esc(who(a.walkers)), 'live');
+    if (a && !a.endedAt) return tile('walk', 'paw', 'Out walking', '<span class="num">' + dur(realNow() - a.startedAt) + '</span>', 'Since ' + App.fmt.time(new Date(a.startedAt)) + ' · ' + esc(who(a.walkers)), 'live');
     var n = App.walk.next();
     if (!n) return tile('walk', 'paw', 'Next walk', '—', 'None planned');
-    var at = new Date(n.start), late = +at < now(), day = dayLabel(+at);
+    var at = new Date(n.start), late = +at < realNow(), day = dayLabel(+at);
     return tile('walk', 'paw', late ? 'Walk due' : 'Next walk', '<span class="num">' + App.fmt.time(at) + '</span>',
       (day === 'Today' ? '' : day + ' · ') + esc((n.walkers || []).join(' & ')) + ' · ' + n.durationMin + ' min' + busy(n.walkerIds, at), late ? 'warn' : '');
   }

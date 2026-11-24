@@ -55,6 +55,19 @@ export function localISO(ms, tz = EVENT_TZ) {
   return y + '-' + mo + '-' + d + 'T' + h + ':' + mi + ':' + s + (off < 0 ? '-' : '+') + pad(Math.floor(a / 60)) + ':' + pad(a % 60);
 }
 
+const knownTz = (tz) => { try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; } };
+
+// An ical.js time → ms. A TZID with no VTIMEZONE in the file (other than ours) and floating times come
+// out of ical.js as floating, which toJSDate() reads in the server's zone (UTC on the VM): read them
+// in that IANA zone instead (via Intl), or in the home zone.
+export function icalMs(t, tzid) {
+  if (t.isDate || !t.zone || t.zone.tzid !== 'floating') return t.toJSDate().getTime();
+  const tz = tzid && knownTz(tzid) ? tzid : EVENT_TZ;
+  const wall = Date.UTC(t.year, t.month - 1, t.day, t.hour, t.minute, t.second);
+  return wall - tzOffset(wall - tzOffset(wall, tz), tz);
+}
+const tzidOf = (comp, name) => { const p = comp.getFirstProperty(name); return p ? p.getParameter('tzid') : null; };
+
 // One CalDAV object (or a whole .ics feed) → events overlapping [from, to).
 // All-day dates stay 'YYYY-MM-DD' (end exclusive) so the frame reads them in its own time zone.
 function parseRoot(icsText) {
@@ -76,7 +89,7 @@ export function describeUid(icsText, uid) {
   const s = ev.startDate;
   return {
     title: ev.summary || '(No title)',
-    start: !s ? null : s.isDate ? dateOnly(s) : localISO(s.toJSDate().getTime()),
+    start: !s ? null : s.isDate ? dateOnly(s) : localISO(icalMs(s, tzidOf(ev.component, 'dtstart'))),
     recurring: ev.isRecurring(),
   };
 }
@@ -98,7 +111,8 @@ export function expandICS(icsText, cal, from, to) {
   const push = (ev, s, e, id) => {
     if (String(ev.component.getFirstPropertyValue('status') || '').toUpperCase() === 'CANCELLED') return;
     if (!e) e = s.clone();
-    const sMs = s.toJSDate().getTime(), eMs = e.toJSDate().getTime();
+    const sTz = tzidOf(ev.component, 'dtstart');
+    const sMs = icalMs(s, sTz), eMs = icalMs(e, ev.component.hasProperty('dtend') ? tzidOf(ev.component, 'dtend') : sTz);
     if (sMs >= toMs || Math.max(eMs, sMs + 1) <= fromMs) return;
     out.push({
       id, cal: cal.name, people: cal.people, title: ev.summary || '(No title)', allDay: s.isDate,

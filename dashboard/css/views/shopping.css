@@ -110,7 +110,7 @@ html[data-phone] .s-edit .i { width: 20px; height: 20px; }
 html[data-phone] .s-sync { font-size: 12px; padding-top: 0; }
 html[data-phone] .s-add { flex-direction: row; }
 html[data-phone] .s-add-btn { height: 48px; padding: 0 14px; font-size: 15px; border-radius: 10px; }
-html[data-phone] .te-title { height: 52px; font-size: 19px; padding: 0 14px; }
+html[data-phone] .te-title { height: 52px; font-size: 19px; padding: 0 14px; width: 100%; margin-right: 0; }
 html[data-phone] .te-notes { min-height: 90px; font-size: 16px; padding: 10px 14px; }
 html[data-phone] .te-who { font-size: 14px; }
 html[data-phone] .te-who-seg button { min-height: 44px; padding: 0 10px; font-size: 14px; gap: 6px; }

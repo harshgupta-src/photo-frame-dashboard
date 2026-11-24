@@ -118,8 +118,47 @@ test('walk-sheet defaults: walkers from the planned walk (alone, together, Ambuj
   assert.deepEqual(ids({ startedAt: Date.parse('2026-11-19T11:30:00Z'), walkers: [] }), ['ambuja'], 'Ambuja only');
   assert.deepEqual(ids({ startedAt: t, walkers: started, picked: true }), ['ambuja'], 'picked on the tile wins');
   assert.deepEqual(ids({ startedAt: Date.parse('2026-11-19T02:00:00Z'), walkers: started }), ['ambuja'], 'no plan near: who started it');
-  // A plan made for later than the walk ended isn't this walk's.
-  assert.equal(suggestWalk({ startedAt: t - 60 * 60e3, endedAt: t - 40 * 60e3 }, plans, [], mod).plan, null);
+  // As on the Worker (matchPlan): a walk taken early still counts for its planned walk, but one planned
+  // (created) after the walk ended isn't this walk's.
+  const early = { startedAt: t - 60 * 60e3, endedAt: t - 40 * 60e3 };
+  assert.equal(suggestWalk(early, plans, [], mod).plan.id, 'p2');
+  const replanned = [{ walks: [{ id: 'p2', start: '2026-11-19T16:15:00Z', created: new Date(t - 30 * 60e3).toISOString(), walkerIds: ['harsh'] }] }];
+  assert.equal(suggestWalk(early, replanned, [], mod).plan, null);
+});
+
+test('plan: the frame and the Worker agree on which planned walk a walk is for', async () => {
+  const { normalizePlan, matchPlan, planJSON } = await import('../src/walkplan.js');
+  const { planFor } = await import('../src/walkexpect.js');
+  const made = Date.parse('2026-11-19T15:30:00Z'), at = (hm) => Date.parse('2026-11-19T' + hm + ':00Z');
+  const p = normalizePlan({ walks: [{ start: '16:15', walkers: ['harsh'] }] }, '2026-11-19', 'UTC', {}, made);
+  const json = planJSON(p, new Map(), made, [], 'UTC');
+  for (const [w, want] of [
+    [{ id: 'early', startedAt: at('15:40'), endedAt: at('16:00') }, p.items[0].id],
+    [{ id: 'before', startedAt: at('15:00'), endedAt: at('15:20') }, null],
+  ]) {
+    assert.equal(matchPlan(p.items, [w]).has(p.items[0].id) ? p.items[0].id : null, want, 'Worker ' + w.id);
+    assert.equal(planFor(w, [json], at('18:00'))?.id ?? null, want, 'frame ' + w.id);
+  }
+});
+
+test('plan: a new walk at the same minute as a kept one gets its own id instead of failing the PUT', async () => {
+  const { normalizePlan } = await import('../src/walkplan.js');
+  const date = '2026-11-19', kept = date + '-1600';
+  const p = normalizePlan({ walks: [{ id: kept, start: '16:30', walkers: ['harsh'] }, { start: '16:00', walkers: ['ambuja'] }] }, date, 'UTC');
+  assert.deepEqual(p.items.map((x) => x.id), [kept + '-2', kept]);
+  assert.throws(() => normalizePlan({ walks: [{ start: '16:00', walkers: ['harsh'] }, { start: '16:00', walkers: ['ambuja'] }] }, date, 'UTC'), /share an id/);
+  assert.throws(() => normalizePlan({ walks: [{ id: kept, start: '16:00', walkers: ['harsh'] }, { id: kept, start: '17:00', walkers: ['ambuja'] }] }, date, 'UTC'), /share an id/);
+});
+
+test('plan: a walk around midnight counts for one day\'s plan only', async () => {
+  const { matchPlans } = await import('../src/walkplan.js');
+  const t = Date.parse('2026-11-20T00:00:00Z');
+  const today = { date: '2026-11-19', items: [{ id: 'late', start: t - 50 * 60e3, end: t - 20 * 60e3 }] };
+  const tomorrow = { date: '2026-11-20', items: [{ id: 'early', start: t + 30 * 60e3, end: t + 60 * 60e3 }] };
+  const w = { id: 'w', startedAt: t - 40 * 60e3, endedAt: t - 10 * 60e3 };
+  const m = matchPlans([today, tomorrow], [w]);
+  assert.equal(m.get('2026-11-19').get('late'), w);
+  assert.equal(m.get('2026-11-20').size, 0);
 });
 
 test('walk-sheet defaults: pee/poop from the plan, else 14 days of history at this time, else her routine', async () => {
