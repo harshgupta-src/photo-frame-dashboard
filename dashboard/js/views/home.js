@@ -19,7 +19,7 @@ import { createHold } from '../todo.js';
     return '<div class="h-wx-top">' +
       '<span class="h-wx-icon">' + App.icon(w.cond, 60) + '</span>' +
       '<span class="h-wx-temp num">' + w.temp + '°</span>' +
-      '<span class="h-wx-meta"><b>' + w.label + '</b><span>H ' + w.hi + '°  L ' + w.lo + '°</span></span>' +
+      '<span class="h-wx-meta"><b>' + w.label + '</b><span>Feels ' + w.feels + '°</span><span>H ' + w.hi + '°  L ' + w.lo + '°</span></span>' +
       '</div>' +
       '<div class="h-wx-say"><b>' + w.summary + '.</b> ' + w.advice + '.</div>' +
       '<div class="h-wx-hours">' + hours.map(function (h) {
@@ -29,10 +29,10 @@ import { createHold } from '../todo.js';
       }).join('') + '</div>';
   }
 
-  // The dog's walk (CONFIG.dog): above 2° no jacket unless it's raining; 2° to -7° jacket; below -7° jacket and a
-  // short walk; below -12° a potty break and straight back inside.
+  // The dog's walk (CONFIG.dog), by the feels-like temperature (wind chill): above 2° no jacket unless it's
+  // raining; 2° to -7° jacket; below -7° jacket and a short walk; below -12° a potty break and straight back inside.
   function walkPlan(w) {
-    var t = w.temp, wet = w.cond === 'rain' || w.cond === 'snow';
+    var t = w.feels != null ? w.feels : w.temp, wet = w.cond === 'rain' || w.cond === 'snow';
     if (t < -12) return { level: 3, title: 'Potty break only', sub: 'Jacket on, then straight back inside' };
     if (t < -7) return { level: 2, title: 'Jacket + short walk', sub: 'Keep it quick, it’s bitter out' };
     if (t <= 2) return { level: 1, title: 'Jacket', sub: 'Too cold to go without' };

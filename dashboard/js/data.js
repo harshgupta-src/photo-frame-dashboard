@@ -259,11 +259,12 @@ window.DATA = (function () {
 
   // ---------------------------------------------------------------- weather (index = hour of day)
   var weather = {
-    hi: 17, lo: 8, feels: -2, humidity: 71, wind: 18,
+    hi: 17, lo: 8, humidity: 71, wind: 18,
     t: [9, 9, 8, 8, 8, 8, 9, 10, 11, 12, 13, 15, 16, 17, 16, 15, 14, 13, 12, 12, 11, 10, 10, 9],
     c: ['moon', 'moon', 'moon', 'moon', 'moon', 'moon', 'partly', 'partly', 'sun', 'sun', 'sun', 'partly', 'partly', 'cloud', 'cloud', 'cloud', 'rain', 'rain', 'rain', 'rain', 'cloud', 'cloud', 'moon', 'moon'],
     p: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 10, 20, 25, 40, 80, 90, 70, 55, 20, 10, 0, 0]
   };
+  weather.f = weather.t.map(function (t) { return t - 2; }); // feels-like
 
   // ---------------------------------------------------------------- photos
   var t = new Date(base);

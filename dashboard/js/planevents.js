@@ -6,7 +6,8 @@
 // Pure, so node --test can run it (test/planevents.test.js).
 
 export var PLAN_UID = /(?:^|\|)walk-plan-[^|@]+@frame-data/;
-export function isPlanEvent(e) { return PLAN_UID.test(String((e && e.id) || '')); }
+// uid: the calendar's own id (live.js hashes e.id for the DOM).
+export function isPlanEvent(e) { return PLAN_UID.test(String((e && (e.uid || e.id)) || '')); }
 
 function ymd(d) {
   d = new Date(d);

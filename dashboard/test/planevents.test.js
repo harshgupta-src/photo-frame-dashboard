@@ -28,3 +28,12 @@ test('keeps calendar copies for days the walk sync has not fetched', () => {
   assert.equal(withPlans(events, [], [], opts).length, 1);
   assert.equal(withPlans(events, [], ['2026-11-24'], opts).length, 0); // fetched: no plan that day
 });
+
+test('a calendar copy whose DOM id is hashed is still replaced by the plan (uid kept)', () => {
+  const start = at(20, 50), end = at(20, 58);
+  const events = [{ id: 'i1abc', uid: 'calendar.a_h_life|walk-plan-2026-11-24-0150@frame-data|2026-11-24T20:50:00-05:00', title: '🐕 Maya walk — Ambuja & Harsh', people: ['ambuja', 'harsh'], start, end }];
+  const plans = [{ date: '2026-11-24', walks: [{ id: '2026-11-24-0150', status: 'planned', walkers: ['Ambuja', 'Harsh'], walkerIds: ['ambuja', 'harsh'], start: start.toISOString(), end: end.toISOString() }] }];
+  const out = withPlans(events, plans, ['2026-11-24'], { dog: 'Maya' });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'walk-plan-2026-11-24-0150@frame-data');
+});

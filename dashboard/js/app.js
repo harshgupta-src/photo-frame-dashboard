@@ -196,7 +196,7 @@ import { every } from './poll.js';
     var W = D.weather, now = App.now(), h = wxIndex(W, now), dayEnd = wxDayEnd(W, now);
     var rainAt = -1;
     for (var i = h; i < dayEnd; i++) if (W.p[i] >= 50) { rainAt = i; break; }
-    var summary, advice, cool = 12;
+    var summary, advice, cool = 12, feels = W.f && W.f[h] != null ? W.f[h] : W.t[h];
     var wet = rainAt > -1 && W.c[rainAt] === 'snow' ? 'Snow' : 'Rain';
     if (rainAt === h) {
       var stop = h; while (stop < dayEnd && W.p[stop] >= 50) stop++;
@@ -207,11 +207,11 @@ import { every } from './poll.js';
       var soccer = App.timedOn(App.now()).filter(function (e) { return /soccer/i.test(e.title) && e.start > App.now(); })[0];
       advice = wet === 'Snow' ? 'Bring a warm coat' : soccer ? 'Pack a rain jacket for soccer' : 'Grab a rain jacket';
     } else {
-      summary = W.t[h] < cool ? 'Clear and cool' : 'Dry all day';
-      advice = W.t[h] < cool ? 'Jacket weather' : 'Light layers';
+      summary = feels < cool ? 'Clear and cool' : 'Dry all day';
+      advice = feels < cool ? 'Jacket weather' : 'Light layers';
     }
     var labels = { sun: 'Sunny', moon: 'Clear', partly: 'Partly cloudy', cloud: 'Overcast', rain: 'Rain', snow: 'Snow' };
-    return { temp: W.t[h], cond: W.c[h], label: labels[W.c[h]], hi: W.hi, lo: W.lo, summary: summary, advice: advice, hour: h };
+    return { temp: W.t[h], feels: feels, cond: W.c[h], label: labels[W.c[h]], hi: W.hi, lo: W.lo, summary: summary, advice: advice, hour: h };
   };
   App.hourly = function (count) {
     var W = D.weather, h = wxIndex(W, App.now()), out = [];
@@ -227,7 +227,7 @@ import { every } from './poll.js';
   // Home location from CONFIG; timezone=auto takes the zone from the coordinates. Unix timestamps rather than local times: Open-Meteo applies one
   // fixed UTC offset to the whole response, so its local times are an hour off after a DST change.
   var WX_URL = 'https://api.open-meteo.com/v1/forecast?latitude=' + window.CONFIG.lat + '&longitude=' + window.CONFIG.lon +
-    '&hourly=temperature_2m,precipitation_probability,weather_code,is_day' +
+    '&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,is_day' +
     '&daily=temperature_2m_max,temperature_2m_min' +
     '&timezone=auto&timeformat=unixtime&forecast_days=2';
   var WX_KEY = 'wx-' + window.CONFIG.lat + ',' + window.CONFIG.lon + '-c2';
@@ -244,6 +244,7 @@ import { every } from './poll.js';
       hi: R(j.daily.temperature_2m_max[0]), lo: R(j.daily.temperature_2m_min[0]),
       time: H.time,
       t: H.temperature_2m.map(R),
+      f: (H.apparent_temperature || H.temperature_2m).map(function (x, i) { return R(x == null ? H.temperature_2m[i] : x); }),
       c: H.weather_code.map(function (code, i) { return wxCond(code, H.is_day[i]); }),
       p: H.precipitation_probability.map(function (p) { return p || 0; })
     };

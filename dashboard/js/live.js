@@ -81,7 +81,7 @@ import { withPlans } from './planevents.js';
       while (seen[id]) id += 'x';
       seen[id] = 1;
       return {
-        id: id, title: e.title, people: e.people, allDay: !!e.allDay, cal: e.cal,
+        id: id, uid: e.id, title: e.title, people: e.people, allDay: !!e.allDay, cal: e.cal,
         start: e.allDay ? localDate(e.start) : new Date(e.start),
         end: e.allDay ? localDate(e.end) : new Date(e.end),
         loc: e.loc, notes: e.notes
