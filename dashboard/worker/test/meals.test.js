@@ -174,7 +174,9 @@ test('a plan removes the day\'s other copies of a meal: other UIDs deleted, a se
   env.WALK_PLAN_CALENDARS = JSON.stringify({ harsh: 'Harsh’s Calendar', ambuja: 'Ambuja’s Calendar', 'ambuja+harsh': 'A&H Life', dog: 'Life Log' });
   const harsh = CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-dinner.ics', ambuja = CALS['Ambuja’s Calendar'] + 'maya-meal-plan-2026-11-16-dinner.ics';
   const logged = CALS['Life Log'] + 'maya_meal-2026-11-16-dinner.ics';
-  objects.set(harsh, vevent('hb-maya-meal-2026-11-16-dinner', '20261117T013000Z', '20261117T014500Z', 'Maya dinner 3/4 cup'));
+  // A one-off event with iCloud's VTIMEZONE (yearly DST RRULEs) is still a one-off, not a series.
+  const vtz = SERIES.slice(SERIES.indexOf('BEGIN:VTIMEZONE'), SERIES.indexOf('BEGIN:VEVENT'));
+  objects.set(harsh, vevent('hb-maya-meal-2026-11-16-dinner', '20261117T013000Z', '20261117T014500Z', 'Maya dinner 3/4 cup').replace('BEGIN:VEVENT', vtz + 'BEGIN:VEVENT'));
   objects.set(ambuja, vevent('maya-meal-plan-2026-11-16-dinner@frame-data', '20261117T013000Z', '20261117T014500Z', 'Maya dinner 3/4 cup').replace('DTSTAMP:', 'LAST-MODIFIED:20261116T000000Z\r\nDTSTAMP:'));
   objects.set(logged, vevent('maya_meal-2026-11-16-dinner@frame-data', '20261117T000000Z', '20261117T001500Z', 'Maya dinner 🍽️ 3/4 cup — Harsh'));
   const s = new MealStore(env);

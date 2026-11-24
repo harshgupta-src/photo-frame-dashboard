@@ -250,7 +250,8 @@ export class MealStore {
         rows = await calendarEntries(this.env, await this.calUrl(cal.name, true), new Date(from), new Date(to));
       }
       for (const r of rows) {
-        const recurring = /^RRULE[:;]/m.test(r.ics);
+        // Only a VEVENT's RRULE counts: iCloud adds a VTIMEZONE with yearly DST rules to one-off events too.
+        const recurring = /^RRULE[:;]/m.test(r.ics.replace(/BEGIN:VTIMEZONE[\s\S]*?END:VTIMEZONE\r?\n?/g, ''));
         for (const o of expandICS(r.ics, cal, new Date(from), new Date(to))) {
           if (o.allDay) continue;
           const at = Date.parse(o.start), kind = mealKind(o.title, +localHM(at, tz).slice(0, 2), dog);
