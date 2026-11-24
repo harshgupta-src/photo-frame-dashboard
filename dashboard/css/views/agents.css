@@ -22,10 +22,10 @@
 .ag-meter-foot b { color: var(--ink); font-size: 18px; }
 .cp-muted { color: var(--mute); font-size: 16px; }
 
-.cp-today { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; align-content: center; }
+.cp-today { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; align-content: center; padding-block: 8px; }
 .cp-stat { display: flex; flex-direction: column; min-width: 0; }
 .cp-stat .num { font-size: 36px; line-height: .9; }
-.cp-stat small { font-size: 12px; line-height: 1.15; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; margin-top: 3px; }
+.cp-stat small { font-size: 12px; line-height: 1.1; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; margin-top: 3px; }
 
 .cp-models { gap: 6px; }
 .cp-mlist { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-around; gap: 4px; }
