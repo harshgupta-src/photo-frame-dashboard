@@ -105,13 +105,29 @@
       return '<button class="ad' + (e.start < s ? ' ad--cont' : '') + '" data-ev="' + e.id + '" style="grid-column:' + col + ';' + App.pstyle(App.evColor(e)) + '">' +
         (e.start < s ? App.icon('left', 16) : '') + App.esc(e.title) + (spanDays > 1 ? ' <small>Day ' + dayN + ' of ' + spanDays + '</small>' : '') + '</button>';
     }).join('') + '</div></div>' : '';
+    // Family events span every lane on top of them, so one that would cover a person's event is
+    // laid out inside each lane instead (side by side with what it collides with).
+    var own = D.people.map(function (p) { return App.timedOn(day, p.id).filter(function (e) { return !App.isFamily(e); }); });
+    var minMs = (minPx() / PX) * 3600000;
+    var vEnd = function (e) { return Math.max(+e.end, +e.start + minMs); };
+    var hits = function (a, b) { return +a.start < vEnd(b) && +b.start < vEnd(a); };
+    var inLane = [], overlay = fam.slice(), moved = true;
+    while (moved) {
+      moved = false;
+      overlay = overlay.filter(function (f) {
+        var clash = own.some(function (l) { return l.some(function (e) { return hits(f, e); }); }) ||
+          inLane.some(function (e) { return hits(f, e); });
+        if (clash) { inLane.push(f); moved = true; }
+        return !clash;
+      });
+    }
     var grid = '<div class="grid-scroll"><div class="grid" style="height:' + (END - START) * PX + 'px">' +
       '<div class="hours">' + hoursCol() + '</div>' +
-      '<div class="lanes" style="grid-template-columns:repeat(' + D.people.length + ',1fr)">' + D.people.map(function (p) {
-        var list = App.timedOn(day, p.id).filter(function (e) { return !App.isFamily(e); });
+      '<div class="lanes" style="grid-template-columns:repeat(' + D.people.length + ',1fr)">' + D.people.map(function (p, i) {
+        var list = own[i].concat(inLane).sort(function (a, b) { return a.start - b.start || b.end - a.end; });
         return '<div class="lane" style="' + App.pstyle(p) + '">' + placeBlocks(list, null, p.id) + '</div>';
       }).join('') +
-      '<div class="lane-fam">' + placeBlocks(fam) + '</div>' +
+      '<div class="lane-fam">' + placeBlocks(overlay) + '</div>' +
       nowLine([day]) + '</div>' +
       '</div></div>';
     var empty = !App.timedOn(day).length ? '<div class="cal-empty serif">Nothing on the calendar.<br><i>A rare, quiet day.</i></div>' : '';
