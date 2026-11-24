@@ -58,3 +58,8 @@ test('today is the home date, not the UTC date, in the evening', () => {
   // 8 PM Eastern on Nov 12 is already Nov 13 in UTC.
   assert.equal(facts(PLAN, Date.parse('2026-11-13T01:00:00Z')).today, '2026-11-12');
 });
+
+test('a date-only weigh-in keeps its own date in the home time zone', () => {
+  const f = foodFacts({ birthday: '2026-05-17', weights: [{ at: '2026-11-07', kg: 17.2 }], plan: PLAN, now: NOW, history: [] });
+  assert.equal(f.latest.date, '2026-11-07');
+});

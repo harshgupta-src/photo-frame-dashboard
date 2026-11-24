@@ -93,7 +93,9 @@ export function foodFacts({ birthday, weights = [], meals = [], plan = [], cups 
   const born = Date.parse(birthday + 'T12:00:00Z'), today = dayOf(now);
   const weeksAt = (t) => (t - born) / (7 * DAY);
   const ageWeeks = weeksAt(now);
-  const w = weights.filter((x) => x && x.kg != null).map((x) => ({ ...x, t: Date.parse(x.at) })).sort((a, b) => a.t - b.t);
+  // A date-only weigh-in ("2026-10-01") is midday that day, not UTC midnight (the evening before here).
+  const atMs = (at) => Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(at) ? at + 'T12:00:00Z' : at);
+  const w = weights.filter((x) => x && x.kg != null).map((x) => ({ ...x, t: atMs(x.at) })).sort((a, b) => a.t - b.t);
   const real = w.filter((x) => !x.estimate);
   const latest = w[w.length - 1] || null;
 
