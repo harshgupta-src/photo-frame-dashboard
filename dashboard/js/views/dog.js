@@ -30,7 +30,7 @@
   function who(list) { return (list || []).map(function (p) { return p.name || pname(p.id); }).join(' & '); }
   function dayLabel(ms) {
     var d = new Date(ms), t = App.dayStart(new Date(now())), days = Math.round((App.dayStart(d) - t) / 864e5);
-    return days === 0 ? 'Today' : days === -1 ? 'Yesterday' : App.fmt.dayShort(d);
+    return days === 0 ? 'Today' : days === -1 ? 'Yesterday' : days === 1 ? 'Tomorrow' : App.fmt.dayShort(d);
   }
 
   // ---------------------------------------------------------------- header
@@ -119,9 +119,9 @@
     if (a && !a.endedAt) return tile('walk', 'paw', 'Out walking', '<span class="num">' + dur(now() - a.startedAt) + '</span>', 'Since ' + App.fmt.time(new Date(a.startedAt)) + ' · ' + esc(who(a.walkers)), 'live');
     var n = App.walk.next();
     if (!n) return tile('walk', 'paw', 'Next walk', '—', 'None planned');
-    var at = new Date(n.start), late = +at < now();
+    var at = new Date(n.start), late = +at < now(), day = dayLabel(+at);
     return tile('walk', 'paw', late ? 'Walk due' : 'Next walk', '<span class="num">' + App.fmt.time(at) + '</span>',
-      esc((n.walkers || []).join(' & ')) + ' · ' + n.durationMin + ' min' + busy(n.walkerIds, at), late ? 'warn' : '');
+      (day === 'Today' ? '' : day + ' · ') + esc((n.walkers || []).join(' & ')) + ' · ' + n.durationMin + ' min' + busy(n.walkerIds, at), late ? 'warn' : '');
   }
 
   // ---------------------------------------------------------------- today: meals + walks

@@ -1,4 +1,4 @@
-import { test, beforeEach } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { WalkStore } from '../src/walkstore.js';
 import { encodeGraph } from '../src/snap.js';
@@ -50,6 +50,11 @@ beforeEach(() => {
     DATA: { get: async (k, t) => (kv.has(k) ? (t === 'json' ? JSON.parse(kv.get(k)) : kv.get(k)) : null), put: async (k, v) => { kv.set(k, v); } },
   };
 });
+
+// A clock that starts at iso and runs (Date.now only; plan tests mustn't depend on the time of day).
+const realNow = Date.now;
+function setClock(iso) { const base = Date.parse(iso), t0 = realNow(); Date.now = () => base + realNow() - t0; }
+afterEach(() => { Date.now = realNow; });
 
 // Runs the deferred calendar work like the Workers runtime would, then returns the result.
 async function call(op, ...args) {
@@ -168,11 +173,11 @@ test('walks mirrored to an older calendar move to WALK_CALENDAR', async () => {
 
 test('a planned walk goes on its walker\'s calendar and comes off once it is walked', async () => {
   env.HA_WALK_WEBHOOK_URL = HA;
+  setClock('2026-11-24T15:00:00Z'); // not near bedtime or midnight
   const now = Date.now(), date = new Date(now).toISOString().slice(0, 10);
   // Lifelog has no walks yet, so the household time zone is UTC.
   const start = new Date(now + 3600e3).toISOString();
   const r = await call('putPlan', date, { walks: [{ start, durationMin: 30, walkers: ['harsh'], note: 'long one' }] });
-  if (new Date(now + 3600e3).toISOString().slice(0, 10) !== date) return; // near midnight UTC: skip
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const item = r.body.walks[0];
   assert.deepEqual([item.status, item.calendar, item.walkerIds], ['planned', 'synced', ['harsh']]);
@@ -251,9 +256,9 @@ test('with the walk graph the route is also snapped; late points re-snap it', as
 });
 
 test('a plan walk carries its expect; a Shortcut stop without pee/poop uses it', async () => {
+  setClock('2026-11-24T15:00:00Z');
   const now = Date.now(), date = new Date(now).toISOString().slice(0, 10);
   const start = new Date(now + 10 * 60e3).toISOString();
-  if (new Date(now + 3600e3).toISOString().slice(0, 10) !== date || new Date(now).getUTCHours() >= 21) return; // near bedtime/midnight UTC: skip
   const r = await call('putPlan', date, { walks: [{ start, durationMin: 30, walkers: ['harsh'], expect: { pee: true, poop: true } }] });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual(r.body.walks[0].expect, { pee: true, poop: true, from: 'plan' });
@@ -262,4 +267,54 @@ test('a plan walk carries its expect; a Shortcut stop without pee/poop uses it',
   events.get(id).started_at = new Date(now - 5 * 60e3).toISOString();
   const s = await call('stop', {});
   assert.deepEqual([s.body.pee, s.body.poop], [true, true]);
+});
+
+test('replan: a done walk the PUT leaves out stays in the plan; a bad tz is a 400', async () => {
+  setClock('2026-11-24T15:00:00Z');
+  const date = '2026-11-24';
+  const first = (await call('putPlan', date, { walks: [{ start: '13:00', walkers: ['harsh'] }, { start: '18:00', walkers: ['harsh'] }] })).body;
+  const done = first.walks[0];
+  await call('upsert', 'walk-gggggg', { startedAt: Date.parse('2026-11-24T13:05:00Z'), endedAt: Date.parse('2026-11-24T13:35:00Z'), walkers: ['harsh'], planId: done.id });
+  const r = await call('putPlan', date, { walks: [{ start: '18:30', walkers: ['harsh'] }] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.walks.map((x) => [x.start.slice(11, 16), x.status]), [['13:00', 'done'], ['18:30', 'planned']]);
+  assert.equal(ical.has(HCAL + 'walk-plan-' + first.walks[1].id + '.ics'), false, 'the moved walk\'s old event is gone');
+  assert.equal((await call('putPlan', date, { tz: 'Mars/Base', walks: [] })).status, 400);
+});
+
+test('a plan\'s expect uses the plan\'s time zone even when no walk says it', async () => {
+  setClock('2026-11-24T15:00:00Z');
+  // 16:00 in New York (21:00 UTC): no poop by her routine (it would be one at 21:00).
+  const r = await call('putPlan', '2026-11-24', { tz: 'America/New_York', walks: [{ start: '16:00', walkers: ['harsh'] }] });
+  assert.deepEqual(r.body.walks[0].expect, { pee: true, poop: false, from: 'usual' });
+  assert.equal((await call('state')).body.plans[0].walks[0].expect.poop, false);
+});
+
+test('GET /walk has today\'s and tomorrow\'s plans on the night the clocks go back', async () => {
+  setClock('2026-11-01T04:30:00Z'); // 00:30 EDT; 24 hours later is still Nov 1 (EST)
+  const t = Date.parse('2026-10-31T20:00:00Z');
+  await call('upsert', 'walk-hhhhhh', { startedAt: t, endedAt: t + 30 * 60e3, walkers: ['harsh'], tz: 'America/New_York' });
+  for (const date of ['2026-11-01', '2026-11-02']) kv.set('walk-plan:' + date, JSON.stringify({ date, tz: 'America/New_York', items: [], updated: 'x' }));
+  assert.deepEqual((await call('state')).body.plans.map((p) => p.date), ['2026-11-01', '2026-11-02']);
+});
+
+test('two plan PUTs racing: events the losing one wrote are removed, not left on the calendar', async () => {
+  setClock('2026-11-24T15:00:00Z');
+  const date = '2026-11-24', put = globalThis.fetch;
+  let raced = false;
+  globalThis.fetch = async (url, init = {}) => {
+    if (!raced && url.startsWith(HCAL) && init.method === 'PUT') {
+      raced = true;
+      // Another PUT, made from the same (empty) old plan, lands while iCloud answers this one.
+      kv.delete('walk-plan:' + date);
+      const t0 = Date.now();
+      Date.now = () => t0 + 1000;
+      await new WalkStore(env).putPlan(date, { walks: [{ start: '19:00', walkers: ['harsh'] }] });
+    }
+    return put(url, init);
+  };
+  const r = await call('putPlan', date, { walks: [{ start: '17:00', walkers: ['harsh'] }] });
+  assert.deepEqual(r.body.walks.map((x) => x.start.slice(11, 16)), ['19:00']);
+  assert.deepEqual([...ical.keys()].filter((k) => k.startsWith(HCAL)), [HCAL + 'walk-plan-' + date + '-1900.ics']);
+  assert.deepEqual(JSON.parse(kv.get('walk-plan:' + date)).removed, []);
 });

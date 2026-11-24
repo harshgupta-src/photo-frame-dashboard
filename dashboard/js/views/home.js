@@ -138,7 +138,8 @@ import { createHold } from '../todo.js';
   // The next planned walk (HA agent) and who walks it: tap an avatar to add or remove someone.
   function planRow(x) {
     var who = App.walk.defaultWalkers(), s = Date.parse(x.start);
-    var when = s - Date.now() < 15 * 60e3 ? 'Due now' : 'Next ' + App.fmt.time(new Date(s));
+    // Late in the evening the next one is tomorrow's (GET /walk has today's and tomorrow's plans).
+    var when = s - Date.now() < 15 * 60e3 ? 'Due now' : (App.sameDay(new Date(s), new Date()) ? 'Next ' : 'Tomorrow ') + App.fmt.time(new Date(s));
     return '<div class="h-walk-plan"><span class="h-walk-when">' + when + ' · ' + App.fmt.mins(x.durationMin) + '</span>' +
       '<span class="h-walk-who">' + window.CONFIG.people.map(function (p) {
         var on = who.some(function (w) { return w.id === p.id; });

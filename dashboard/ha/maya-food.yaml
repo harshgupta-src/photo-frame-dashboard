@@ -46,8 +46,10 @@ rest_command:
     timeout: 15
 
 shell_command:
+  # Not cut with head -c: a cut inside a multi-byte character makes HA reject the output as non-UTF-8.
+  # The prompt keeps the first 16000 characters.
   maya_food_notes: >-
-    cat '/share/obsidian/harsh-memory/Areas/People/Maya.md' '/share/obsidian/harsh-memory/Areas/People/Maya Feeding Chart.md' | head -c 16000
+    cat '/share/obsidian/harsh-memory/Areas/People/Maya.md' '/share/obsidian/harsh-memory/Areas/People/Maya Feeding Chart.md'
 
 template:
   # The stored decision, for the before-breakfast notification. Kept on a Worker error.
@@ -165,6 +167,7 @@ script:
               title: "🐕 Maya's food check failed"
               message: "No facts from the frame Worker ({{ fx.status if fx is defined else 'unreachable' }})."
               tag: maya_food_check_error
+            continue_on_error: true
           - stop: no facts
             error: true
       - action: shell_command.maya_food_notes
@@ -203,22 +206,30 @@ script:
           prompt: "{{ prompt[:31000] }}"
           profile: home
         response_variable: job
-      - wait_for_trigger:
-          - trigger: event
-            event_type: ha_copilot_agent_job_finished
-            event_data:
+        continue_on_error: true
+      # A failed submit or read-back still reaches the error notification below.
+      - if:
+          - condition: template
+            value_template: "{{ job is defined and job is mapping and job.job_id | default('') != '' }}"
+        then:
+          - wait_for_trigger:
+              - trigger: event
+                event_type: ha_copilot_agent_job_finished
+                event_data:
+                  job_id: "{{ job.job_id }}"
+            timeout: "00:15:00"
+            continue_on_timeout: true
+          - action: ha_copilot_agent.get_job
+            data:
               job_id: "{{ job.job_id }}"
-        timeout: "00:15:00"
-        continue_on_timeout: true
-      - action: ha_copilot_agent.get_job
-        data:
-          job_id: "{{ job.job_id }}"
-        response_variable: done
-      - action: persistent_notification.dismiss
-        data:
-          notification_id: "ha_copilot_agent_{{ job.job_id }}"
+            response_variable: done
+            continue_on_error: true
+          - action: persistent_notification.dismiss
+            data:
+              notification_id: "ha_copilot_agent_{{ job.job_id }}"
+            continue_on_error: true
       - variables:
-          text: "{{ done.result if done.result is string else '' }}"
+          text: "{{ done.result if done is defined and done is mapping and done.result is string else '' }}"
           ans: >-
             {%- set m = text | regex_findall('(?s)\\{.*\\}') -%}
             {{ (m | first) | from_json(default=none) if m else none }}
@@ -249,7 +260,9 @@ script:
                 continue_on_error: true
       - variables:
           error: >-
-            {%- if done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
+            {%- if job is not defined or job is not mapping or job.job_id | default('') == '' -%}could not submit the agent job
+            {%- elif done is not defined or done is not mapping -%}could not read the agent job
+            {%- elif done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
             {%- elif not ok -%}no decision JSON in the agent's reply
             {%- elif put is not defined -%}could not reach the frame Worker
             {%- elif put.status != 200 -%}Worker said {{ put.status }}: {{ put.content.error if put.content is mapping and put.content.error is defined else put.content }}
@@ -264,6 +277,7 @@ script:
               title: "🐕 Maya's food check failed"
               message: "{{ error[:300] }}"
               tag: maya_food_check_error
+            continue_on_error: true
           - stop: "{{ error }}"
             error: true
       - event: maya_food_updated
@@ -317,8 +331,10 @@ automation:
     actions:
       - variables:
           fr: "{{ {0: '', 25: '¼', 33: '⅓', 50: '½', 67: '⅔', 75: '¾'} }}"
-          from_txt: "{{ (a.fromCups | int if a.fromCups | int else '') ~ fr.get(((a.fromCups - a.fromCups | int) * 100) | round(0) | int, '') }}"
-          to_txt: "{{ (a.toCups | int if a.toCups | int else '') ~ fr.get(((a.toCups - a.toCups | int) * 100) | round(0) | int, '') }}"
+          from_c: "{{ a.fromCups | float(0) }}"
+          to_c: "{{ a.toCups | float(0) }}"
+          from_txt: "{{ (from_c | int if from_c | int else '') ~ fr.get(((from_c - from_c | int) * 100) | round(0) | int, '') }}"
+          to_txt: "{{ (to_c | int if to_c | int else '') ~ fr.get(((to_c - to_c | int) * 100) | round(0) | int, '') }}"
       - action: script.maya_meal_notify
         data:
           people: [harsh, ambuja]

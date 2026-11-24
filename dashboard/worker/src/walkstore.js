@@ -17,7 +17,7 @@ import {
 } from './walks.js';
 import { loadGraph, snapRoute } from './snap.js';
 import { owntracksPoints, mergePaths } from './owntracks.js';
-import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
+import { normalizePlan, matchPlan, planCalendarName, planRev, planICS, planJSON, validDate, nextDate, minuteOfDay, MATCH_WINDOW } from './walkplan.js';
 import { expectPotty } from './walkexpect.js';
 
 const DAY = 864e5;
@@ -129,12 +129,13 @@ export class WalkStore {
     const due = all.filter((w) => needsSync(w, now));
     if (due.length) this.later(() => this.syncAll(due));
     const plans = [];
-    for (const date of [localDate(now, tz), localDate(now + DAY, tz)]) {
+    const today = localDate(now, tz);
+    for (const date of [today, nextDate(today)]) {
       const plan = await this.loadPlan(date);
       if (!plan) continue;
       const matched = matchPlan(plan.items, live);
       if (this.planDue(plan, matched, now)) this.later(() => this.syncPlan(date));
-      plans.push(planJSON(plan, matched, now, live, tz));
+      plans.push(planJSON(plan, matched, now, live, plan.tz || tz));
     }
     return {
       now: new Date(now).toISOString(), tz,
@@ -262,7 +263,7 @@ export class WalkStore {
     const cached = this.env.DATA && await this.env.DATA.get(key, 'json');
     if (cached && !fresh && cached.name === name) return cached.url;
     const c = (await listCalendars(this.env)).find((x) => calKey(x.name) === calKey(name));
-    if (!c) throw new Error('calendar "' + name + '" not found');
+    if (!c) throw new WalkError('calendar "' + name + '" not found', 503);
     if (this.env.DATA) await this.env.DATA.put(key, JSON.stringify({ name, url: c.url }));
     return c.url;
   }
@@ -409,7 +410,7 @@ export class WalkStore {
     const plan = await this.loadPlan(d);
     if (!plan) return { date: d, walks: [] };
     const walks = await this.planWalks(plan);
-    return planJSON(plan, matchPlan(plan.items, walks), now, walks, household(walks).tz);
+    return planJSON(plan, matchPlan(plan.items, walks), now, walks, plan.tz || household(walks).tz);
   }
 
   // Replaces the day's plan and writes its calendar events before answering.
@@ -417,14 +418,20 @@ export class WalkStore {
     const now = Date.now(), recent = await this.walks(now - 30 * DAY), h = household(recent);
     const old = await this.loadPlan(date);
     // Planned walks already walked or under way are never dropped for being after bedtime.
-    const walked = old ? [...matchPlan(old.items, recent.filter((w) => !w.deletedAt)).keys()] : [];
-    const plan = normalizePlan(body, date, (body && body.tz) || h.tz, h.names, now, new Set(walked));
+    const oldMatch = old ? matchPlan(old.items, recent.filter((w) => !w.deletedAt)) : new Map();
+    const plan = normalizePlan(body, date, (body && body.tz) || h.tz, h.names, now, new Set(oldMatch.keys()));
     plan.dog = h.dog;
     const prev = new Map(((old && old.items) || []).map((x) => [x.id, x]));
     for (const x of plan.items) {
       const o = prev.get(x.id);
       if (o) { x.cal = o.cal; x.created = o.created; }
     }
+    // A replan keeps the walks already done even when the PUT leaves them out (e.g. one logged while the
+    // planner was thinking); a walk under way instead takes its moved item (matchPlan's nearest).
+    for (const [id, w] of oldMatch) {
+      if (w.endedAt != null && !plan.items.some((x) => x.id === id)) plan.items.push(prev.get(id));
+    }
+    plan.items.sort((a, b) => a.start - b.start);
     plan.removed = [...((old && old.removed) || []), ...[...prev.values()].filter((x) => x.cal && x.cal.href && !plan.items.some((y) => y.id === x.id))];
     await this.savePlan(plan);
     return (await this.syncPlan(date)) || { date, walks: [] };
@@ -481,10 +488,22 @@ export class WalkStore {
     if (changed) {
       // Keep any re-plan that landed while iCloud answered; just record where events now are.
       const cur = await this.loadPlan(date);
-      if (cur && cur.updated !== plan.updated) return this.syncPlan(date);
+      if (cur && cur.updated !== plan.updated) {
+        // Events written here that the newer plan doesn't know about: adopt them, or remove them.
+        const known = new Set([...cur.items, ...(cur.removed || [])].map((x) => x.cal && x.cal.href).filter(Boolean));
+        let adopted = false;
+        for (const x of [...plan.items, ...plan.removed]) {
+          if (!x.cal || !x.cal.href || known.has(x.cal.href)) continue;
+          const y = plan.items.includes(x) && cur.items.find((i) => i.id === x.id && !(i.cal && i.cal.href));
+          if (y) y.cal = x.cal; else cur.removed = [...(cur.removed || []), x];
+          adopted = true;
+        }
+        if (adopted) await this.savePlan(cur);
+        return this.syncPlan(date);
+      }
       await this.savePlan(plan);
     }
-    return planJSON(plan, matched, now, walks, household(walks).tz);
+    return planJSON(plan, matched, now, walks, plan.tz || household(walks).tz);
   }
 
   async syncAll(walks, force = false) {

@@ -20,9 +20,13 @@ automation:
         webhook_id: !secret frame_deploy_webhook_id
         allowed_methods: [POST]
         local_only: false
+    # Without a build, publishing would clear the retained message offline frames still need.
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.json is mapping and trigger.json.build is string and trigger.json.build | trim != '' }}"
     actions:
       - action: mqtt.publish
         data:
           topic: homehq/dashboard/update
-          payload: "{{ (trigger.json.build if trigger.json is mapping and trigger.json.build is string else '') | truncate(1000, true, '') }}"
+          payload: "{{ trigger.json.build | trim | truncate(1000, true, '') }}"
           retain: true

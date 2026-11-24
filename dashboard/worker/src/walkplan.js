@@ -4,12 +4,14 @@
 // A planned walk's event is removed once a walk is logged for it: the walk names it (planId, sent by the
 // frame) or, failing that, is the nearest walk within 90 minutes of its start.
 import { icsTime, VTIMEZONE } from './ics.js';
-import { WalkError, walkersOf, validId, localDate, localHM, PLAN_PREFIX } from './walks.js';
+import { WalkError, walkersOf, validId, validTz, localDate, localHM, PLAN_PREFIX } from './walks.js';
 import { expectPotty, normalizeExpect } from './walkexpect.js';
 
 export const MATCH_WINDOW = 90 * 60e3;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const validDate = (d) => typeof d === 'string' && DATE.test(d) && !Number.isNaN(Date.parse(d + 'T12:00:00Z'));
+// The calendar day after date (not localDate(now + 24 h): days are 23 or 25 hours around DST changes).
+export const nextDate = (d) => new Date(Date.parse(d + 'T12:00:00Z') + 864e5).toISOString().slice(0, 10);
 
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n);
 
@@ -44,6 +46,7 @@ export function when(v, date, tz, name) {
 export const BEDTIME = '22:00';
 export function normalizePlan(body, date, tz, names = {}, now = Date.now(), keep = new Set()) {
   if (!validDate(date)) throw new WalkError('the plan date must be YYYY-MM-DD');
+  if (!validTz(tz)) throw new WalkError('tz is not a time zone');
   if (!body || typeof body !== 'object' || !Array.isArray(body.walks)) throw new WalkError('body must be {"walks": [...]}');
   if (body.walks.length > 8) throw new WalkError('at most 8 walks a day');
   let late = when(BEDTIME, date, tz, 'bedtime');
@@ -102,6 +105,10 @@ export function planCalendarName(env, walkerIds) {
   const parse = (v) => { try { return typeof v === 'string' ? JSON.parse(v) : v || {}; } catch { return {}; } };
   const explicit = parse(env.WALK_PLAN_CALENDARS);
   if (explicit[key]) return explicit[key];
+  // Keys written in another order ("harsh+ambuja") or case.
+  for (const [k, name] of Object.entries(explicit)) {
+    if ([...new Set(k.toLowerCase().split('+').map((x) => x.trim()))].sort().join('+') === key) return name;
+  }
   for (const [name, people] of Object.entries(parse(env.CALENDARS))) {
     if (Array.isArray(people) && [...new Set(people)].sort().join('+') === key) return name;
   }

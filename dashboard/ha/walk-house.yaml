@@ -166,9 +166,11 @@ script:
           - condition: template
             value_template: "{{ turned_off | count > 0 }}"
         then:
+          # The snapshot scene exists unless HA restarted mid-walk (scene.create isn't persisted). Its
+          # state is the last activation time, 'unknown' until first used, so test that it exists.
           - if:
               - condition: template
-                value_template: "{{ states('scene.maya_walk_restore') not in ['unknown', 'unavailable'] }}"
+                value_template: "{{ states.scene.maya_walk_restore is not none }}"
             then:
               - action: scene.turn_on
                 target:

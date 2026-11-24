@@ -6,7 +6,7 @@ import { calKey } from '../src/icloud.js';
 
 const LL = 'https://lifelog.test', DAV = 'https://caldav.test/';
 const CALS = { 'Harsh’s Calendar': DAV + 'h/', 'Ambuja’s Calendar': DAV + 'a/', 'A&H Life': DAV + 'ah/', 'Life Log': DAV + 'log/' };
-let objects, kv, env;
+let objects, kv, env, failPut;
 
 const unfold = (s) => s.replace(/\r\n[ \t]/g, '');
 const vevent = (uid, start, end, summary, desc) => 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:' + uid + '\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:' + start +
@@ -21,13 +21,18 @@ function fakeFetch(url, init = {}) {
       t.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>').join('');
     return Promise.resolve(new Response('<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">' + body + '</d:multistatus>', { status: 207 }));
   }
-  if (m === 'PUT') { objects.set(url, init.body); return Promise.resolve(new Response('', { status: 201 })); }
+  if (m === 'GET') return Promise.resolve(objects.has(url) ? new Response(objects.get(url), { status: 200 }) : new Response('', { status: 404 }));
+  if (m === 'PUT') {
+    if (failPut && failPut(url)) return Promise.resolve(new Response('', { status: 503 }));
+    objects.set(url, init.body); return Promise.resolve(new Response('', { status: 201 }));
+  }
   if (m === 'DELETE') return Promise.resolve(new Response(null, { status: objects.delete(url) ? 204 : 404 }));
   throw new Error('unexpected ' + m + ' ' + url);
 }
 
 beforeEach(() => {
   globalThis.fetch = fakeFetch;
+  failPut = null;
   objects = new Map([
     [CALS['A&H Life'] + 'b1.ics', vevent('b1', '20261116T144500Z', '20261116T150000Z', 'Maya · Breakfast', 'cups: 1.25')],
     [CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-lunch.ics', vevent('hb-maya-meal-2026-11-16-lunch', '20261116T203000Z', '20261116T204500Z', 'Maya lunch 1 cup')],
@@ -127,4 +132,61 @@ test('a recurring meal: the moved day becomes its own event, logging takes a day
   assert.match(unfold(objects.get(CALS['Life Log'] + 'maya_meal-2026-11-17-dinner.ics')), /SUMMARY:Maya dinner 🍽️ 3\/4 cup — Harsh/);
   await s.unlog('maya_meal-2026-11-17-dinner');
   assert.deepEqual(dinners('2026-11-17T12:00:00Z', '2026-11-19T12:00:00Z'), ['2026-11-17T23:30:00.000Z', '2026-11-18T23:30:00.000Z']);
+});
+
+test('undoing one day of a series keeps the days logged since', async () => {
+  objects.set(CALS['A&H Life'] + 'ser.ics', SERIES);
+  env.TZ = 'America/New_York';
+  const s = new MealStore(env), dinners = () => expandICS(objects.get(CALS['A&H Life'] + 'ser.ics'), { name: 'x' }, new Date('2026-11-16T12:00:00Z'), new Date('2026-11-19T12:00:00Z')).map((e) => e.start);
+  await s.log({ id: 'maya_meal-2026-11-16-dinner', person: 'harsh', at: '2026-11-16T18:40:00-05:00' });
+  await s.log({ id: 'maya_meal-2026-11-17-dinner', person: 'ambuja', at: '2026-11-17T18:35:00-05:00' });
+  assert.deepEqual(dinners(), ['2026-11-18T23:30:00.000Z']);
+  await s.unlog('maya_meal-2026-11-16-dinner');
+  assert.deepEqual(dinners(), ['2026-11-16T23:30:00.000Z', '2026-11-18T23:30:00.000Z']);
+});
+
+test('a planned meal that could not be taken out is taken out when the meal is logged again', async () => {
+  const planned = CALS['A&H Life'] + 'b1.ics';
+  objects.set(planned, vevent('b1', '20261116T144500Z', '20261116T150000Z', 'Maya · Breakfast'));
+  const s = new MealStore(env);
+  let calls = 0;
+  globalThis.fetch = (url, init = {}) => ((init.method === 'DELETE' && url === planned && !calls++) ? Promise.resolve(new Response('', { status: 503 })) : fakeFetch(url, init));
+  await assert.rejects(s.log({ id: 'maya_meal-2026-11-16-breakfast', person: 'ambuja', at: '2026-11-16T06:57:00-08:00' }));
+  assert.equal(objects.has(planned), true);
+  const r = await s.log({ id: 'maya_meal-2026-11-16-breakfast', ate: 'some' });
+  assert.equal(r.removedFrom, 'A&H Life');
+  assert.equal(objects.has(planned), false);
+  assert.match(unfold(objects.get(CALS['Life Log'] + 'maya_meal-2026-11-16-breakfast.ics')), /planned 6:45 AM/);
+});
+
+test('a plan keeps a long description whole, and skips a meal with a bad time', async () => {
+  const long = 'x'.repeat(700), href = CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-lunch.ics';
+  objects.set(href, vevent('hb-maya-meal-2026-11-16-lunch', '20261116T203000Z', '20261116T204500Z', 'Maya lunch 1 cup', long));
+  const r = await new MealStore(env).putPlan('2026-11-16', { meals: [{ kind: 'breakfast', start: 'soon' }, { kind: 'lunch', start: '13:15' }] });
+  assert.deepEqual(r.skipped.map((x) => x.kind), ['breakfast']);
+  assert.deepEqual(r.changed.map((x) => x.kind), ['lunch']);
+  assert.ok(unfold(objects.get(href)).includes(long));
+});
+
+test('a plan removes the day\'s other copies of a meal: other UIDs deleted, a series loses the day, Life Log kept', async () => {
+  objects.set(CALS['A&H Life'] + 'ser.ics', SERIES.replace('Maya dinner 3/4 cup', 'Maya dinner'));
+  env.TZ = 'America/New_York';
+  env.WALK_PLAN_CALENDARS = JSON.stringify({ harsh: 'Harsh’s Calendar', ambuja: 'Ambuja’s Calendar', 'ambuja+harsh': 'A&H Life', dog: 'Life Log' });
+  const harsh = CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-dinner.ics', ambuja = CALS['Ambuja’s Calendar'] + 'maya-meal-plan-2026-11-16-dinner.ics';
+  const logged = CALS['Life Log'] + 'maya_meal-2026-11-16-dinner.ics';
+  objects.set(harsh, vevent('hb-maya-meal-2026-11-16-dinner', '20261117T013000Z', '20261117T014500Z', 'Maya dinner 3/4 cup'));
+  objects.set(ambuja, vevent('maya-meal-plan-2026-11-16-dinner@frame-data', '20261117T013000Z', '20261117T014500Z', 'Maya dinner 3/4 cup').replace('DTSTAMP:', 'LAST-MODIFIED:20261116T000000Z\r\nDTSTAMP:'));
+  objects.set(logged, vevent('maya_meal-2026-11-16-dinner@frame-data', '20261117T000000Z', '20261117T001500Z', 'Maya dinner 🍽️ 3/4 cup — Harsh'));
+  const s = new MealStore(env);
+  assert.equal((await s.get('2026-11-16')).duplicates.length, 3);
+  const r = await s.putPlan('2026-11-16', { meals: [{ kind: 'dinner', start: '20:30' }] });
+  assert.deepEqual(r.unchanged, ['dinner']);
+  assert.deepEqual(r.removed.map((x) => x.calendar).sort(), ['A&H Life', 'Harsh’s Calendar']);
+  assert.equal(objects.has(harsh), false);
+  assert.equal(objects.has(ambuja), true);
+  assert.equal(objects.has(logged), true);
+  const days = expandICS(objects.get(CALS['A&H Life'] + 'ser.ics'), { name: 'x' }, new Date('2026-11-15T12:00:00Z'), new Date('2026-11-18T12:00:00Z')).map((e) => e.start);
+  assert.deepEqual(days, ['2026-11-15T23:30:00.000Z', '2026-11-17T23:30:00.000Z']);
+  const g = await s.get('2026-11-16');
+  assert.deepEqual([g.meals.filter((x) => x.kind === 'dinner').map((x) => x.calendar), g.duplicates.length], [['Ambuja’s Calendar'], 1]);
 });

@@ -112,6 +112,15 @@ export async function putEvent(env, href, ics) {
   return r.headers.get('ETag');
 }
 
+// One event's VCALENDAR text, or null when it is gone.
+export async function getEvent(env, href) {
+  const r = await fetch(href, { method: 'GET', headers: { Authorization: basic(env) } });
+  if (r.status === 404 || r.status === 410) return null;
+  if (r.status === 401 || r.status === 403) throw new ICloudError('iCloud rejected the Apple ID or app-specific password');
+  if (!r.ok) throw new ICloudError('iCloud HTTP ' + r.status + ' on GET');
+  return (await r.text()).replace(/\r?\n/g, '\r\n');
+}
+
 // Deletes an event; one that is already gone counts as deleted. → whether it existed.
 export async function deleteEvent(env, href) {
   const r = await fetch(href, { method: 'DELETE', headers: { Authorization: basic(env) } });

@@ -23,7 +23,12 @@ iPhone Shortcut ──POST /walks/start|stop──┘   │
 - When there's a [plan](#walk-plan), the tile shows the next planned walk ("Next 4:00 PM · 40m",
   "Due now") with the planned walkers' avatars; tap an avatar to add or drop someone. Those are the
   walkers the walk starts with (and the stop sheet's default), and a walk started within 90 minutes
-  of a planned one is tied to it.
+  of a planned one is tied to it. A pick follows its walk when a replan moves it (same id, else the
+  next planned walk within 90 minutes). In the evening, a next walk that is tomorrow says "Tomorrow".
+- After a walk is started, stopped, edited or deleted, the frame re-reads the plan every minute for
+  8 minutes (and when HA's `sensor.maya_walk_plan` changes), so a replan shows up within a minute or
+  so. The schedule's planned walks come from the plan itself, not the calendar copy, for the days the
+  frame has a plan for.
 - **Tap the tile** to start a walk. It turns teal and counts up (`0:42`, `1:05:10` after an hour);
   the ambient photo screen shows a small "Rex's out · 12 min" chip. ✕ cancels (with Undo).
 - **Tap it again when you're back.** A sheet opens with the walk's length, pee, poop and who went,
@@ -242,22 +247,24 @@ Durable Object and its stored data were then deleted (wrangler migration `v2`).
 `PUT /walks/plan/<date>` sets a day's planned walks (at most 8; 5–180 minutes; times local). Each
 becomes an event **🐕 Rex walk — Alex** (UID `walk-plan-<id>`) in the walkers' calendar:
 `WALK_PLAN_CALENDARS` (`{"alex": "Alex's Calendar", "alex+jordan": "Family"}`, ids sorted and joined
-by `+`), else the `CALENDARS` entry with exactly those people. The frame shows them in its schedule
+by `+`; keys match in any order or case), else the `CALENDARS` entry with exactly those people. The frame shows them in its schedule
 too. When a walk is logged it is matched to the plan (its `planId`, else the nearest planned walk
 within 90 minutes, but never one planned after the walk ended) and that planned event is deleted; a
-planned walk whose time has passed shows as `missed`. A new PUT moves changed events, deletes dropped
-ones and keeps the rest. Plans are kept for 90 days in the Worker's KV; `GET /walk` includes today's and tomorrow's.
+planned walk whose time has passed shows as `missed`. A new PUT moves changed events (a walk that keeps its `id` keeps its event), deletes dropped
+ones and keeps the rest. A walk already done stays in the plan even if the PUT leaves it out. Plans are kept for 90 days in the Worker's KV; `GET /walk` includes today's and tomorrow's.
 
 Home Assistant writes the plan at 04:30 and replans the rest of the day 2 minutes after each walk of
 the day is logged, edited or deleted (`ha/walk-plan.yaml`). It also reassesses when the calendars change:
 `sensor.maya_calendar_watch` reads Harsh's, Ambuja's and the shared calendar (now to the end of tomorrow,
-without the 🐕 walk events) every 5 minutes, and 30 s after HA writes a calendar, so it catches events
+without the 🐕 walk events and Maya's meals) every 5 minutes, and 30 s after HA writes a calendar, so it catches events
 added, moved or deleted anywhere (Apple Calendar, HA, agents). For each day with an upcoming change it
 replans: the rest of today (from 04:30), or tomorrow if it already has a plan. The agent sees the
 change and the current plan, and moves only what needs to move. It asks the HA Copilot Agent to pick times,
 lengths and walkers from the dog's pee/poop rhythm (the last 14 days of walks with the gaps between
 pees and between poops, and the time since the last ones), both people's calendars, the forecast and
-the dog's vault note, and to say what each walk will likely bring (`expect`). A replan keeps the walks already done or under way and replaces the rest; the
+the dog's vault note, and to say what each walk will likely bring (`expect`). A replan keeps the walks already done or under way and replaces the rest; the agent is given each upcoming
+walk's id and returns it for walks it keeps or moves. A walk-triggered replan is skipped if the day has
+rolled over or it's before 04:30 by the time it runs. The
 agent's one-line reading of the rhythm is the plan's `notes`. 15 minutes before each planned walk that
 hasn't started, HA sends its walkers a time-sensitive "get ready" notification (`sensor.maya_walk_plan`
 caches today's plan; refreshed every 10 min, after a walk and after each plan).
@@ -268,7 +275,8 @@ Nobody is up after 22:00 on a normal day, so her last walk is around 21:00. The 
 walks that start after 22:00 (they come back under `dropped` in the answer) unless the PUT's
 `lateUntil` allows them, or they were already walked. Home Assistant sets `lateUntil` to 30 minutes after
 the latest event on Harsh's, Ambuja's or the A&H Life calendar that starts that day and ends after 22:00
-(timed events only; Maya's own walk and meal events don't count, so they can't keep anyone up), at most
+(timed events only; Maya's own 🐕 walk and meal events don't count, so they can't keep anyone up, but her
+training or vet visits do), at most
 23:59, filters the agent's walks the same way and tells the agent.
 
 ### Expected pee and poop
@@ -297,7 +305,8 @@ moves the event, and puts it in the new feeder's calendar (`WALK_PLAN_CALENDARS`
 usual time (`X-MAYA-USUAL`) and adds a "⏰ Moved from the usual 12:30: reason" line, which is dropped
 when the meal goes back to its usual time. A moved occurrence of a recurring meal series is split
 off: the series gets an `EXDATE` and the occurrence becomes a standalone event. The calendar watcher
-ignores events titled "Maya …" so the planner's own moves don't trigger replans. Edits people make to
+ignores Maya's 🐕 walks and meals ("Maya … breakfast/lunch/dinner/snack") so the planner's own moves don't
+trigger replans; her other events (training, vet) and sitter stays do. Edits people make to
 meal events are picked up by the next 04:30 plan.
 
 When a meal is logged (NFC tag or notification, `maya_meal.yaml`), HA POSTs `/meals/log`. The Worker

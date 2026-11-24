@@ -3,7 +3,7 @@ import ICAL from 'ical.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 const dateOnly = (t) => t.year + '-' + pad(t.month) + '-' + pad(t.day);
-const MAX_OCCURRENCES = 2000;
+const MAX_OCCURRENCES = 2000, MAX_STEPS = 50000;
 
 // ------------------------------------------------------------------ writing local times
 // Timed events we write carry TZID=America/New_York plus this VTIMEZONE (US rules since 2007), so
@@ -110,8 +110,10 @@ export function expandICS(icsText, cal, from, to) {
   };
   for (const ev of masters.values()) {
     if (!ev.isRecurring()) { push(ev, ev.startDate, ev.endDate, ev.uid); continue; }
-    const it = ev.iterator();
-    for (let n = 0, next; (next = it.next()) && n < MAX_OCCURRENCES; n++) {
+    // Only occurrences in range count toward MAX_OCCURRENCES, so a daily series started years ago still
+    // reaches today; MAX_STEPS bounds the walk from DTSTART.
+    const it = ev.iterator(), before = out.length;
+    for (let n = 0, next; (next = it.next()) && n < MAX_STEPS && out.length - before < MAX_OCCURRENCES; n++) {
       if (next.toJSDate().getTime() >= toMs) break;
       const d = ev.getOccurrenceDetails(next);
       push(d.item, d.startDate, d.endDate, ev.uid + '@' + next.toString());

@@ -109,7 +109,8 @@ template:
             {%- endif -%}
 
   # Everyone's calendar events from now to the end of tomorrow (except Maya's own: the planner's 🐕 walks and
-  # her meals, which the planner moves itself; her sitter stays do count), for
+  # her meals ("Maya … breakfast/lunch/dinner/snack"), which the planner moves itself; her sitter stays and
+  # other "Maya …" events like training or the vet do count), for
   # maya_walk_plan_on_calendar_change. Polled every 5 min, so it sees events added anywhere (Apple Calendar,
   # HA, agents); refreshed sooner after HA itself writes a calendar. On an error it keeps the last list.
   - triggers:
@@ -143,7 +144,7 @@ template:
             {%- else -%}
               {%- set ns = namespace(out=[]) -%}
               {%- for ent, v in cal.items() -%}
-                {%- for e in v.events if (not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b'))
+                {%- for e in v.events if (not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b.*\\b(breakfast|lunch|dinner|snack)'))
                       or ((e.summary | default('')) is search('maya|🐕', ignorecase=True) and (e.summary | default('')) is search('\\b(sitter|boarding|boarder|boarded|kennel)\\b', ignorecase=True)) -%}
                   {%- set ns.out = ns.out + [{'c': ent.split('.')[1], 's': e.start, 'e': e.end, 't': (e.summary | default(''))[:80]}] -%}
                 {%- endfor -%}
@@ -233,7 +234,7 @@ script:
             {%- endfor -%}
             {{ ns.out }}
           # Bedtime: no walks start after 22:00 unless Harsh, Ambuja or A&H Life has an event (not Maya's own
-          # walks or meals, not all-day) that starts that day and ends after 22:00; then until 30 min after the
+          # 🐕 walks or meals, not all-day; her training or vet visits do count) that starts that day and ends after 22:00; then until 30 min after the
           # latest such end (at most 23:59). The Worker drops later walks too (lateUntil in the PUT).
           bed_ts: "{{ as_timestamp(strptime(day ~ ' 22:00', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) }}"
           late_ts: >-
@@ -241,8 +242,8 @@ script:
             {%- set eod = as_timestamp(strptime(day ~ ' 23:59', '%Y-%m-%d %H:%M').replace(tzinfo=now().tzinfo)) -%}
             {%- for ent in calendars.keys() -%}
               {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if 'T' in (e.end | string) and 'T' in (e.start | string)
-                    and not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
-                {%- if as_timestamp(e.end, 0) > bed_ts and as_timestamp(e.start, 0) <= eod -%}
+                    and not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b.*\\b(breakfast|lunch|dinner|snack)') -%}
+                {%- if as_timestamp(e.end, 0) > bed_ts and start_ts <= as_timestamp(e.start, 0) <= eod -%}
                   {%- set ns.t = [ns.t, as_timestamp(e.end) + 1800] | max -%}
                 {%- endif -%}
               {%- endfor -%}
@@ -283,8 +284,14 @@ script:
             {%- set ns = namespace(out=[]) -%}
             {%- for x in (cur.content.walks if cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
               {%- if x.status == 'planned' and as_timestamp(x.start) >= from_ts -%}
-                {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ (' (' ~ x.note ~ ')' if x.note else '')] -%}
+                {%- set ns.out = ns.out + ['- ' ~ as_local(as_datetime(x.start)).strftime('%H:%M') ~ ' ' ~ x.durationMin ~ ' min ' ~ (x.walkerIds | join(' & ')) ~ ' [id ' ~ x.id ~ ']' ~ (' (' ~ x.note ~ ')' if x.note else '')] -%}
               {%- endif -%}
+            {%- endfor -%}
+            {{ ns.out }}
+          ahead_ids: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for x in (cur.content.walks if cur is defined and cur.status == 200 and cur.content is mapping and cur.content.walks is defined else []) -%}
+              {%- if x.status == 'planned' and as_timestamp(x.start) >= from_ts -%}{%- set ns.out = ns.out + [x.id] -%}{%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
           # Maya's meals that day: fed ones (Lifelog) and the planned ones the agent may move or reassign
@@ -342,7 +349,7 @@ script:
           prompt: |-
             {%- set lines = namespace(cal=[], wx=[]) -%}
             {%- for ent, label in calendars.items() -%}
-              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b') -%}
+              {%- for e in (cal[ent].events if cal is defined and cal[ent] is defined else []) if not (e.summary | default('')).startswith('🐕') and not ((e.summary | default('')) | lower) is match('maya\\b.*\\b(breakfast|lunch|dinner|snack)') -%}
                 {%- set lines.cal = lines.cal + ['- ' ~ label ~ ': ' ~ e.start ~ ' → ' ~ e.end ~ ' · ' ~ e.summary ~ (' @ ' ~ e.location if e.location else '')] -%}
               {%- endfor -%}
             {%- endfor -%}
@@ -359,7 +366,7 @@ script:
             This day's plan is being redone because {{ reason }}.
             {% endif %}
             {%- if ahead %}
-            The current plan{{ ' for the rest of the day' if rest else '' }} is below. Keep a walk as it is (same time, length and walkers) unless Maya's rhythm or the calendars now call for a change; move only what needs to move:
+            The current plan{{ ' for the rest of the day' if rest else '' }} is below. Keep a walk as it is (same time, length and walkers) unless Maya's rhythm or the calendars now call for a change; move only what needs to move. For a walk you keep or move, give its "id" (so its calendar event and the walkers' picks follow it); leave "id" out for new walks:
             {{ ahead | join('\n') }}
             {% endif %}
             {%- if sitter or ovr in ['away', 'home'] %}
@@ -419,40 +426,71 @@ script:
           prompt: "{{ prompt[:31000] }}"
           profile: home
         response_variable: job
-      - wait_for_trigger:
-          - trigger: event
-            event_type: ha_copilot_agent_job_finished
-            event_data:
+        continue_on_error: true
+      # A failed submit still reaches the error notification below.
+      - if:
+          - condition: template
+            value_template: "{{ job is defined and job is mapping and job.job_id | default('') != '' }}"
+        then:
+          - wait_for_trigger:
+              - trigger: event
+                event_type: ha_copilot_agent_job_finished
+                event_data:
+                  job_id: "{{ job.job_id }}"
+            timeout: "00:15:00"
+            continue_on_timeout: true
+          - action: ha_copilot_agent.get_job
+            data:
               job_id: "{{ job.job_id }}"
-        timeout: "00:15:00"
-        continue_on_timeout: true
-      - action: ha_copilot_agent.get_job
-        data:
-          job_id: "{{ job.job_id }}"
-        response_variable: done
-      - action: persistent_notification.dismiss
-        data:
-          notification_id: "ha_copilot_agent_{{ job.job_id }}"
+            response_variable: done
+            continue_on_error: true
+          - action: persistent_notification.dismiss
+            data:
+              notification_id: "ha_copilot_agent_{{ job.job_id }}"
+            continue_on_error: true
       - variables:
-          text: "{{ done.result if done.result is string else '' }}"
+          text: "{{ done.result if done is defined and done is mapping and done.result is string else '' }}"
           plan: >-
             {%- set m = text | regex_findall('(?s)\\{.*\\}') -%}
             {{ (m | first) | from_json(default=none) if m else none }}
           ok: "{{ plan is mapping and plan.walks is defined and plan.walks is list }}"
           # The agent's walks that start in time (HH:MM today, else whatever the Worker accepts).
+          # Not at the same minute as a kept walk or another of its walks: the Worker ids walks by start time
+          # and rejects the whole PUT on a clash.
           fresh: >-
-            {%- set ns = namespace(out=[]) -%}
+            {%- set ns = namespace(out=[], seen=[], ids=kept | map(attribute='id') | list) -%}
+            {%- for k in kept -%}{%- set ns.seen = ns.seen + [(as_timestamp(k.start, 0) // 60) | int] -%}{%- endfor -%}
+            {#- Ids the agent kept (from the current plan, each once) first, so a new walk's start-time id can't clash with them. -#}
+            {%- for w in (plan.walks if ok else []) if w is mapping and w.id is defined and w.id in ahead_ids and w.id not in ns.ids -%}
+              {%- set ns.ids = ns.ids + [w.id] -%}
+            {%- endfor -%}
+            {%- set reused = namespace(ids=[]) -%}
             {%- for w in (plan.walks if ok else []) if w is mapping -%}
               {%- set s = w.start | default('') | string -%}
               {%- set ts = as_timestamp(strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none).replace(tzinfo=now().tzinfo)) if strptime(day ~ ' ' ~ s, '%Y-%m-%d %H:%M', none) else none -%}
               {%- set dur = (w.durationMin | default(30) | int(30)) * 60 -%}
               {%- set away = ts is not none and away_ranges | selectattr('s', 'lt', ts + dur) | selectattr('e', 'gt', ts) | list | count > 0 -%}
-              {%- if (ts is none or ts >= from_ts - 60) and (ts is none or ts <= late_ts) and not away -%}
-                {%- set ns.out = ns.out + [{'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none),
-                     'expect': w.expect if w.expect is defined and w.expect is mapping else none}] -%}
+              {%- if (ts is none or ts >= from_ts - 60) and (ts is none or ts <= late_ts) and not away
+                    and (ts is none or (ts // 60) | int not in ns.seen) -%}
+                {%- if ts is not none -%}{%- set ns.seen = ns.seen + [(ts // 60) | int] -%}{%- endif -%}
+                {%- set wid = w.id if w.id is defined and w.id in ns.ids and w.id not in reused.ids and w.id not in (kept | map(attribute='id') | list) else none -%}
+                {%- if wid -%}{%- set reused.ids = reused.ids + [wid] -%}
+                {%- elif ts is not none and (day ~ '-' ~ ts | timestamp_custom('%H%M', false)) in ns.ids -%}
+                  {%- set wid = day ~ '-' ~ ts | timestamp_custom('%H%M', false) ~ 'n' -%}
+                {%- endif -%}
+                {%- set item = {'start': w.start, 'durationMin': w.durationMin | default(30), 'walkers': w.walkers | default([]), 'note': w.note | default(none),
+                     'expect': w.expect if w.expect is defined and w.expect is mapping else none} -%}
+                {%- set ns.out = ns.out + [dict(item, id=wid) if wid else item] -%}
               {%- endif -%}
             {%- endfor -%}
             {{ ns.out }}
+          # The Worker takes at most 8 walks a day and rejects the whole PUT beyond that: drop missed kept
+          # walks first, then the latest new ones.
+          put_walks: >-
+            {%- set must = kept | rejectattr('status', 'eq', 'missed') | list -%}
+            {%- set fr = fresh[:[8 - must | count, 0] | max] -%}
+            {%- set missed = kept | selectattr('status', 'eq', 'missed') | list -%}
+            {{ (must + fr + missed[:[8 - must | count - fr | count, 0] | max])[:8] }}
       - if:
           - condition: template
             value_template: "{{ ok }}"
@@ -461,7 +499,7 @@ script:
             data:
               date: "{{ day }}"
               body:
-                walks: "{{ kept + fresh }}"
+                walks: "{{ put_walks }}"
                 notes: "{{ plan.notes | default('') }}"
                 lateUntil: "{{ late_until }}"
                 source: "{{ 'ha-copilot-replan' if rest else 'ha-copilot' }}"
@@ -492,7 +530,9 @@ script:
               - event: maya_meal_refresh_plan
       - variables:
           error: >-
-            {%- if done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
+            {%- if job is not defined or job is not mapping or job.job_id | default('') == '' -%}could not submit the agent job
+            {%- elif done is not defined or done is not mapping -%}could not read the agent job
+            {%- elif done.status != 'completed' -%}agent job {{ done.status }}{{ ': ' ~ done.error if done.error else '' }}
             {%- elif not ok -%}no plan JSON in the agent's reply
             {%- elif put is not defined -%}could not reach the frame Worker
             {%- elif put.status != 200 -%}Worker said {{ put.status }}: {{ put.content.error if put.content is mapping and put.content.error is defined else put.content }}
@@ -549,6 +589,10 @@ automation:
         value_template: "{{ trigger.event.data.local_date == now().date().isoformat() }}"
     actions:
       - delay: "00:02:00"
+      # Still the walk's day after the wait, and not before the 04:30 plan (which picks it up).
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.local_date == now().date().isoformat() and now().hour * 60 + now().minute >= 4 * 60 + 30 }}
       - action: script.turn_on
         target:
           entity_id: script.maya_walk_plan
@@ -635,7 +679,11 @@ automation:
         {{ ns.out }}
       dates: >-
         {%- set ns = namespace(d=[]) -%}
-        {%- for e in changes if e.s[:10] not in ns.d -%}{%- set ns.d = ns.d + [e.s[:10]] -%}{%- endfor -%}
+        {#- An event that started on an earlier day (multi-day, in progress) counts for today, never a past day. -#}
+        {%- for e in changes -%}
+          {%- set d = [e.s[:10], now().date().isoformat()] | max -%}
+          {%- if d not in ns.d -%}{%- set ns.d = ns.d + [d] -%}{%- endif -%}
+        {%- endfor -%}
         {{ ns.d | sort }}
       reason: >-
         the calendars changed: {% for e in changes[:8] %}{{ e.op }} '{{ e.t }}' {{ e.s[:16] | replace('T', ' ') }}–{{ e.e[11:16] if 'T' in e.e else e.e }} ({{ e.c | replace('_', ' ') }}){{ '; ' if not loop.last }}{% endfor %}{{ ' and more' if changes | count > 8 }}

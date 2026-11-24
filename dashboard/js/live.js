@@ -23,11 +23,14 @@
 // App.todo.pending() does (the "Syncing…" note); they update those parts themselves.
 // When HA stops answering (the same test as the Home tab's banner, hastate.js haDown), the lists turn
 // read-only within about 15 s instead of at the next reload, and reload once HA is back.
+// Planned walks come from the walk plan (App.walk.plans) rather than their calendar copies, which lag
+// a replan (planevents.js); D.events is rebuilt when the plan changes.
 // Polls pause while the page is hidden and catch up once when it's shown (poll.js).
 // 'data' is emitted only when something changed, with what changed: 'events', 'reminders', 'photos'.
 import { every } from './poll.js';
 import { createTodos, scriptData, splitDesc } from './todo.js';
 import { haDown } from './hastate.js';
+import { withPlans } from './planevents.js';
 
 (function () {
   'use strict';
@@ -54,9 +57,26 @@ import { haDown } from './hastate.js';
   // Walks logged on the frame are mirrored to the family calendar for phones (WALKS.md). The walk
   // tile already shows them, so they're kept off the frame's schedule (UID dog-walk-…).
   function isWalk(e) { return /(^|\|)dog-walk-/.test(e.id); }
+  // The calendars' events (without walks); D.events is these with the walk plan merged in.
+  var calEvents = [], planKey = '';
+  function walkPlans() { return App.walk ? [App.walk.plans, App.walk.planDays] : [[], []]; }
+  function merge() {
+    var w = walkPlans();
+    planKey = JSON.stringify(w);
+    D.events = withPlans(calEvents, w[0], w[1], {
+      dog: window.CONFIG.dog, idOf: safeId,
+      isPerson: function (id) { return window.CONFIG.people.some(function (p) { return p.id === id; }); }
+    });
+  }
+  App.on('walk', function () {
+    if (JSON.stringify(walkPlans()) === planKey) return;
+    merge();
+    App.emit('data', 'events');
+    App.rerender();
+  });
   function apply(j) {
     var seen = {};
-    D.events = j.events.filter(function (e) { return !isWalk(e); }).map(function (e) {
+    calEvents = j.events.filter(function (e) { return !isWalk(e); }).map(function (e) {
       var id = safeId(e.id);
       while (seen[id]) id += 'x';
       seen[id] = 1;
@@ -67,6 +87,7 @@ import { haDown } from './hastate.js';
         loc: e.loc, notes: e.notes
       };
     });
+    merge();
     D.busyExtras = [];
     App.live = { updated: new Date(j.updated), stale: !!j.stale };
   }
@@ -311,6 +332,7 @@ import { haDown } from './hastate.js';
   }
 
   App.startCalendar = function () {
+    merge(); // walk.js has loaded its saved plan by now
     load();
     loadReminders();
     loadPhotos();

@@ -48,7 +48,7 @@ export function walkersOf(v) {
   return out;
 }
 
-function validTz(tz) {
+export function validTz(tz) {
   if (typeof tz !== 'string' || !tz || tz.length > 64) return null;
   try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return tz; } catch { return null; }
 }
@@ -403,8 +403,10 @@ export function normalizeRoute(body) {
   for (const p of pts) {
     if (!p || typeof p !== 'object') continue;
     const who = clean(p.who || p.p || 'unknown', 32).toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'unknown';
-    const lat = Number(p.lat), lon = Number(p.lon), acc = p.acc == null ? null : Math.round(Number(p.acc));
-    let t = typeof p.t === 'number' ? p.t : Date.parse(p.t) / 1000;
+    // Missing coordinates aren't 0, 0; t may come as a numeric string (HA templates).
+    const num = (v) => (typeof v === 'number' || (typeof v === 'string' && v.trim()) ? Number(v) : NaN);
+    const lat = num(p.lat), lon = num(p.lon), acc = p.acc == null || p.acc === '' ? null : Math.round(Number(p.acc));
+    let t = Number.isFinite(num(p.t)) ? num(p.t) : Date.parse(p.t) / 1000;
     if (t > 1e11) t /= 1000;
     if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && Number.isFinite(t))) continue;
     (paths[who] = paths[who] || []).push([+lat.toFixed(6), +lon.toFixed(6), Number.isFinite(acc) ? acc : null, Math.round(t)]);

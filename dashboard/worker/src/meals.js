@@ -3,7 +3,8 @@
 // when calendars change; once a meal is fed it moves to the Life Log calendar (LOG_CALENDAR).
 //   GET    /meals?date=YYYY-MM-DD    the day's meal events: kind, start, usual time, calendar, people
 //   PUT    /meals/plan/:date         {meals: [{kind, start, people?, note?}], reason?}: moves events in
-//                                    place (same UID and file name) and into the feeders' calendar
+//                                    place (same UID and file name) and into the feeders' calendar;
+//                                    the day's other copies of each planned meal go (not Life Log's)
 //   POST   /meals/log                {id, person, at, planned_at?, delta_min?, cups?, purina_pct?,
 //                                    fortiflora?, ate?, source?}: writes the Life Log event, stashes and
 //                                    removes the planned one (posting again just rewrites the Life Log event)
@@ -13,7 +14,7 @@
 // occurrence of a recurring series is taken out of it (EXDATE) and becomes its own event when it moves,
 // or when it is fed.
 import ICAL from 'ical.js';
-import { calendarEntries, putEvent, deleteEvent } from './icloud.js';
+import { calendarEntries, putEvent, deleteEvent, getEvent, calKey } from './icloud.js';
 import { expandICS } from './ics.js';
 import { WalkError, localDate, localHM } from './walks.js';
 import { when, validDate, planCalendarName } from './walkplan.js';
@@ -111,6 +112,40 @@ export function exdateICS(ics, occ, now) {
   master.updatePropertyWithValue('last-modified', utc);
   master.updatePropertyWithValue('sequence', (parseInt(master.getFirstPropertyValue('sequence'), 10) || 0) + 1);
   return root.toString() + '\r\n';
+}
+
+// Undoes exdateICS on the series as it is now (other days may have been taken out since): the EXDATE
+// for occ goes, and the override of occ in `old` (the object before) comes back.
+export function unexdateICS(ics, occ, old, now) {
+  const root = new ICAL.Component(ICAL.parse(ics));
+  const master = root.getAllSubcomponents('vevent').find((v) => !v.hasProperty('recurrence-id'));
+  if (!master) return ics;
+  for (const p of master.getAllProperties('exdate')) {
+    const keep = p.getValues().filter((t) => String(t) !== occ);
+    if (!keep.length) master.removeProperty(p);
+    else if (keep.length < p.getValues().length) p.setValues(keep);
+  }
+  let override = null;
+  try {
+    override = old && new ICAL.Component(ICAL.parse(old)).getAllSubcomponents('vevent')
+      .find((v) => String(v.getFirstPropertyValue('recurrence-id')) === occ);
+  } catch { /* no override to bring back */ }
+  if (override && !root.getAllSubcomponents('vevent').some((v) => String(v.getFirstPropertyValue('recurrence-id')) === occ)) root.addSubcomponent(override);
+  const utc = ICAL.Time.fromJSDate(new Date(now), true);
+  master.updatePropertyWithValue('dtstamp', utc);
+  master.updatePropertyWithValue('last-modified', utc);
+  master.updatePropertyWithValue('sequence', (parseInt(master.getFirstPropertyValue('sequence'), 10) || 0) + 1);
+  return root.toString() + '\r\n';
+}
+
+// The whole description of the occurrence occ (or the single event): expandICS clips notes to 500 characters.
+function descOf(ics, occ) {
+  try {
+    const vs = new ICAL.Component(ICAL.parse(ics)).getAllSubcomponents('vevent');
+    const v = (occ && vs.find((x) => String(x.getFirstPropertyValue('recurrence-id')) === occ)) || vs.find((x) => !x.hasProperty('recurrence-id')) || vs[0];
+    const d = v && v.getFirstPropertyValue('description');
+    return d ? String(d) : null;
+  } catch { return null; }
 }
 
 // A standalone planned meal (an occurrence taken out of a recurring series so it can move on its own).
@@ -220,11 +255,11 @@ export class MealStore {
           if (o.allDay) continue;
           const at = Date.parse(o.start), kind = mealKind(o.title, +localHM(at, tz).slice(0, 2), dog);
           if (!kind || localDate(at, tz) !== date) continue;
+          const occ = recurring ? o.id.slice(o.id.lastIndexOf('@') + 1) : null;
           all.push({
             id: 'maya_meal-' + date + '-' + kind, kind, meal: KINDS[kind], title: o.title, start: o.start, end: o.end,
             usual: icsProp(r.ics, 'X-MAYA-USUAL') || localHM(at, tz), moved: false, calendar: cal.name, people: cal.people,
-            cups: cupsOf(o.title, o.notes), notes: o.notes || null, uid: uidOf(r.ics), recurring,
-            occ: recurring ? o.id.slice(o.id.lastIndexOf('@') + 1) : null,
+            cups: cupsOf(o.title, o.notes), notes: (o.notes && o.notes.length >= 500 ? descOf(r.ics, occ) : o.notes) || null, uid: uidOf(r.ics), recurring, occ,
             modified: icsProp(r.ics, 'LAST-MODIFIED') || icsProp(r.ics, 'DTSTAMP') || '', href: r.href, ics: r.ics,
           });
         }
@@ -253,20 +288,27 @@ export class MealStore {
     if (!body || !Array.isArray(body.meals)) throw new WalkError('body must be {"meals": [...]}');
     const d = await this.day(date), now = Date.now(), reason = clean(body.reason, 200);
     const byKind = new Map(d.meals.map((x) => [x.kind, x]));
-    const out = { date, changed: [], unchanged: [], skipped: [] };
+    const out = { date, changed: [], unchanged: [], skipped: [], removed: [] };
     for (const it of body.meals.slice(0, 10)) {
       const kind = normKind(it && (it.kind || it.meal));
       const m = kind && byKind.get(kind);
       if (!m) { out.skipped.push({ kind: (it && (it.kind || it.meal)) || null, why: 'no meal event that day' }); continue; }
-      const start = when(it.start, date, d.tz, kind + ' start');
+      let start;
+      try { start = when(it.start, date, d.tz, kind + ' start'); } catch (e) { out.skipped.push({ kind, why: e.message }); continue; }
       if (localDate(start, d.tz) !== date) { out.skipped.push({ kind, why: 'start is not on ' + date }); continue; }
       const oldStart = Date.parse(m.start), end = start + Math.max(5 * 60e3, Date.parse(m.end) - oldStart);
       const people = [...new Set((Array.isArray(it.people) ? it.people : it.people ? [it.people] : []).map((p) => String(p).toLowerCase()).filter((p) => PEOPLE.test(p)))];
-      const calendar = (people.length && planCalendarName(this.env, people)) || m.calendar;
+      // Only a calendar /meals reads (one in mealCalendars, by its configured name), or the meal would vanish.
+      const named = people.length && planCalendarName(this.env, people);
+      const calendar = (named && (mealCalendars(this.env).find((c) => calKey(c.name) === calKey(named)) || {}).name) || m.calendar;
       const hm = localHM(start, d.tz), note = clean(it.note, 200) || reason;
       const line = hm !== m.usual ? 'Moved from the usual ' + m.usual + (note ? ': ' + note : '') : null;
       const desc = withLine(m.notes, line);
-      if (start === oldStart && calendar === m.calendar && desc === String(m.notes || '').trim()) { out.unchanged.push(kind); continue; }
+      if (start === oldStart && calendar === m.calendar && desc === String(m.notes || '').trim()) {
+        out.unchanged.push(kind);
+        await this.dropDupes(d, m, out.removed, now);
+        continue;
+      }
       if (m.recurring) {
         // Its own event from now on (created before the series loses it).
         await this.put(calendar, 'maya-meal-plan-' + date + '-' + kind + '.ics', mealICS('maya-meal-plan-' + date + '-' + kind + '@frame-data', { start, end, title: m.title, desc, usual: m.usual }, now));
@@ -275,13 +317,27 @@ export class MealStore {
         const ics = moveICS(m.ics, { start, end, usual: m.usual, desc }, now);
         const file = m.href.slice(m.href.lastIndexOf('/') + 1);
         if (calendar === m.calendar) await putEvent(this.env, m.href, ics);
-        else { await this.put(calendar, file, ics); await deleteEvent(this.env, m.href); }
+        else if ((await this.put(calendar, file, ics)) !== m.href) await deleteEvent(this.env, m.href);
       }
-      // The same event (same UID) left behind on another calendar, e.g. by an agent re-writing it.
-      for (const x of d.dupes) if (x.kind === kind && x.uid && x.uid === m.uid && x.href !== m.href) await deleteEvent(this.env, x.href);
+      await this.dropDupes(d, m, out.removed, now);
       out.changed.push({ kind, from: m.start, to: new Date(start).toISOString(), usual: m.usual, fromCalendar: m.calendar, calendar });
     }
     return out;
+  }
+
+  // The day's other events for m's meal (the planned one is m): the same event left behind on another
+  // calendar, or a second copy under another UID (e.g. an agent re-writing a meal the planner had
+  // split off). A series only loses that day (EXDATE); the Life Log calendar is never touched.
+  async dropDupes(d, m, removed, now) {
+    const log = logCalendarName(this.env);
+    for (const x of d.dupes) {
+      if (x.kind !== m.kind || x.href === m.href || (log && calKey(x.calendar) === calKey(log))) continue;
+      if (x.recurring) {
+        const cur = await getEvent(this.env, x.href);
+        if (cur) await putEvent(this.env, x.href, exdateICS(cur, x.occ, now));
+      } else await deleteEvent(this.env, x.href);
+      removed.push({ kind: x.kind, calendar: x.calendar, uid: x.uid, start: x.start });
+    }
   }
 
   async log(body) {
@@ -293,9 +349,11 @@ export class MealStore {
     // Logging again (e.g. "left some") only needs what changed.
     const b = { ...(stash.body || {}), ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null && v !== '')) };
     const at = b.at == null ? now : when(b.at, date, tz, 'at');
-    let planned = stash.planned || null, fresh = null;
+    // fresh: the planned event still to take out (also one a failed earlier log left in place).
+    let planned = stash.planned || null, fresh = planned && stash.removed === false ? planned : null;
     if (kind && !planned) {
-      const x = (await this.day(date)).meals.find((y) => y.kind === kind);
+      // A calendar that can't be read must not stop the feeding from being logged.
+      const x = ((await this.day(date).catch(() => null)) || { meals: [] }).meals.find((y) => y.kind === kind);
       if (x) fresh = planned = { href: x.href, ics: x.ics, occ: x.occ, calendar: x.calendar, people: x.people, start: x.start, end: x.end, title: x.title, usual: x.usual, notes: x.notes };
     }
     const person = clean(b.person, 32).toLowerCase() || 'someone', who = cap(person);
@@ -324,10 +382,14 @@ export class MealStore {
       title: dog + ' ' + label + ' 🍽️' + (fmtCups(cups) ? ' ' + fmtCups(cups) : '') + ' — ' + who,
     }, now);
     const logHref = await this.put(logName, id + '.ics', ics);
-    if (this.env.DATA) await this.env.DATA.put(key, JSON.stringify({ planned, log: { href: logHref, calendar: logName }, body: { ...b, at }, at: now }), { expirationTtl: 60 * 86400 });
-    // The planned event goes (a recurring series just loses that day; undo puts the whole object back).
-    if (fresh && fresh.occ) await putEvent(this.env, fresh.href, exdateICS(fresh.ics, fresh.occ, now));
-    else if (fresh) await deleteEvent(this.env, fresh.href);
+    const save = (removed) => this.env.DATA && this.env.DATA.put(key, JSON.stringify({ planned, removed, log: { href: logHref, calendar: logName }, body: { ...b, at }, at: now }), { expirationTtl: 60 * 86400 });
+    await save(!fresh);
+    // The planned event goes (a recurring series just loses that day; undo takes the EXDATE out again).
+    if (fresh && fresh.occ) {
+      const cur = fresh === stash.planned ? await getEvent(this.env, fresh.href) : fresh.ics;
+      if (cur) await putEvent(this.env, fresh.href, exdateICS(cur, fresh.occ, now));
+    } else if (fresh) await deleteEvent(this.env, fresh.href);
+    if (fresh) await save(true);
     await this.bust();
     return { ok: true, id, log: { calendar: logName, start: new Date(at).toISOString() }, removedFrom: fresh ? fresh.calendar : null };
   }
@@ -339,9 +401,12 @@ export class MealStore {
     if (!href) { const n = logCalendarName(this.env); href = n ? (await this.calUrl(n)) + id + '.ics' : null; }
     const removed = href ? await deleteEvent(this.env, href) : false;
     let restored = null;
-    if (stash.planned && stash.planned.href) {
-      await putEvent(this.env, stash.planned.href, stash.planned.ics);
-      restored = stash.planned.calendar;
+    const p = stash.planned;
+    if (p && p.href && stash.removed !== false) {
+      // A series is changed as it is now, so days taken out (or moved) since are kept.
+      const cur = p.occ ? await getEvent(this.env, p.href) : null;
+      await putEvent(this.env, p.href, cur ? unexdateICS(cur, p.occ, p.ics, Date.now()) : p.ics);
+      restored = p.calendar;
     }
     if (this.env.DATA) await this.env.DATA.delete(key);
     await this.bust();

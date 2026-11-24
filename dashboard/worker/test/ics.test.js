@@ -68,3 +68,14 @@ END:VEVENT`);
   const ev = expandICS(ics, meta, from, to);
   assert.deepEqual(ev.map((e) => [e.title, e.allDay, e.start, e.end]), [['Trip', true, '2026-11-07', '2026-11-10']]);
 });
+
+test('a daily series started years ago still reaches today', () => {
+  const ics = cal(`BEGIN:VEVENT
+UID:vit
+SUMMARY:Vitamins
+DTSTART:20180101T120000Z
+DTEND:20180101T121000Z
+RRULE:FREQ=DAILY
+END:VEVENT`);
+  assert.equal(expandICS(ics, meta, from, to).length, 21);
+});

@@ -29,3 +29,7 @@ test('the manifest starts an installed app with the key, since it has its own co
   assert.equal(m.id, '/');
   assert.equal(m.name, 'Home HQ');
 });
+
+test('a malformed key cookie is just unauthorised', async () => {
+  assert.equal((await get('/', { Cookie: 'frame_key=%E0%A4%A' })).status, 401);
+});

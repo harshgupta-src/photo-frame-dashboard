@@ -71,7 +71,7 @@ function same(a, b) {
 const canRead = (req, url, env) => same(req.headers.get('X-Frame-Key') || url.searchParams.get('key') || '', env.READ_KEY);
 const cookieKey = (req) => {
   const m = (req.headers.get('Cookie') || '').match(/(?:^|;\s*)frame_key=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : '';
+  try { return m ? decodeURIComponent(m[1]) : ''; } catch { return ''; }
 };
 const canPush = (req, env) => same((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''), env.PUSH_TOKEN);
 

@@ -17,15 +17,19 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
 (function () {
   'use strict';
   var API = import.meta.env.VITE_FRAME_API, KEY = import.meta.env.VITE_FRAME_KEY;
+  var PLAN_SENSOR = 'sensor.maya_walk_plan';
   var STATE = 'walk-state-v1', OUTBOX = 'walk-outbox-v1', CHOSEN = 'walk-walkers-v1', MIN_TIME = Date.UTC(2026, 0, 1);
   var people = window.CONFIG.people;
-  var W = App.walk = { on: !!(API && KEY), active: null, recent: [], plans: [], pending: 0, error: null };
+  var W = App.walk = { on: !!(API && KEY), active: null, recent: [], plans: [], planDays: [], pending: 0, error: null };
   var PLAN_AHEAD = 90 * 60e3; // a walk started this close to a planned one is that one
-  var syncing = false, again = false;
+  // Home Assistant replans 2 minutes after a walk is logged (ha/walk-plan.yaml), then the agent takes a
+  // minute or two: poll every minute for this long after a walk change so the new plan shows up.
+  var REPLAN_WATCH = 8 * 60e3;
+  var syncing = false, again = false, gen = 0, watchUntil = 0;
 
   function read(k, d) { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } }
   function write(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage full or disabled */ } }
-  function save() { write(STATE, { active: W.active, recent: W.recent, plans: W.plans }); }
+  function save() { write(STATE, { active: W.active, recent: W.recent, plans: W.plans, planDays: W.planDays }); }
   function changed() { save(); W.pending = read(OUTBOX, []).length; App.emit('walk'); }
 
   function newId() {
@@ -47,10 +51,25 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     return (x ? x.walkerIds : []).map(function (id, i) { var p = person(id); return { id: id, name: p ? p.name : x.walkers[i] }; })
       .filter(function (w) { return person(w.id); });
   }
+  function planItem(id) {
+    var hit = null;
+    W.plans.forEach(function (p) { (p.walks || []).forEach(function (x) { if (x.id === id) hit = x; }); });
+    return hit;
+  }
+  // The walkers picked on the tile for planned walk x. A replan gives a moved walk a new id (its
+  // date + start time), so a pick for a walk the plan no longer has carries over to the next one
+  // when it's within 90 minutes of where the picked one was.
+  function chosen(x) {
+    var c = read(CHOSEN, null);
+    if (!c || !c.walkers || !c.walkers.length) return null;
+    if (c.key === (x ? x.id : '')) return c.walkers;
+    if (x && c.key && c.start && !planItem(c.key) && Math.abs(Date.parse(x.start) - c.start) <= PLAN_AHEAD) return c.walkers;
+    return null;
+  }
   // Who's walking: picked on the tile for this planned walk, else the plan's, else the first person.
   W.defaultWalkers = function () {
-    var x = W.next(), c = read(CHOSEN, null);
-    if (c && c.key === (x ? x.id : '') && c.walkers.length) return c.walkers;
+    var x = W.next(), c = chosen(x);
+    if (c) return c;
     var p = planned(x);
     if (p.length) return p;
     return people.length ? [{ id: people[0].id, name: people[0].name }] : [];
@@ -62,7 +81,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     if (has && cur.length < 2) return;
     cur = has ? cur.filter(function (w) { return w.id !== id; }) : cur.concat([{ id: p.id, name: p.name }]);
     cur.sort(function (a, b) { return people.indexOf(person(a.id)) - people.indexOf(person(b.id)); });
-    write(CHOSEN, { key: x ? x.id : '', walkers: cur });
+    write(CHOSEN, { key: x ? x.id : '', start: x ? Date.parse(x.start) : 0, walkers: cur });
     App.emit('walk');
   };
   W.clockOk = function () { return Date.now() >= MIN_TIME; };
@@ -91,6 +110,8 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
 
   // ---------------------------------------------------------------- outbox
   function enqueue(op, rec) {
+    gen++;
+    watchUntil = Date.now() + REPLAN_WATCH;
     var box = read(OUTBOX, []).filter(function (o) { return o.id !== rec.id; });
     box.push({ op: op, id: rec.id, rec: op === 'put' ? rec : undefined });
     write(OUTBOX, box);
@@ -153,11 +174,13 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     if (!W.on) return Promise.resolve();
     return flush().then(function () {
       if (read(OUTBOX, []).length) return;
+      var g = gen, asked = Date.now();
       return fetch(API + '/walk', { headers: { 'X-Frame-Key': KEY }, cache: 'no-store' })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (j) {
-          if (read(OUTBOX, []).length) return; // changed while we were asking
-          var before = JSON.stringify([W.active, W.recent, W.plans]);
+          // Changed while we were asking (still queued, or already sent: this answer predates it).
+          if (gen !== g || read(OUTBOX, []).length) return;
+          var before = JSON.stringify([W.active, W.recent, W.plans, W.planDays]);
           var a = j.active ? fromServer(j.active) : null;
           // Keep the frame's "I'm back" (sheet open) on top of the server's still-active walk.
           if (a && W.active && W.active.id === a.id && W.active.endedAt) a = W.active;
@@ -165,19 +188,29 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
           W.active = a;
           W.recent = (j.recent || []).map(fromServer);
           W.plans = j.plans || [];
+          W.planDays = [ymd(asked), ymd(asked + 864e5)];
           W.error = null;
-          if (JSON.stringify([W.active, W.recent, W.plans]) !== before) changed();
+          if (JSON.stringify([W.active, W.recent, W.plans, W.planDays]) !== before) changed();
         });
     }).catch(function (e) { console.warn('Walk sync failed', e); });
   };
+
+  function ymd(ms) { var d = new Date(ms); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  // The tile's view of a planned walk follows the frame's own changes until the Worker's answer.
+  function planStatus(planId, status) {
+    var x = planId && planItem(planId);
+    if (!x) return;
+    if (status === 'planned' && Date.parse(x.end) <= Date.now()) status = 'missed';
+    x.status = status;
+  }
 
   // ---------------------------------------------------------------- actions
   W.start = function () {
     if (W.active) return W.active;
     if (!W.clockOk()) { App.toast('The frame’s clock isn’t set yet. Try again in a minute.', { tone: 'error', icon: 'clock' }); return null; }
-    var x = W.next(), now = Date.now(), c = read(CHOSEN, null);
+    var x = W.next(), now = Date.now();
     W.active = { id: newId(), startedAt: now, endedAt: null, walkers: W.defaultWalkers() };
-    if (c && c.key === (x ? x.id : '') && c.walkers.length) W.active.picked = true; // chosen on the tile: keep them
+    if (chosen(x)) W.active.picked = true; // chosen on the tile: keep them
     if (x && Date.parse(x.start) - now <= PLAN_AHEAD) {
       W.active.planId = x.id;
       x.status = 'active';
@@ -199,6 +232,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   // A completed walk: the one just finished, or an edit of an old one.
   W.save = function (rec) {
     if (W.active && W.active.id === rec.id) W.active = null;
+    planStatus(rec.planId, 'done');
     W.recent = W.recent.filter(function (w) { return w.id !== rec.id; }).concat([rec])
       .sort(function (a, b) { return b.startedAt - a.startedAt; });
     rec.calendar = 'pending';
@@ -207,6 +241,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   };
   W.remove = function (rec) {
     if (W.active && W.active.id === rec.id) W.active = null;
+    planStatus(rec.planId, 'planned');
     W.recent = W.recent.filter(function (w) { return w.id !== rec.id; });
     enqueue('del', rec);
     changed();
@@ -215,6 +250,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
     if (rec.endedAt) { W.save(rec); return; }
     if (W.active) return;
     W.active = rec;
+    planStatus(rec.planId, 'active');
     enqueue('put', rec);
     changed();
   };
@@ -228,6 +264,7 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   W.active = s.active || null;
   W.recent = s.recent || [];
   W.plans = s.plans || [];
+  W.planDays = s.planDays || [];
   W.pending = read(OUTBOX, []).length;
   // Reloaded with the end-of-walk sheet open: they were back, so log it with what's known.
   if (W.active && W.active.endedAt) {
@@ -243,7 +280,18 @@ import { suggestWalk } from '../worker/src/walkexpect.js';
   var n = 0;
   App.on('ready', function () {
     W.refresh();
-    every(60000, function () { n++; if (W.active || W.pending || n % 5 === 0) W.refresh(); }, { resume: W.refresh });
+    every(60000, function () { n++; if (W.active || W.pending || Date.now() < watchUntil || n % 5 === 0) W.refresh(); }, { resume: W.refresh });
     window.addEventListener('online', function () { W.refresh(); });
+    // HA's cached plan (ha/walk-plan.yaml) changes when the planner writes a new one: fetch it now
+    // rather than at the next 5-minute poll. (A sensor: polled, every 15 s off the kiosk's stream.)
+    var planSeen = null;
+    App.on('ha', function (ids) {
+      if (ids && ids.length && ids.indexOf(PLAN_SENSOR) < 0) return;
+      var st = App.ha && App.ha.states[PLAN_SENSOR], k = st ? st.last_updated + '|' + JSON.stringify(st.attributes.walks || []) : null;
+      if (k === planSeen) return;
+      var first = planSeen === null;
+      planSeen = k;
+      if (!first && k) W.refresh();
+    });
   });
 })();

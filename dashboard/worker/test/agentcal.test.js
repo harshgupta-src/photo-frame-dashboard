@@ -86,6 +86,8 @@ test('route: unauthorized, foreign uid writes and read-only calendar are refused
   const r = await agentCalRoute(...req('PUT', '/agent/events/hb-x', { calendar: 'jordan', title: 't', start: '2026-11-12T12:00' }), env, ctx, true);
   assert.equal(r.status, 403);
   assert.equal((await agentCalRoute(...req('GET', '/walks'), env, ctx, true)), null);
+  const nul = new Request('https://w.example/agent/events/hb-x', { method: 'PUT', body: 'null' });
+  assert.equal((await agentCalRoute(nul, new URL(nul.url), env, ctx, true)).status, 400);
 });
 
 test('route: upsert writes <calendar>/<uid>.ics and clears the same uid from the other writable calendar', async () => {

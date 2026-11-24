@@ -159,3 +159,27 @@ test('plan: no walks after 22:00 unless lateUntil (a late calendar event) allows
   const kept = normalizePlan(body, '2026-11-19', NY, {}, now, new Set(['2026-11-19-0330']));
   assert.equal(kept.items.length, 3);
 });
+
+test('plan calendars: WALK_PLAN_CALENDARS keys in any order', async () => {
+  const { planCalendarName } = await import('../src/walkplan.js');
+  const env = { WALK_PLAN_CALENDARS: '{"harsh": "H", "Harsh + Ambuja": "Family"}' };
+  assert.equal(planCalendarName(env, ['ambuja', 'harsh']), 'Family');
+  assert.equal(planCalendarName(env, ['harsh']), 'H');
+});
+
+test('route points: numeric-string times count; missing coordinates are not 0, 0', async () => {
+  const { normalizeRoute } = await import('../src/walks.js');
+  const r = normalizeRoute({ points: [
+    { who: 'harsh', lat: 40.7, lon: -74, t: '1795554000.0' },
+    { who: 'harsh', lat: '', lon: -74, t: 1795554010 },
+    { who: 'harsh', lon: -74, t: 1795554020 },
+    { who: 'harsh', lat: 40.7001, lon: -74, t: new Date(1795554030e3).toISOString() },
+  ] });
+  assert.deepEqual(r.paths.harsh.map((p) => [p[0], p[3]]), [[40.7, 1795554000], [40.7001, 1795554030]]);
+});
+
+test('walk-sheet defaults: a planId the replan no longer has falls back to the nearest planned walk', async () => {
+  const { planFor } = await import('../src/walkexpect.js');
+  const plans = [{ walks: [{ id: 'new', start: '2026-11-19T16:30:00Z', walkerIds: ['harsh'] }] }];
+  assert.equal(planFor({ startedAt: Date.parse('2026-11-19T16:15:00Z'), planId: 'gone' }, plans, Date.parse('2026-11-19T17:00:00Z')).id, 'new');
+});

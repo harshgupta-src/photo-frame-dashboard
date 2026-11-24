@@ -14,6 +14,8 @@ TMP="$(dirname "$NOTE")/.walk-log.tmp"
 [ -d "$(dirname "$NOTE")" ] || { echo "no folder for $NOTE" >&2; exit 1; }
 KEY="$(cat "$KEY_FILE")"
 trap 'rm -f "$TMP"' EXIT
-curl -fsS --max-time 20 -H "Authorization: Bearer $KEY" -o "$TMP" "$URL"
+trap 'exit 1' INT TERM
+# The header goes in through stdin (curl -K -), so the key isn't in the process list.
+printf 'header = "Authorization: Bearer %s"\n' "$KEY" | curl -fsS --max-time 20 -K - -o "$TMP" "$URL"
 head -c 4 "$TMP" | grep -q -- '---' || { echo "unexpected response" >&2; exit 1; }
 cmp -s "$TMP" "$NOTE" || mv -f "$TMP" "$NOTE"

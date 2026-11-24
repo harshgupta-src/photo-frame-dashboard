@@ -139,7 +139,7 @@ automation:
     alias: "Maya away: replan today when set by hand"
     description: >-
       When Maya is marked away or home by hand (the override, not a calendar stay starting or ending, which
-      the plan already knows), replan the rest of today's walks a minute later.
+      the plan already knows; also undoing a "home" back to auto mid-stay), replan the rest of today's walks a minute later.
     mode: restart
     triggers:
       - trigger: state
@@ -150,7 +150,8 @@ automation:
       - condition: template
         value_template: >-
           {{ 'manual' in [trigger.from_state.attributes.source, trigger.to_state.attributes.source]
-             or trigger.to_state.attributes.override == 'home' }}
+             or trigger.to_state.attributes.override == 'home'
+             or trigger.from_state.attributes.override != trigger.to_state.attributes.override }}
       - condition: template
         value_template: "{{ now().hour * 60 + now().minute >= 4 * 60 + 30 }}"
     actions:

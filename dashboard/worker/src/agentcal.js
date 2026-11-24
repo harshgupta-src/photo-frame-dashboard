@@ -210,6 +210,7 @@ export async function agentCalRoute(req, url, env, ctx, ok) {
         if (!AGENT_UID.test(uid)) throw new AgentCalError(403, 'agents can only create or change their own events (uid starting with "hb-")');
         let ev;
         try { ev = await req.json(); } catch { throw new AgentCalError(400, 'body must be JSON'); }
+        if (!ev || typeof ev !== 'object') throw new AgentCalError(400, 'body must be a JSON object');
         const cal = pick(cals, ev.calendar);
         if (!canWrite(cal, person)) throw new AgentCalError(403, 'calendar "' + cal.alias + '" is read-only for ' + (person || 'this caller'));
         const ics = agentICS(uid, ev, Date.now(), { person, agent });
