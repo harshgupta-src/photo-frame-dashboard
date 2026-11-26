@@ -7,19 +7,23 @@
 //                                    the day's other copies of each planned meal go (not Life Log's);
 //                                    a start over 90 min from the usual time is skipped
 //   POST   /meals/log                {id, person, at, planned_at?, delta_min?, cups?, purina_pct?,
-//                                    fortiflora?, ate?, source?}: writes the Life Log event, stashes and
-//                                    removes the planned one (posting again just rewrites the Life Log event)
-//   DELETE /meals/log/:id            undo: removes the Life Log event, puts the planned one back
+//                                    fortiflora?, ate?, source?}: writes the Lifelog event (type maya_meal,
+//                                    same id and shape as Home Assistant's NFC tap: create-or-replace, so
+//                                    HA writing it too still leaves one event), then the Life Log calendar
+//                                    event, and stashes and removes the planned one (posting again just
+//                                    rewrites both). A Lifelog failure is an error and nothing else changes.
+//   DELETE /meals/log/:id            undo: soft-deletes the Lifelog event, removes the Life Log calendar
+//                                    event, puts the planned one back
 // Meal ids match Home Assistant's: maya_meal-YYYY-MM-DD-<breakfast|walk-snack|lunch|dinner|night-snack>.
 // A moved event keeps its regular time in X-MAYA-USUAL, so the planner can bring it back there. An
 // occurrence of a recurring series is taken out of it (EXDATE) and becomes its own event when it moves,
 // or when it is fed.
 import ICAL from 'ical.js';
 import { calendarEntries, putEvent, deleteEvent, getEvent, calKey } from './icloud.js';
-import { expandICS, icalMs } from './ics.js';
+import { expandICS, icalMs, localISO } from './ics.js';
 import { WalkError, localDate, localHM } from './walks.js';
-import { when, validDate, planCalendarName } from './walkplan.js';
-import { WalkStore, household } from './walkstore.js';
+import { when, validDate, planCalendarName, prevDate } from './walkplan.js';
+import { WalkStore, Lifelog, household } from './walkstore.js';
 import { logCalendarName } from './dogapi.js';
 
 export const KINDS = { breakfast: 'Breakfast', 'walk-snack': 'Walk snack', lunch: 'Lunch', dinner: 'Dinner', 'night-snack': 'Night snack' };
@@ -30,6 +34,8 @@ const ID = /^maya_meal-(\d{4}-\d{2}-\d{2})-([a-z0-9-]{3,40})$/;
 const PEOPLE = /^[a-z][a-z0-9_-]{0,31}$/;
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, n);
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+// Home Assistant's NFC day boundary: a night snack fed before 03:00 belongs to the evening before.
+const EARLY = '03:00';
 const nextDate = (d) => new Date(Date.parse(d + 'T12:00:00Z') + DAY).toISOString().slice(0, 10);
 
 // Same rules as Home Assistant's sensor.maya_meal_plan: the title starts with the dog's name, isn't
@@ -44,6 +50,27 @@ export function mealKind(title, hour, dog = 'Maya') {
 export function normKind(k) {
   const s = String(k || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
   return KINDS[s] ? s : null;
+}
+
+// Home Assistant's entity id for a calendar, as the NFC records carry it: "Harsh’s Calendar" →
+// calendar.harshs_calendar, "A&H Life" → calendar.a_h_life.
+export function haCalendarId(name) {
+  const s = String(name || '').toLowerCase().replace(/['’‘`]/g, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s ? 'calendar.' + s : null;
+}
+// The Lifelog type of a meal id: its prefix (maya_meal-… → maya_meal), as Home Assistant writes it.
+const mealType = (id) => id.slice(0, id.indexOf('-'));
+
+// The Lifelog event for a fed meal, in Home Assistant's NFC shape (data keys in its order).
+export function mealEvent({ type, person, at, tz, source, label, calendar, cups, deltaMin, plannedAt, ate, fortiflora, purinaPct }) {
+  return {
+    type, person: person || null, started_at: localISO(at, tz), source: source || 'api',
+    data: {
+      ate: ate || 'all', calendar: calendar || null, cups: cups ?? null, delta_min: deltaMin ?? null, fortiflora: fortiflora ?? null,
+      meal: label, planned_at: plannedAt == null ? null : localISO(plannedAt, tz), purina_pct: purinaPct ?? null, abandoned: true,
+    },
+  };
 }
 
 // "1 1/4" / "0.5" → number; number → "1 1/4".
@@ -301,9 +328,12 @@ export class MealStore {
   }
 
   async get(date) {
-    const d = await this.day(date);
+    const d = await this.day(date), now = Date.now();
     const pub = ({ href, ics, modified, occ, hasUsual, ...x }) => x;
-    return { date: d.date, tz: d.tz, meals: d.meals.map(pub), duplicates: d.dupes.map(pub) };
+    // Before 03:00, last evening's night snack is still to log (logging takes the planned event out).
+    const early = date === localDate(now, d.tz) && localHM(now, d.tz) < EARLY
+      ? (await this.day(prevDate(date))).meals.filter((x) => x.kind === 'night-snack') : [];
+    return { date: d.date, tz: d.tz, meals: [...early, ...d.meals].map(pub), duplicates: d.dupes.map(pub) };
   }
 
   async putPlan(date, body) {
@@ -393,13 +423,31 @@ export class MealStore {
   }
 
   async log(body) {
-    const id = String(body.id || ''), m = ID.exec(id);
+    let id = String(body.id || ''), m = ID.exec(id);
     if (!m) throw new WalkError('id must look like maya_meal-YYYY-MM-DD-<meal>');
-    const [, date, slug] = m, kind = normKind(slug), now = Date.now();
+    let [, date, slug] = m;
+    const kind = normKind(slug), now = Date.now();
     const { tz, dog } = await this.home();
+    // A night snack fed before 03:00 under that day's id is the previous day's (planned date in the id).
+    const fedAt = body.at == null || body.at === '' ? now : when(body.at, date, tz, 'at');
+    if (kind === 'night-snack' && localDate(fedAt, tz) === date && localHM(fedAt, tz) < EARLY) {
+      date = prevDate(date);
+      id = 'maya_meal-' + date + '-' + slug;
+      body = { ...body, id, at: fedAt };
+    }
     const key = 'meal-log:' + id, stash = (this.env.DATA && await this.env.DATA.get(key, 'json')) || {};
+    const ll = new Lifelog(this.env, mealType(id));
+    // What's already in Lifelog under this id (HA's NFC tap writes it too): an earlier log fills what
+    // this post leaves out, so re-posting never loses the feed time or who fed her.
+    const prev = await this.lifelogGet(ll, id, 'meal not logged');
+    const live = prev && !prev.deleted_at ? prev : null, pd = live && live.data && typeof live.data === 'object' ? live.data : {};
+    const given = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== ''));
+    const fromPrev = live ? given({
+      person: live.person, at: live.started_at, planned_at: pd.planned_at, cups: pd.cups, purina_pct: pd.purina_pct, fortiflora: pd.fortiflora, ate: pd.ate,
+      delta_min: (stash.body || {}).at == null && body.at == null ? pd.delta_min : null,
+    }) : {};
     // Logging again (e.g. "left some") only needs what changed.
-    const b = { ...(stash.body || {}), ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null && v !== '')) };
+    const b = { ...fromPrev, ...(stash.body || {}), ...given(body) };
     const at = b.at == null ? now : when(b.at, date, tz, 'at');
     // fresh: the planned event still to take out (also one a failed earlier log left in place).
     let planned = stash.planned || null, fresh = planned && stash.removed === false ? planned : null;
@@ -429,6 +477,14 @@ export class MealStore {
     ].filter(Boolean).join('\n');
     const logName = logCalendarName(this.env);
     if (!logName) throw new WalkError('no Life Log calendar (LOG_CALENDAR / WALK_CALENDAR)', 503);
+    // Lifelog first: if it doesn't land, the meal isn't logged and the calendars stay as they are.
+    const num = (v) => (v == null || v === '' || !Number.isFinite(+v) ? null : +v);
+    const record = mealEvent({
+      type: ll.type, person: clean(b.person, 32).toLowerCase(), at, tz, source: clean(b.source, 40), label: kind ? KINDS[kind] : cap(slug.replace(/-/g, ' ')),
+      calendar: planned ? haCalendarId(planned.calendar) : /^calendar\.[a-z0-9_]+$/.test(pd.calendar || '') ? pd.calendar : null,
+      cups, deltaMin: delta, plannedAt, ate: clean(b.ate, 20) || 'all', fortiflora: b.fortiflora ?? null, purinaPct: num(b.purina_pct),
+    });
+    try { await ll.put(id, record); } catch (e) { throw new WalkError('meal not logged: ' + (e.message || e), e instanceof WalkError ? e.status : 502); }
     const ics = logICS(id, {
       start: at, end: at + 15 * 60e3, desc, category: dog + ' meal',
       title: dog + ' ' + label + ' 🍽️' + (fmtCups(cups) ? ' ' + fmtCups(cups) : '') + ' — ' + who,
@@ -443,11 +499,25 @@ export class MealStore {
     } else if (fresh) await deleteEvent(this.env, fresh.href);
     if (fresh) await save(true);
     await this.bust();
-    return { ok: true, id, log: { calendar: logName, start: new Date(at).toISOString() }, removedFrom: fresh ? fresh.calendar : null };
+    return { ok: true, id, lifelog: { type: ll.type, started_at: record.started_at }, log: { calendar: logName, start: new Date(at).toISOString() }, removedFrom: fresh ? fresh.calendar : null };
+  }
+
+  // The Lifelog event under id (null when there's none); one of another type is a conflict.
+  async lifelogGet(ll, id, what) {
+    let e;
+    try { e = await ll.req('GET', '/events/' + encodeURIComponent(id)); } catch (err) { throw new WalkError(what + ': ' + (err.message || err), err instanceof WalkError ? err.status : 502); }
+    if (e && e.type !== ll.type) throw new WalkError('that id belongs to another kind of Lifelog event (' + e.type + ')', 409);
+    return e || null;
   }
 
   async unlog(id) {
     if (!ID.test(id)) throw new WalkError('id must look like maya_meal-YYYY-MM-DD-<meal>');
+    // Lifelog first (soft delete, as walks do): if it fails, nothing is undone.
+    const ll = new Lifelog(this.env, mealType(id)), ev = await this.lifelogGet(ll, id, 'meal not undone');
+    const lifelog = !!(ev && !ev.deleted_at);
+    if (lifelog) {
+      try { await ll.del(id, 'meal log undone'); } catch (e) { throw new WalkError('meal not undone: ' + (e.message || e), e instanceof WalkError ? e.status : 502); }
+    }
     const key = 'meal-log:' + id, stash = (this.env.DATA && await this.env.DATA.get(key, 'json')) || {};
     let href = stash.log && stash.log.href;
     if (!href) { const n = logCalendarName(this.env); href = n ? (await this.calUrl(n)) + id + '.ics' : null; }
@@ -462,7 +532,7 @@ export class MealStore {
     }
     if (this.env.DATA) await this.env.DATA.delete(key);
     await this.bust();
-    return { ok: true, id, removed, restored };
+    return { ok: true, id, lifelog, removed, restored };
   }
 
   // The dog tab caches the Life Log calendar for 2 minutes; the frame's schedule shows planned meals.

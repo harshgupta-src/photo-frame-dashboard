@@ -6,15 +6,33 @@ import { calKey } from '../src/icloud.js';
 
 const LL = 'https://lifelog.test', DAV = 'https://caldav.test/';
 const CALS = { 'Harsh’s Calendar': DAV + 'h/', 'Ambuja’s Calendar': DAV + 'a/', 'A&H Life': DAV + 'ah/', 'Life Log': DAV + 'log/' };
-let objects, kv, env, failPut;
+let objects, kv, env, failPut, events, failLL, llCalls;
 
 const unfold = (s) => s.replace(/\r\n[ \t]/g, '');
 const vevent = (uid, start, end, summary, desc) => 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:' + uid + '\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:' + start +
   '\r\nDTEND:' + end + '\r\nSUMMARY:' + summary + (desc ? '\r\nDESCRIPTION:' + desc : '') + '\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
 
-// CalDAV: REPORT lists a calendar's objects (no time filtering), PUT/DELETE one object. Lifelog: no walks.
+// Lifelog: lists are empty (no walks); /events/:id is create-or-replace on PUT, soft delete on DELETE.
+function lifelog(url, init) {
+  const m = init.method || 'GET', u = new URL(url), id = decodeURIComponent((/^\/events\/([^/?]+)$/.exec(u.pathname) || [])[1] || '');
+  llCalls.push(m + ' ' + u.pathname + u.search);
+  const json = (v, status = 200) => Promise.resolve(new Response(JSON.stringify(v), { status }));
+  if (failLL && failLL(m, id)) return json({ error: 'down' }, 503);
+  if (!id) return json([]);
+  const e = events.get(id);
+  if (m === 'GET') return e ? json(e) : json({ error: 'not found' }, 404);
+  if (m === 'PUT') { const v = { ...JSON.parse(init.body), id, deleted_at: null }; events.set(id, v); return json(v); }
+  if (m === 'DELETE') {
+    if (!e) return json({ error: 'not found' }, 404);
+    e.deleted_at = '2026-11-16T15:00:00Z'; e.deleted_reason = u.searchParams.get('reason');
+    return json(e);
+  }
+  throw new Error('unexpected Lifelog ' + m + ' ' + url);
+}
+
+// CalDAV: REPORT lists a calendar's objects (no time filtering), PUT/DELETE one object.
 function fakeFetch(url, init = {}) {
-  if (url.startsWith(LL)) return Promise.resolve(new Response('[]', { status: 200 }));
+  if (url.startsWith(LL)) return lifelog(url, init);
   const m = init.method || 'GET';
   if (m === 'REPORT') {
     const body = [...objects].filter(([h]) => h.startsWith(url)).map(([h, t]) => '<d:response><d:href>' + new URL(h).pathname + '</d:href><d:propstat><d:prop><c:calendar-data>' +
@@ -33,6 +51,9 @@ function fakeFetch(url, init = {}) {
 beforeEach(() => {
   globalThis.fetch = fakeFetch;
   failPut = null;
+  failLL = null;
+  events = new Map();
+  llCalls = [];
   objects = new Map([
     [CALS['A&H Life'] + 'b1.ics', vevent('b1', '20261116T144500Z', '20261116T150000Z', 'Maya · Breakfast', 'cups: 1.25')],
     [CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-lunch.ics', vevent('hb-maya-meal-2026-11-16-lunch', '20261116T203000Z', '20261116T204500Z', 'Maya lunch 1 cup')],
@@ -283,4 +304,130 @@ test('a plan that fails partway reports what it already changed', async () => {
   assert.ok(r.body.error);
   assert.deepEqual(r.body.changed.map((c) => c.kind), ['lunch']);
   assert.match(objects.get(CALS['Harsh’s Calendar'] + 'hb-maya-meal-2026-11-16-lunch.ics'), /DTSTART:20261116T210000Z/);
+});
+
+const BREAKFAST = 'maya_meal-2026-11-16-breakfast';
+const post = (s, body) => s.route(new Request('https://frame.test/meals/log', { method: 'POST', body: JSON.stringify(body) }), new URL('https://frame.test/meals/log'), { read: true, write: true });
+
+test('a logged meal is one Lifelog event in the NFC shape, field by field', async () => {
+  const s = new MealStore(env);
+  await s.log({ id: BREAKFAST, person: 'Harsh', at: '2026-11-16T06:57:00-08:00', source: 'frame' });
+  await s.log({ id: 'maya_meal-2026-11-16-lunch', person: 'ambuja', at: '2026-11-16T12:20:00-08:00', source: 'frame' });
+  await s.log({ id: 'maya_meal-2026-11-16-night-snack', person: 'harsh', at: '2026-11-16T21:04:00-08:00', source: 'frame' });
+  const e = events.get(BREAKFAST);
+  assert.deepEqual([e.type, e.person, e.started_at, e.source], ['maya_meal', 'harsh', '2026-11-16T06:57:00-08:00', 'frame']);
+  assert.deepEqual(Object.keys(e.data), ['ate', 'calendar', 'cups', 'delta_min', 'fortiflora', 'meal', 'planned_at', 'purina_pct', 'abandoned']);
+  assert.deepEqual(e.data, {
+    ate: 'all', calendar: 'calendar.a_h_life', cups: 1.25, delta_min: 12, fortiflora: null, meal: 'Breakfast',
+    planned_at: '2026-11-16T06:45:00-08:00', purina_pct: null, abandoned: true,
+  });
+  const lunch = events.get('maya_meal-2026-11-16-lunch').data;
+  assert.deepEqual([lunch.meal, lunch.calendar, lunch.cups, lunch.delta_min, lunch.planned_at], ['Lunch', 'calendar.harshs_calendar', 1, -10, '2026-11-16T12:30:00-08:00']);
+  const snack = events.get('maya_meal-2026-11-16-night-snack').data;
+  assert.deepEqual([snack.meal, snack.cups, snack.delta_min], ['Night snack', 0.25, 4]);
+  assert.equal(events.size, 3);
+});
+
+test('logging the same meal again (or after Home Assistant wrote it) leaves one Lifelog event', async () => {
+  const s = new MealStore(env), body = { id: BREAKFAST, person: 'harsh', at: '2026-11-16T06:57:00-08:00', source: 'frame' };
+  await s.log(body);
+  const first = JSON.stringify(events.get(BREAKFAST));
+  assert.equal((await post(s, body)).status, 200);
+  assert.equal(JSON.stringify(events.get(BREAKFAST)), first);
+  assert.equal(events.size, 1);
+  assert.equal(llCalls.filter((c) => c.startsWith('PUT ')).length, 2);
+  assert.equal(llCalls.filter((c) => c.startsWith('POST ')).length, 0);
+
+  // HA's NFC tap wrote its own event, then calls /meals/log with only the id: what it wrote is kept.
+  events.clear();
+  kv.delete('meal-log:maya_meal-2026-11-16-dinner');
+  events.set('maya_meal-2026-11-16-dinner', {
+    id: 'maya_meal-2026-11-16-dinner', type: 'maya_meal', person: 'ambuja', started_at: '2026-11-16T18:35:00-08:00', deleted_at: null,
+    data: { ate: 'all', calendar: 'calendar.a_h_life', cups: 1, delta_min: 5, fortiflora: 1, meal: 'Dinner', planned_at: '2026-11-16T18:30:00-08:00', purina_pct: 75, abandoned: true },
+  });
+  await s.log({ id: 'maya_meal-2026-11-16-dinner', source: 'ha-nfc' });
+  const d = events.get('maya_meal-2026-11-16-dinner');
+  assert.equal(events.size, 1);
+  assert.deepEqual([d.person, d.started_at], ['ambuja', '2026-11-16T18:35:00-08:00']);
+  assert.deepEqual(d.data, { ate: 'all', calendar: 'calendar.a_h_life', cups: 1, delta_min: 5, fortiflora: 1, meal: 'Dinner', planned_at: '2026-11-16T18:30:00-08:00', purina_pct: 75, abandoned: true });
+});
+
+test('undo soft-deletes the Lifelog event too, and logging again brings it back', async () => {
+  const s = new MealStore(env);
+  await s.log({ id: BREAKFAST, person: 'harsh', at: '2026-11-16T06:57:00-08:00' });
+  const u = await s.unlog(BREAKFAST);
+  assert.deepEqual([u.lifelog, u.removed, u.restored], [true, true, 'A&H Life']);
+  assert.ok(events.get(BREAKFAST).deleted_at);
+  assert.ok(llCalls.includes('DELETE /events/' + BREAKFAST + '?reason=meal%20log%20undone'));
+  assert.equal((await s.unlog(BREAKFAST)).lifelog, false);
+
+  await s.log({ id: BREAKFAST, person: 'ambuja', at: '2026-11-16T07:02:00-08:00' });
+  const e = events.get(BREAKFAST);
+  assert.deepEqual([e.deleted_at, e.person, e.data.delta_min, e.data.calendar], [null, 'ambuja', 17, 'calendar.a_h_life']);
+});
+
+test('a Lifelog failure is an error, and the calendars are left alone', async () => {
+  const s = new MealStore(env), planned = CALS['A&H Life'] + 'b1.ics', mirror = CALS['Life Log'] + BREAKFAST + '.ics';
+  failLL = (m) => m === 'PUT';
+  const r = await post(s, { id: BREAKFAST, person: 'harsh', at: '2026-11-16T06:57:00-08:00' });
+  assert.equal(r.status, 502);
+  assert.match(r.body.error, /^meal not logged: Lifelog HTTP 503/);
+  assert.equal(objects.has(planned), true);
+  assert.equal(objects.has(mirror), false);
+  assert.equal(kv.has('meal-log:' + BREAKFAST), false);
+
+  failLL = (m) => m === 'GET';
+  assert.equal((await post(s, { id: BREAKFAST, person: 'harsh' })).status, 502);
+  assert.equal(objects.has(planned), true);
+
+  // Undo that can't reach Lifelog undoes nothing.
+  failLL = null;
+  await s.log({ id: BREAKFAST, person: 'harsh', at: '2026-11-16T06:57:00-08:00' });
+  failLL = (m) => m === 'DELETE';
+  const u = await s.route(new Request('https://frame.test/meals/log/' + BREAKFAST, { method: 'DELETE' }), new URL('https://frame.test/meals/log/' + BREAKFAST), { read: true, write: true });
+  assert.equal(u.status, 502);
+  assert.match(u.body.error, /^meal not undone/);
+  assert.equal(events.get(BREAKFAST).deleted_at, null);
+  assert.equal(objects.has(mirror), true);
+  assert.equal(objects.has(planned), false);
+});
+
+test('a night snack fed at 00:20 is the 21:00 plan from the day before: planned date in the id, delta across midnight', async () => {
+  const s = new MealStore(env), planned = CALS['A&H Life'] + 's1.ics', SNACK = 'maya_meal-2026-11-16-night-snack';
+  const realNow = Date.now;
+  try {
+    // Before 03:00 the day's list still offers last evening's snack; from 03:00 it doesn't.
+    Date.now = () => Date.parse('2026-11-17T00:10:00-08:00');
+    assert.deepEqual((await s.get('2026-11-17')).meals.map((m) => [m.id, m.start]), [[SNACK, '2026-11-17T05:00:00.000Z']]);
+    Date.now = () => Date.parse('2026-11-17T03:30:00-08:00');
+    assert.deepEqual((await s.get('2026-11-17')).meals, []);
+    Date.now = () => Date.parse('2026-11-17T00:20:00-08:00');
+  } finally { Date.now = realNow; }
+
+  const r = await s.log({ id: 'maya_meal-2026-11-17-night-snack', person: 'harsh', at: '2026-11-17T00:20:00-08:00', source: 'frame' });
+  assert.equal(r.id, SNACK);
+  assert.deepEqual([...events.keys()], [SNACK]);
+  const e = events.get(SNACK);
+  assert.equal(e.started_at, '2026-11-17T00:20:00-08:00');
+  assert.deepEqual(e.data, {
+    ate: 'all', calendar: 'calendar.a_h_life', cups: 0.25, delta_min: 200, fortiflora: null, meal: 'Night snack',
+    planned_at: '2026-11-16T21:00:00-08:00', purina_pct: null, abandoned: true,
+  });
+  assert.equal(r.removedFrom, 'A&H Life');
+  assert.equal(objects.has(planned), false);
+  assert.ok(objects.has(CALS['Life Log'] + SNACK + '.ics'));
+
+  // The frame's id already carries the planned date: the same single event.
+  await s.log({ id: SNACK, person: 'harsh', at: '2026-11-17T00:20:00-08:00', source: 'frame' });
+  assert.deepEqual([...events.keys()], [SNACK]);
+  assert.equal(events.get(SNACK).data.delta_min, 200);
+});
+
+test('a same-day log keeps its date: a 23:50 night snack, and other meals before 03:00', async () => {
+  const s = new MealStore(env);
+  await s.log({ id: 'maya_meal-2026-11-16-night-snack', person: 'harsh', at: '2026-11-16T23:50:00-08:00' });
+  await s.log({ id: BREAKFAST, person: 'harsh', at: '2026-11-16T02:00:00-08:00' });
+  assert.deepEqual([...events.keys()].sort(), [BREAKFAST, 'maya_meal-2026-11-16-night-snack']);
+  assert.deepEqual([events.get('maya_meal-2026-11-16-night-snack').data.planned_at, events.get('maya_meal-2026-11-16-night-snack').data.delta_min], ['2026-11-16T21:00:00-08:00', 170]);
+  assert.deepEqual([events.get(BREAKFAST).data.planned_at, events.get(BREAKFAST).data.delta_min], ['2026-11-16T06:45:00-08:00', -285]);
 });

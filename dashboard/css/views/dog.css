@@ -146,3 +146,9 @@
 .dg-wc-d { fill: var(--food); stroke: var(--card); stroke-width: 2; }
 .dg-wc-d.is-est { fill: var(--card); stroke: var(--food); stroke-width: 2.5; }
 .dg-wc-d.is-last { stroke-width: 3; }
+
+/* Logging a meal (views/dog.js mealSheet): unfed rows and the next-meal tile open it. */
+.dg-m[data-meal], .dg-tile[data-meal] { cursor: pointer; }
+.meal-sheet .ms-row { margin-top: 18px; }
+.ms-meal { opacity: .55; }
+.ms-meal.is-on { opacity: 1; color: var(--ink); background: rgb(0 163 108 / .16); box-shadow: inset 0 0 0 2px var(--food, #00A36C); }

@@ -43,15 +43,16 @@ export function walkCalendarName(env) {
 }
 
 // Lifelog REST. Its 4xx answers (bad input) become 400s; anything else (down, auth, rate limit)
-// becomes a 502, so the frame keeps the change queued and retries.
+// becomes a 502, so the frame keeps the change queued and retries. type: the event type get() and
+// list() stick to (default the walk type; meals.js passes <dog>_meal).
 export class Lifelog {
-  constructor(env) {
+  constructor(env, type) {
     this.base = String(env.LIFELOG_URL || '').replace(/\/+$/, '');
     this.token = env.LIFELOG_TOKEN;
-    this.type = env.LIFELOG_WALK_TYPE || 'dog_walk';
+    this.type = type || env.LIFELOG_WALK_TYPE || 'dog_walk';
   }
   async req(method, path, body) {
-    if (!this.base || !this.token) throw new WalkError('the walk log is not configured (LIFELOG_URL, LIFELOG_TOKEN)', 503);
+    if (!this.base || !this.token) throw new WalkError('Lifelog is not configured (LIFELOG_URL, LIFELOG_TOKEN)', 503);
     let r;
     try {
       r = await fetch(this.base + path, {

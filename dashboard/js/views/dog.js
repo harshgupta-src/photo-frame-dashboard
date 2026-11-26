@@ -5,7 +5,8 @@
 //   route   the last walk's GPS path on a map, with distance, time and who walked
 //   week    one bar chart: minutes walked per day, with each day's pee and poop counts
 //   weight  the latest weigh-in, the weekly gain, and every weigh-in on one line (estimates hollow)
-// Tap a walk (or the map) to edit it.
+// Tap a walk (or the map) to edit it. Tap a meal not fed yet (or the next-meal tile) to log it: who fed
+// her, then Save (App.meals, js/meals.js).
 (function () {
   'use strict';
   var V = { el: null, map: null, mapKey: '' }, MIN = 60e3;
@@ -85,8 +86,8 @@
   }
 
   // ---------------------------------------------------------------- the four "now" tiles
-  function tile(kind, icon, k, v, sub, state) {
-    return '<div class="dg-tile dg-tile--' + kind + (state ? ' is-' + state : '') + '">' +
+  function tile(kind, icon, k, v, sub, state, attrs) {
+    return '<div class="dg-tile dg-tile--' + kind + (state ? ' is-' + state : '') + '"' + (attrs || '') + '>' +
       '<div class="dg-tile-k"><span class="dg-ic">' + App.icon(icon, 18) + '</span>' + k + '</div>' +
       '<b class="dg-tile-v">' + v + '</b><small class="dg-tile-s">' + (sub || '&nbsp;') + '</small></div>';
   }
@@ -114,7 +115,8 @@
     var k = m.status === 'late' ? 'Not fed yet' : m.status === 'due' ? 'Meal due' : 'Next meal';
     return tile('meal', MEAL_ICON[m.meal] || 'utensils', k, esc(m.meal) + ' <span class="num dg-tile-t">' + App.fmt.time(m.at) + '</span>',
       [cups(m.cups), m.owners.length ? esc(owners(m)) : ''].filter(Boolean).join(' · ') + busy(m.owners, m.at),
-      m.status === 'late' ? 'alert' : m.status === 'due' ? 'warn' : '');
+      m.status === 'late' ? 'alert' : m.status === 'due' ? 'warn' : '',
+      App.sameDay(m.at, new Date(t)) ? ' data-meal="' + esc(m.key) + '" role="button"' : '');
   }
   function walkTile() {
     var a = App.walk.active;
@@ -131,14 +133,71 @@
     var right;
     if (m.status === 'fed') {
       var d = m.deltaMin, when = d == null || Math.abs(d) < 10 ? 'on time' : Math.abs(d) + ' min ' + (d > 0 ? 'late' : 'early');
-      right = '<span class="dg-m-r"><b class="num">' + App.fmt.time(m.fedAt) + '</b><small>' + (m.by ? esc(pname(m.by)) + ' · ' : '') + when + '</small></span>';
+      right = '<span class="dg-m-r"><b class="num">' + App.fmt.time(m.fedAt) + '</b><small>' + (m.by ? esc(pname(m.by)) + ' · ' : '') + when +
+        (m.pending ? '<i class="h-walk-sync" title="Not synced yet"></i>' : '') + '</small></span>';
     } else if (m.status === 'due') right = '<span class="pill pill--soon">Due</span>';
     else if (m.status === 'late') right = '<span class="pill pill--alert">' + dur(now() - m.at) + ' late</span>';
     else if (m.status === 'unlogged') right = '<span class="dg-m-r"><small>Not logged</small></span>';
     else right = '<span class="dg-m-r"><small>' + (m.owners.length ? esc(owners(m)) : '') + '</small></span>';
-    return '<li class="dg-m is-' + m.status + '"><span class="dg-m-ic">' + App.icon(m.status === 'fed' ? 'check' : MEAL_ICON[m.meal] || 'utensils', 18) + '</span>' +
+    var tap = loggable(m) ? ' data-meal="' + esc(m.key) + '" role="button"' : '';
+    return '<li class="dg-m is-' + m.status + '"' + tap + '><span class="dg-m-ic">' + App.icon(m.status === 'fed' ? 'check' : MEAL_ICON[m.meal] || 'utensils', 18) + '</span>' +
       '<span class="dg-m-n"><b>' + esc(m.meal) + '</b><small class="num">' + App.fmt.time(m.at) + (m.cups != null ? ' · ' + cups(m.cups) : '') + '</small></span>' + right + '</li>';
   }
+  function loggable(m) { return m.status === 'due' || m.status === 'late' || m.status === 'upcoming'; }
+
+  // ---------------------------------------------------------------- log a meal
+  // Today's meals not fed yet; the one picked is the tapped one, else (the tile) the one whose window
+  // (60 min before to 120 min after its planned time) has now in it, like Home Assistant's NFC tap.
+  // Fed by: the first person until someone else is tapped. Nothing is saved without Save.
+  function mealSheet(key, fromTile) {
+    if (App.dog.away().away) return;
+    var list = App.dog.day(new Date(now())).meals.filter(loggable), t = now();
+    var inWindow = list.filter(function (x) { return t >= +x.at - 60 * MIN && t <= +x.at + 120 * MIN; })
+      .sort(function (a, b) { return Math.abs(t - a.at) - Math.abs(t - b.at); })[0];
+    var tapped = list.filter(function (x) { return x.key === key; })[0];
+    var pick = (fromTile ? inWindow || tapped : tapped || inWindow) || list[0];
+    if (!pick) return;
+    var people = window.CONFIG.people, by = people.length ? people[0].id : null, saved = false;
+    var html = '<div class="sheet-pad walk-sheet meal-sheet">' +
+      '<div class="label">' + esc(name) + '’s meal</div>' +
+      '<h2 class="sheet-h serif" data-ms-t="h"></h2><p class="sheet-p" data-ms-t="p"></p>' +
+      (list.length > 1 ? '<div class="ws-who ms-row"><span class="ws-k">Meal</span><div class="chips">' + list.map(function (x) {
+        return '<button class="chip ms-meal" data-ms-m="' + esc(x.key) + '">' + App.icon(MEAL_ICON[x.meal] || 'utensils', 22) + esc(x.meal) + '</button>';
+      }).join('') + '</div></div>' : '') +
+      '<div class="ws-who ms-row"><span class="ws-k">Fed by</span><div class="chips">' + people.map(function (p) {
+        return '<button class="chip ws-person" data-ms-p="' + esc(p.id) + '" style="' + App.pstyle(p) + '">' + App.avatar(p, 34) + esc(p.name) + '</button>';
+      }).join('') + '</div></div>' +
+      '<div class="sheet-actions"><button class="btn btn--ghost" data-close>Cancel</button>' +
+      '<button class="btn btn--solid ws-save" data-ms="save">' + App.icon('check', 22) + 'Save</button></div></div>';
+    App.sheet(html, {
+      cls: 'sheet--walk',
+      onMount: function (el, close) {
+        function paint() {
+          el.querySelector('[data-ms-t="h"]').textContent = pick.meal + (pick.cups != null ? ' · ' + cups(pick.cups) : '');
+          var late = (t - pick.at) / MIN, when = late > 60 ? dur(t - pick.at) + ' late' : late >= -30 ? 'due now' : 'in ' + dur(pick.at - t);
+          el.querySelector('[data-ms-t="p"]').textContent = 'Planned ' + App.fmt.time(pick.at) + ' · ' + when + (pick.owners.length ? ' · ' + owners(pick) : '');
+          App.$$('[data-ms-m]', el).forEach(function (b) { b.classList.toggle('is-on', b.dataset.msM === pick.key); });
+          App.$$('[data-ms-p]', el).forEach(function (b) { b.classList.toggle('is-on', b.dataset.msP === by); });
+          el.querySelector('[data-ms="save"]').disabled = !by;
+        }
+        paint();
+        el.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-ms], [data-ms-m], [data-ms-p]');
+          if (!b) return;
+          if (b.dataset.msM) pick = list.filter(function (x) { return x.key === b.dataset.msM; })[0] || pick;
+          else if (b.dataset.msP) by = b.dataset.msP;
+          else if (b.dataset.ms === 'save') { saved = true; close(); return; }
+          paint();
+        });
+      },
+      onClose: function () {
+        if (!saved) return;
+        if (App.meals.log(pick, by)) App.toast(esc(pick.meal) + ' logged · ' + esc(pname(by)) + (App.meals.on ? '' : ' · on this frame only'), { icon: 'check' });
+        else App.toast(esc(pick.meal) + ' was already logged', { icon: 'clock' });
+      }
+    });
+  }
+
   function today() {
     var t = App.dog.day(new Date(now())), fed = t.meals.filter(function (m) { return m.status === 'fed'; }).length;
     var walks = t.walks.slice().sort(function (a, b) { return b.startedAt - a.startedAt; });
@@ -294,6 +353,8 @@
   function click(e) {
     var b = e.target.closest('[data-walk]');
     if (b) { App.walkTap(b.dataset.walk); return; }
+    b = e.target.closest('[data-meal]');
+    if (b) { mealSheet(b.dataset.meal, b.classList.contains('dg-tile')); return; }
     if (e.target.closest('[data-food]')) {
       App.dog.foodDone().then(function () { App.toast('Food bump marked done', { icon: 'check' }); }, function () { App.toast('Couldn’t reach the Worker, try again', { icon: 'x' }); });
       return;
@@ -325,5 +386,6 @@
   App.on('walk', update);
   App.on('data', update);
   App.on('away', update);
+  App.on('meal', update);
   App.on('minute', function () { if (App.onScreen('dog')) render(); });
 })();

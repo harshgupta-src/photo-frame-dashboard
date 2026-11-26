@@ -66,7 +66,8 @@ The screen is built to be read from across the room (portrait: tiles 2 × 2, mea
 the week across the bottom). Four big tiles: time since the last pee and poop against the usual
 daytime gap (amber past it, red at 1½×), the next meal and the next walk (and whether the people on
 it are busy then). Below them: today's meals as a checklist (who fed each and how late, or due /
-late) with the kibble mix, today's walks, the **last walk's route** on an OpenStreetMap map (the
+late) with the kibble mix (tap a meal not fed yet, or the next-meal tile, to log it: pick who fed
+her, Save; saved on the frame first and queued like walks, `js/meals.js`), today's walks, the **last walk's route** on an OpenStreetMap map (the
 Worker's `/tile` proxy) with distance, time and who walked, and one bar chart of minutes walked per
 day for the last 7 days with each day's pee and poop counts, beside a **weight** card: the latest
 weigh-in, kg a week since one at least 5 days earlier, and every weigh-in on a line (estimates
@@ -142,8 +143,8 @@ the home time zone (sent by the frame).
 | `DELETE /walks/plan/:date` | drop it and its calendar events |
 | `GET /meals?date=` | the day's planned meal events (one per kind): `{kind, start, end, usual, calendar, people, cups, title, uid}` |
 | `PUT /meals/plan/:date` | move or reassign meals `{meals: [{kind, start: "HH:MM", people: ["<id>"], note?}], reason?}` → `{changed, unchanged, skipped}` |
-| `POST /meals/log` | a meal was given `{id, person, at, planned_at?, delta_min?, cups?, purina_pct?, fortiflora?, ate?, source?}`: writes it to the Life Log calendar and removes the planned event (re-POST merges, e.g. `{id, ate: "some"}`) |
-| `DELETE /meals/log/:id` | undo: delete the Life Log entry and restore the planned event |
+| `POST /meals/log` | a meal was given `{id, person, at, planned_at?, delta_min?, cups?, purina_pct?, fortiflora?, ate?, source?}`: writes the Lifelog `maya_meal` event (PUT by id, so a re-log or HA's own write stays one event; a failed write is a 502 and nothing else changes), writes it to the Life Log calendar and removes the planned event (re-POST merges, e.g. `{id, ate: "some"}`) |
+| `DELETE /meals/log/:id` | undo: soft-delete the Lifelog event, delete the Life Log entry and restore the planned event |
 | `GET /dog?days=30` | the dog tab's data: Lifelog `<dog>_meal`, `_pee`, `_poop`, `_walk_route` (since `days`), all `_weight`, and `log`, the Life Log calendar's events (`LOG_CALENDAR`, default `WALK_CALENDAR`; `none` to skip; a calendar error only sets `logError`), and `lastRoute` {walkId, start, end, m, path: [[lat, lon]], snapped}, the newest walk's raw path (≤ 300 points) and its [snapped](#snapped-routes) line (≤ 600 points, or null; `m` is then the snapped distance, as in `routes`), and `food` (below) |
 | `GET /dog/food` | the food advice `{advice, history}` |
 | `POST /dog/food/facts` | `{plan: [{date, meals, cups, mixed}]}` → the facts the decision uses |
@@ -313,8 +314,11 @@ ignores Maya's 🐕 walks and meals ("Maya … breakfast/lunch/dinner/snack") so
 trigger replans; her other events (training, vet) and sitter stays do. Edits people make to
 meal events are picked up by the next 04:30 plan.
 
-When a meal is logged (NFC tag or notification, `maya_meal.yaml`), HA POSTs `/meals/log`. The Worker
-writes **Maya lunch 🍽️ 1 cup — Ambuja** to the Life Log calendar, with who fed her, when, how late,
+When a meal is logged (NFC tag or notification, `maya_meal.yaml`), HA POSTs `/meals/log`; the frame
+does the same from the dog screen. The Worker writes the Lifelog event `maya_meal-<date>-<meal>` in
+the NFC shape (`ate`, `calendar`, `cups`, `delta_min`, `fortiflora`, `meal`, `planned_at`,
+`purina_pct`, `abandoned`; a night snack fed before 03:00 is the previous day's, with the planned
+date in the id and `delta_min` across midnight, and until 03:00 `GET /meals` for today still lists it), then **Maya lunch 🍽️ 1 cup — Ambuja** to the Life Log calendar, with who fed her, when, how late,
 the food, whether she ate it all and the calendar it was planned on. It then removes the planned
 event (or adds an `EXDATE` to the series). Undo (`DELETE /meals/log/<id>`) puts the planned event
 back. The meal sensor reads the Life Log too, so a second tap is still caught as a double feed. A meal

@@ -2,10 +2,11 @@
 //   plan    what's meant to happen: meal events ("Maya lunch 1 cup", "Maya · Lunch" + "cups: 1") and
 //           the "Maya prep" kibble mix in everyone's calendars (the frame's /events), the HA agent's
 //           walk plan (App.walk.plans), and other "Maya …" events (training, vet, grooming)
-//   actual  what happened: Lifelog (the Worker's GET /dog: meals fed by NFC tap, pee/poop, weigh-ins,
+//   actual  what happened: Lifelog (the Worker's GET /dog: meals fed by NFC tap or on the frame, pee/poop, weigh-ins,
 //           walk distances), the walks (App.walk), and the Life Log calendar (also from GET /dog),
 //           where done meals, walks and potty breaks end up. A planned meal moved to Life Log is
-//           still that meal: it's matched by day + meal, so it shows as fed, not as missing.
+//           still that meal: it's matched by day + meal, so it shows as fed, not as missing. A meal
+//           logged on this frame (App.meals, js/meals.js) shows as fed until Lifelog has it.
 // Calendar owners give the meal's people: a meal on Harsh's calendar is Harsh's, A&H Life is both.
 //   App.dog.day(date)        {meals, walks, plannedWalks, potty, prep} for that day
 //   App.dog.potty(sinceMs)   [{kind: 'pee'|'poop', at}] newest first
@@ -85,6 +86,7 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
   App.on('data', function () { memoFor = null; });
   App.on('dog', function () { memoFor = null; });
   App.on('walk', function () { memoFor = null; });
+  App.on('meal', function () { memoFor = null; });
   function calMeals() { return cached('calMeals', function () { return calEvents().map(mealFrom).filter(Boolean); }); }
   function plannedMeals(day) {
     var want = ymd(day), seen = {};
@@ -121,6 +123,13 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
       var at = new Date(m.at), planned = m.plannedAt ? new Date(m.plannedAt) : null;
       var k = kind === 'Extra' ? 'extra-' + m.id : key(planned || at, kind);
       out[k] = { key: k, meal: kind, fedAt: at, plannedAt: planned, by: m.person ? String(m.person).toLowerCase() : null, cups: m.cups, deltaMin: m.deltaMin, ate: m.ate, source: 'lifelog' };
+    });
+    // Logged on this frame and not in Lifelog yet (js/meals.js): fed, pending while still queued.
+    var local = App.meals ? App.meals.local() : {};
+    Object.keys(local).forEach(function (k) {
+      var l = local[k];
+      if (out[k]) return;
+      out[k] = { key: k, meal: l.meal, fedAt: new Date(l.fedAt), plannedAt: l.plannedAt ? new Date(l.plannedAt) : null, by: l.by, cups: l.cups, deltaMin: null, source: 'frame', pending: !!l.pending };
     });
     // A done meal moved to the Life Log calendar (and not in Lifelog): fed at the event's time.
     logEvents().forEach(function (e) {
@@ -159,7 +168,7 @@ import { awayState, toggleMode, isSitterEvent, nextStay } from './awaystate.js';
   function merge(p, f, now) {
     var r = { key: p.key, meal: p.meal, at: new Date(p.at), cups: p.cups, cal: p.cal, owners: p.people || [], title: p.title };
     if (f) {
-      r.status = 'fed'; r.fedAt = f.fedAt; r.by = f.by; r.ate = f.ate;
+      r.status = 'fed'; r.fedAt = f.fedAt; r.by = f.by; r.ate = f.ate; r.pending = !!f.pending;
       if (f.cups != null) r.cups = f.cups;
       r.deltaMin = f.deltaMin != null ? f.deltaMin : f.plannedAt ? Math.round((f.fedAt - f.plannedAt) / MIN) : null;
     } else {

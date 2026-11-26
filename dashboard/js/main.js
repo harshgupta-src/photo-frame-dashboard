@@ -6,6 +6,7 @@ import './app.js';
 import './theme.js';
 import './live.js';
 import './walk.js';
+import './meals.js';
 import './dog.js';
 import './copilot.js';
 import './ha.js';
